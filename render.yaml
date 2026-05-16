@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: ziva-bi-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+    plan: starter
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ziva-bi-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "30"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: ALLOWED_ORIGINS
+        value: https://ziva-bi-frontend.onrender.com
+      - key: DEBUG
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+
+  - type: web
+    name: ziva-bi-frontend
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    plan: starter
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://ziva-bi-backend.onrender.com
+      - key: NODE_VERSION
+        value: "20.11.0"
+
+databases:
+  - name: ziva-bi-db
+    databaseName: ziva_bi
+    user: ziva_bi_user
+    plan: starter
+    region: oregon
