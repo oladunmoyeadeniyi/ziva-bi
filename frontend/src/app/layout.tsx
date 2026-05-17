@@ -13,6 +13,7 @@
 
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/contexts/AuthContext";
 
 export const metadata: Metadata = {
   title: {
@@ -31,7 +32,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {/* AuthProvider is a Client Component — Next.js App Router handles the boundary */}
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }

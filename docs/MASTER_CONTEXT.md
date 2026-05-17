@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (end of foundation chat)
+> Last updated: May 2026 (Milestone 2 — Auth & User Management complete)
 
 ---
 
@@ -192,12 +192,24 @@ Each milestone:
   - All PDF PRDs removed from `docs/`; markdown versions remain
   - First commit pushed to GitHub (`oladunmoyeadeniyi/ziva-bi`, branch: `main`)
 
-### ⏳ Next — Milestone 2
-- Build: User can sign up and log in
-- Both account types (Individual / Business) selectable at signup
-- JWT access + refresh tokens working
-- Auth module: models, schemas, routers, password hashing, token management
-- Read `docs/AUTH_USER_MANAGEMENT_PRD.md` before starting
+### ✅ Completed — Milestone 2 (May 2026)
+- **Auth & User Management** — full signup, login, token refresh, logout
+- Business signup creates a company (tenant) with name + country; user becomes Tenant Admin
+- Individual signup creates a single-user account (tenant_id = NULL)
+- JWT access tokens (30 min) + rotating refresh tokens (7 days), replay-attack protection
+- Account lockout after 5 failed attempts (15-min lockout)
+- Argon2-compatible bcrypt password hashing (bcrypt 5.x direct, no passlib)
+- System roles seeded on startup (super_admin, tenant_admin, employee, etc.)
+- DB models: tenants, users, user_tenants, roles, permissions, role_permissions, user_roles, sessions, refresh_tokens, audit_logs
+- Alembic migration for all auth tables
+- Seed script: Super Admin + test tenant + individual test user
+- Frontend: two-step signup page, login page, dashboard layout with auth guard
+- Dashboards route by account_type → /dashboard/personal or /dashboard/business
+- AuthContext handles session persistence (refresh token in localStorage, access token in memory)
+- All endpoints: POST /api/auth/signup, /api/auth/login, /api/auth/refresh-token, /api/auth/logout, GET /api/users/me
+
+### ⏳ Next — Milestone 3
+- Individual can log a personal expense (simplest possible expense entry, saved to DB, listed on dashboard)
 
 ### Module PRDs still to rewrite (do each just before building that module)
 - Accounts Payable (PDF exists — rewrite to markdown before building AP)

@@ -1,0 +1,9 @@
+"""
+ZivaBI models package.
+
+Import every model module here so that Alembic's autogenerate can detect
+all tables when it inspects Base.metadata. The alembic/env.py file imports
+this package, so any model not imported here will be invisible to migrations.
+"""
+
+import app.models.auth  # noqa: F401  — registers auth tables with Base.metadata

@@ -12,17 +12,54 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.config import settings
-from app.database import engine
+from app.database import AsyncSessionLocal, engine
+
+
+async def _ensure_system_roles() -> None:
+    """
+    Idempotently create system roles on every startup.
+
+    System roles are global (tenant_id=NULL, is_system=True) and cannot be
+    deleted by Tenant Admins. If they already exist this is a no-op.
+    This eliminates the need to run a separate seed script for role setup.
+    """
+    from app.models.auth import Role  # imported here to avoid circular import at module load
+
+    system_roles = [
+        ("super_admin",     "Global platform administrator"),
+        ("tenant_admin",    "Company administrator — full control within their tenant"),
+        ("employee",        "Standard employee — can submit requests"),
+        ("approver",        "Line manager approver"),
+        ("finance_reviewer","Finance team reviewer"),
+        ("finance_poster",  "Finance team — posts to ERP"),
+        ("finance_manager", "Finance Director / CFO"),
+        ("internal_auditor","Read-only auditor — internal"),
+        ("external_auditor","Read-only auditor — external"),
+        ("vendor_admin",    "Vendor company administrator"),
+        ("customer_admin",  "Customer company administrator"),
+        ("hr_officer",      "HR administrator"),
+        ("payroll_officer", "Payroll administrator"),
+    ]
+
+    async with AsyncSessionLocal() as db:
+        for name, description in system_roles:
+            result = await db.execute(
+                select(Role).where(Role.name == name, Role.tenant_id.is_(None))
+            )
+            if result.scalar_one_or_none() is None:
+                db.add(Role(name=name, description=description, is_system=True))
+        await db.commit()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """FastAPI lifespan: verify DB on startup, dispose engine on shutdown."""
+    """FastAPI lifespan: verify DB on startup, seed system roles, dispose engine on shutdown."""
     async with engine.begin() as conn:
         await conn.execute(text("SELECT 1"))
+    await _ensure_system_roles()
     yield
     await engine.dispose()
 
@@ -43,6 +80,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+from app.routers import auth as auth_router
+from app.routers import users as users_router
+
+app.include_router(auth_router.router)
+app.include_router(users_router.router)
 
 
 @app.get("/api/health", tags=["system"])
