@@ -99,6 +99,28 @@ async def _recalculate_total(report: ExpenseReport, db: AsyncSession) -> None:
     report.total_amount = result.scalar_one() or Decimal("0.00")
 
 
+async def _reload_report(report_id: uuid.UUID, db: AsyncSession) -> ExpenseReport:
+    """
+    Issue a fresh SELECT for a report with its lines eagerly loaded.
+
+    Used after any mutation (add/delete line, update, submit) instead of
+    db.refresh(), which can trigger SQLAlchemy greenlet errors in asyncpg
+    when the session has done multiple flushes.
+
+    populate_existing=True is required to force SQLAlchemy to re-populate
+    the ORM instance from the DB even when it is already in the session's
+    identity map (e.g. after adding a new line the cached report.lines
+    collection would otherwise still show the stale pre-mutation state).
+    """
+    result = await db.execute(
+        select(ExpenseReport)
+        .where(ExpenseReport.id == report_id)
+        .options(selectinload(ExpenseReport.lines))
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/reports", response_model=ExpenseReportResponse, status_code=status.HTTP_201_CREATED)
@@ -130,10 +152,7 @@ async def create_report(
     db.add(report)
     await db.flush()
 
-    # Eagerly load empty lines list so from_orm doesn't blow up
-    await db.refresh(report, ["lines"])
-
-    return ExpenseReportResponse.from_orm(report)
+    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
 
 @router.get("/reports", response_model=list[ExpenseReportResponse])
@@ -229,9 +248,8 @@ async def add_line(
 
     await _recalculate_total(report, db)
     await db.flush()
-    await db.refresh(report, ["lines"])
 
-    return ExpenseReportResponse.from_orm(report)
+    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
 
 @router.delete(
@@ -273,9 +291,8 @@ async def delete_line(
 
     await _recalculate_total(report, db)
     await db.flush()
-    await db.refresh(report, ["lines"])
 
-    return ExpenseReportResponse.from_orm(report)
+    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
 
 @router.patch("/reports/{report_id}", response_model=ExpenseReportResponse)
@@ -301,9 +318,8 @@ async def update_report(
         report.employee_function = data.employee_function
 
     await db.flush()
-    await db.refresh(report, ["lines"])
 
-    return ExpenseReportResponse.from_orm(report)
+    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
 
 @router.post("/reports/{report_id}/submit", response_model=ExpenseReportResponse)
@@ -339,6 +355,5 @@ async def submit_report(
     report.status = "SUBMITTED"
     report.submitted_at = datetime.now(timezone.utc)
     await db.flush()
-    await db.refresh(report, ["lines"])
 
-    return ExpenseReportResponse.from_orm(report)
+    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))

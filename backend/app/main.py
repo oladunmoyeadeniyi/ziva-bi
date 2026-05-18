@@ -73,9 +73,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Always permit the local dev frontend regardless of ALLOWED_ORIGINS env var.
+# The env var may be empty or misconfigured; hardcoding this origin here ensures
+# local development never breaks due to a CORS misconfiguration.
+_cors_origins = list(dict.fromkeys(
+    ["http://localhost:3000", "http://localhost:3001"] + settings.allowed_origins
+))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
