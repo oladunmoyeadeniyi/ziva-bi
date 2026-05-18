@@ -103,11 +103,6 @@ export default function NewExpensePage() {
       return;
     }
 
-    if (submit && !confirmSubmit) {
-      setConfirmSubmit(true);
-      return;
-    }
-
     setIsSubmitting(true);
     setError(null);
     setConfirmSubmit(false);
@@ -171,6 +166,7 @@ export default function NewExpensePage() {
     <div className="px-6 py-8 max-w-7xl mx-auto">
       <div className="mb-6">
         <button
+          type="button"
           onClick={() => router.back()}
           className="text-sm text-gray-500 hover:text-gray-700 mb-2"
         >
@@ -181,8 +177,16 @@ export default function NewExpensePage() {
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none"
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -196,12 +200,14 @@ export default function NewExpensePage() {
             </p>
             <div className="flex gap-3 justify-end">
               <button
+                type="button"
                 onClick={() => setConfirmSubmit(false)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={() => handleSave(true)}
                 disabled={isSubmitting}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
@@ -264,6 +270,7 @@ export default function NewExpensePage() {
             Expense Lines
           </h2>
           <button
+            type="button"
             onClick={addLine}
             className="text-sm text-blue-600 hover:text-blue-800 font-medium"
           >
@@ -376,6 +383,7 @@ export default function NewExpensePage() {
                   </td>
                   <td className="py-2 text-right">
                     <button
+                      type="button"
                       onClick={() => removeLine(line.localId)}
                       disabled={lines.length === 1}
                       className="text-xs text-red-500 hover:text-red-700 disabled:text-gray-300 font-medium"
@@ -400,29 +408,33 @@ export default function NewExpensePage() {
         </div>
       </div>
 
-      {/* Action buttons */}
+      {/* Action buttons — Save/Submit disabled while an error is displayed to prevent
+          creating orphaned draft reports if the previous attempt partially succeeded. */}
       <div className="flex items-center gap-3 justify-end">
         <button
+          type="button"
           onClick={() => router.back()}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
         >
           Cancel
         </button>
         <button
+          type="button"
           onClick={() => handleSave(false)}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !!error}
           className="px-4 py-2 text-sm font-medium text-gray-800 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 disabled:opacity-60"
         >
           {isSubmitting ? "Saving…" : "Save Draft"}
         </button>
         <button
+          type="button"
           onClick={() => {
             const err = validate();
             if (err) { setError(err); return; }
             setError(null);
             setConfirmSubmit(true);
           }}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !!error}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
         >
           Submit for Approval
