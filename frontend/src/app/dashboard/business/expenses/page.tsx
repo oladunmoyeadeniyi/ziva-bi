@@ -51,11 +51,14 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+type TabFilter = "ALL" | "DRAFT" | "SUBMITTED";
+
 export default function ExpensesListPage() {
   const { accessToken } = useAuth();
   const [reports, setReports] = useState<ExpenseReport[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabFilter>("ALL");
 
   // Delete confirm dialog
   const [deleteTarget, setDeleteTarget] = useState<ExpenseReport | null>(null);
@@ -85,6 +88,15 @@ export default function ExpensesListPage() {
 
     fetchReports();
   }, [accessToken]);
+
+  const draftCount = reports.filter((r) => r.status === "DRAFT").length;
+  const submittedCount = reports.filter((r) => r.status === "SUBMITTED").length;
+  const visibleReports =
+    activeTab === "DRAFT"
+      ? reports.filter((r) => r.status === "DRAFT")
+      : activeTab === "SUBMITTED"
+      ? reports.filter((r) => r.status === "SUBMITTED")
+      : reports;
 
   const handleDelete = async () => {
     if (!deleteTarget || !accessToken) return;
@@ -155,6 +167,43 @@ export default function ExpensesListPage() {
         </Link>
       </div>
 
+      {/* Filter tabs */}
+      {!error && (
+        <div className="flex gap-1 mb-5 border-b border-gray-200">
+          {(
+            [
+              { key: "ALL", label: "All", count: reports.length },
+              { key: "DRAFT", label: "Drafts", count: draftCount },
+              { key: "SUBMITTED", label: "Submitted", count: submittedCount },
+            ] as { key: TabFilter; label: string; count: number }[]
+          ).map(({ key, label, count }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveTab(key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === key
+                  ? "border-blue-600 text-blue-700"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              {label}
+              {!isLoading && (
+                <span
+                  className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-semibold ${
+                    activeTab === key
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       {isLoading && (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -169,21 +218,33 @@ export default function ExpensesListPage() {
         </div>
       )}
 
-      {!isLoading && !error && reports.length === 0 && (
+      {!isLoading && !error && visibleReports.length === 0 && (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
           <div className="text-4xl mb-3">🧾</div>
-          <h3 className="text-sm font-semibold text-gray-800">No expense reports yet</h3>
-          <p className="mt-1 text-xs text-gray-500">Create your first expense retirement to get started.</p>
-          <Link
-            href="/dashboard/business/expenses/new"
-            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            New Expense Retirement
-          </Link>
+          <h3 className="text-sm font-semibold text-gray-800">
+            {activeTab === "ALL"
+              ? "No expense reports yet"
+              : activeTab === "DRAFT"
+              ? "No draft reports"
+              : "No submitted reports"}
+          </h3>
+          <p className="mt-1 text-xs text-gray-500">
+            {activeTab === "ALL"
+              ? "Create your first expense retirement to get started."
+              : "Switch to All to see all reports."}
+          </p>
+          {activeTab === "ALL" && (
+            <Link
+              href="/dashboard/business/expenses/new"
+              className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              New Expense Retirement
+            </Link>
+          )}
         </div>
       )}
 
-      {!isLoading && !error && reports.length > 0 && (
+      {!isLoading && !error && visibleReports.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -198,7 +259,7 @@ export default function ExpensesListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {reports.map((report) => (
+              {visibleReports.map((report) => (
                 <tr key={report.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-5 py-3 text-sm font-medium text-gray-900">
                     {report.report_number}
