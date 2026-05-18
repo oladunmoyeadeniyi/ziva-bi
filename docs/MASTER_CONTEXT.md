@@ -208,8 +208,21 @@ Each milestone:
 - AuthContext handles session persistence (refresh token in localStorage, access token in memory)
 - All endpoints: POST /api/auth/signup, /api/auth/login, /api/auth/refresh-token, /api/auth/logout, GET /api/users/me
 
-### ⏳ Next — Milestone 3
-- Individual can log a personal expense (simplest possible expense entry, saved to DB, listed on dashboard)
+### ✅ Completed — Milestone 3 (May 2026)
+- **Business Expense Retirement Submission** — full multi-line expense report form with GL coding
+- DB models: expense_reports, expense_lines with tenant isolation
+- Alembic migration applied (revision 87e40b59d47f)
+- API: POST/GET/PATCH /api/expenses/reports, POST/DELETE lines, POST submit
+- Status flow: DRAFT → SUBMITTED (no approvals in M3)
+- Report numbering: EXP-{YEAR}-{SEQUENCE:04d} auto-generated per tenant/year
+- Currency: NGN only (no FX)
+- Frontend: list page, new report form, read-only detail view
+- Business dashboard refactored with shared sidebar layout
+- Navigation: "Expenses" added to business dashboard sidebar
+
+### ⏳ Next — Milestone 4
+- Business approval workflow: SUBMITTED → Line Manager → Finance → Posted
+- Individual can log a personal expense (simplest possible expense entry)
 
 ### Module PRDs still to rewrite (do each just before building that module)
 - Accounts Payable (PDF exists — rewrite to markdown before building AP)
