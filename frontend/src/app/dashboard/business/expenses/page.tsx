@@ -3,22 +3,14 @@
 /**
  * Expense reports list — /dashboard/business/expenses
  *
- * Shows all expense reports for the tenant.
- * Finance/admin sees all; employees see their own (filtering handled here via
- * the employee_id query param when role info is available in a later milestone).
+ * DRAFT reports: "Edit" link → /edit page, "Delete" button with confirm dialog.
+ * SUBMITTED reports: "View" link → read-only detail page.
  */
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
-
-interface ExpenseLine {
-  id: string;
-  line_number: number;
-  description: string;
-  amount: string;
-}
 
 interface ExpenseReport {
   id: string;
@@ -41,7 +33,7 @@ function formatNGN(amount: string | number): string {
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB"); // DD/MM/YYYY
+  return d.toLocaleDateString("en-GB");
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -64,6 +56,11 @@ export default function ExpensesListPage() {
   const [reports, setReports] = useState<ExpenseReport[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Delete confirm dialog
+  const [deleteTarget, setDeleteTarget] = useState<ExpenseReport | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -89,8 +86,60 @@ export default function ExpensesListPage() {
     fetchReports();
   }, [accessToken]);
 
+  const handleDelete = async () => {
+    if (!deleteTarget || !accessToken) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/api/expenses/reports/${deleteTarget.id}`, {
+        method: "DELETE",
+        token: accessToken,
+      });
+      setReports((prev) => prev.filter((r) => r.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to delete report.";
+      setDeleteError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="px-6 py-8 max-w-6xl mx-auto">
+      {/* Delete confirm dialog */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4">
+            <h2 className="text-base font-semibold text-gray-900 mb-2">Delete Draft?</h2>
+            <p className="text-sm text-gray-600 mb-1">
+              Delete <span className="font-medium">{deleteTarget.report_number}</span>? This cannot be undone.
+            </p>
+            {deleteError && (
+              <p className="text-xs text-red-600 mt-2 mb-1">{deleteError}</p>
+            )}
+            <div className="flex gap-3 justify-end mt-5">
+              <button
+                type="button"
+                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}
+                disabled={isDeleting}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60"
+              >
+                {isDeleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -106,7 +155,6 @@ export default function ExpensesListPage() {
         </Link>
       </div>
 
-      {/* Content */}
       {isLoading && (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -140,27 +188,13 @@ export default function ExpensesListPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Report No.
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Function
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Lines
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Total Amount
-                </th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Report No.</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Function</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Lines</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Amount</th>
+                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -185,12 +219,32 @@ export default function ExpensesListPage() {
                     {formatNGN(report.total_amount)}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <Link
-                      href={`/dashboard/business/expenses/${report.id}`}
-                      className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      View
-                    </Link>
+                    <div className="inline-flex items-center gap-3">
+                      {report.status === "DRAFT" ? (
+                        <>
+                          <Link
+                            href={`/dashboard/business/expenses/${report.id}/edit`}
+                            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            Edit
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(report)}
+                            className="text-sm text-red-500 hover:text-red-700 font-medium"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : (
+                        <Link
+                          href={`/dashboard/business/expenses/${report.id}`}
+                          className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          View
+                        </Link>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

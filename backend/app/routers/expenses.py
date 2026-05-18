@@ -295,6 +295,31 @@ async def delete_line(
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
 
+@router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report(
+    report_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Delete a DRAFT expense report and all its lines (cascade).
+
+    Returns 400 if the report is already SUBMITTED — submitted reports
+    are immutable and can only be voided via an approval workflow (M4).
+    """
+    tenant_id = _require_tenant(current_user)
+    report = await _get_report_or_404(report_id, tenant_id, db, with_lines=False)
+
+    if report.status != "DRAFT":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only DRAFT reports can be deleted.",
+        )
+
+    await db.delete(report)
+    await db.flush()
+
+
 @router.patch("/reports/{report_id}", response_model=ExpenseReportResponse)
 async def update_report(
     report_id: uuid.UUID,
