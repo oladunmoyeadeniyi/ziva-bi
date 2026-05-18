@@ -152,7 +152,16 @@ export default function NewExpensePage() {
 
       router.push("/dashboard/business/expenses");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save report.");
+      const msg = err instanceof Error ? err.message : "Failed to save report.";
+      // "Failed to fetch" = browser couldn't reach the server at all (ECONNREFUSED).
+      // Give the user an actionable message instead of the raw TypeError text.
+      if (msg === "Failed to fetch") {
+        setError(
+          "Cannot reach the backend server. Make sure uvicorn is running on http://localhost:8000 (cd backend && uvicorn app.main:app --reload --port 8000)."
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setIsSubmitting(false);
     }

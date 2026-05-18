@@ -75,7 +75,12 @@ export default function ExpensesListPage() {
         });
         setReports(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load reports.");
+        const msg = err instanceof Error ? err.message : "Failed to load reports.";
+        setError(
+          msg === "Failed to fetch"
+            ? "Cannot reach the backend server. Make sure uvicorn is running on http://localhost:8000."
+            : msg
+        );
       } finally {
         setIsLoading(false);
       }
