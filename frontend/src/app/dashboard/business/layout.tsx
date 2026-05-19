@@ -6,24 +6,49 @@
  * Provides the top header and left sidebar so every business page inherits the
  * same chrome without duplicating markup. The auth guard is handled by the
  * parent /dashboard/layout.tsx so this layout can assume the user is logged in.
+ *
+ * M4 additions:
+ *   - "Approvals" nav item with live pending-count badge
+ *   - "Settings" nav item visible only to Tenant Admins
  */
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiFetch } from "@/lib/api";
 
-const NAV_ITEMS = [
-  { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true },
-  { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false },
-];
+interface ApprovalQueueItem {
+  approval_id: string;
+}
 
 export default function BusinessLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, logout } = useAuth();
+  const { user, logout, accessToken } = useAuth();
   const pathname = usePathname();
+  const [pendingCount, setPendingCount] = useState<number>(0);
+
+  // Fetch pending approval count for the badge
+  useEffect(() => {
+    if (!accessToken) return;
+    apiFetch<ApprovalQueueItem[]>("/api/approvals/queue", { token: accessToken })
+      .then((queue) => setPendingCount(queue.length))
+      .catch(() => {/* non-fatal — badge stays at 0 */});
+  }, [accessToken]);
+
+  const isTenantAdmin = user?.is_tenant_admin ?? false;
+
+  const NAV_ITEMS = [
+    { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null },
+    { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false, badge: null },
+    { href: "/dashboard/business/approvals", label: "Approvals", icon: "✅", exact: false, badge: pendingCount > 0 ? pendingCount : null },
+    ...(isTenantAdmin
+      ? [{ href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null }]
+      : []),
+  ];
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
@@ -63,7 +88,12 @@ export default function BusinessLayout({
                 }`}
               >
                 <span className="text-base leading-none">{item.icon}</span>
-                <span>{item.label}</span>
+                <span className="flex-1">{item.label}</span>
+                {item.badge !== null && (
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold leading-none">
+                    {item.badge > 9 ? "9+" : item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}

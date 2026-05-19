@@ -77,8 +77,30 @@ async def _unique_slug(base: str, db: AsyncSession) -> str:
         slug = f"{base}-{secrets.token_hex(3)}"
 
 
+async def _is_tenant_admin(user_tenant_id: uuid.UUID, db: AsyncSession) -> bool:
+    """
+    Return True if the user_tenant has the global 'tenant_admin' role.
+
+    Called at login, signup, and token refresh so the JWT always reflects
+    the current role assignment — role changes take effect at next token refresh.
+    """
+    result = await db.execute(
+        select(UserRole)
+        .join(Role, UserRole.role_id == Role.id)
+        .where(
+            UserRole.user_tenant_id == user_tenant_id,
+            Role.name == "tenant_admin",
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
 def _build_access_token(
-    user: User, user_tenant: UserTenant, session: Session
+    user: User,
+    user_tenant: UserTenant,
+    session: Session,
+    *,
+    is_tenant_admin: bool = False,
 ) -> str:
     """Assemble the JWT payload and sign it."""
     return create_access_token({
@@ -88,6 +110,7 @@ def _build_access_token(
         "tenant_id": str(user_tenant.tenant_id) if user_tenant.tenant_id else None,
         "session_id": str(session.id),
         "is_super_admin": user.is_super_admin,
+        "is_tenant_admin": is_tenant_admin,
     })
 
 
@@ -215,7 +238,9 @@ async def signup(
 
     # ── 6. Session + tokens ───────────────────────────────────────────────────
     session, raw_token, _ = await _create_session_and_tokens(user_tenant, db, request)
-    access_token = _build_access_token(user, user_tenant, session)
+    # Business signups always create a tenant_admin — no DB query needed here.
+    admin_flag = tenant is not None
+    access_token = _build_access_token(user, user_tenant, session, is_tenant_admin=admin_flag)
 
     # ── 7. Audit log ──────────────────────────────────────────────────────────
     await _log_event(
@@ -230,7 +255,11 @@ async def signup(
     return AuthResponse(
         access_token=access_token,
         refresh_token=raw_token,
-        user=UserResponse.from_orm_pair(user, tenant.id if tenant else None),
+        user=UserResponse.from_orm_pair(
+            user,
+            tenant.id if tenant else None,
+            is_tenant_admin=admin_flag,
+        ),
     )
 
 
@@ -305,14 +334,15 @@ async def login(
     user_tenant.last_login_at = now
 
     session, raw_token, _ = await _create_session_and_tokens(user_tenant, db, request)
-    access_token = _build_access_token(user, user_tenant, session)
+    admin_flag = await _is_tenant_admin(user_tenant.id, db)
+    access_token = _build_access_token(user, user_tenant, session, is_tenant_admin=admin_flag)
 
     await _log_event("login.success", db, request, user=user, tenant_id=user_tenant.tenant_id)
 
     return AuthResponse(
         access_token=access_token,
         refresh_token=raw_token,
-        user=UserResponse.from_orm_pair(user, user_tenant.tenant_id),
+        user=UserResponse.from_orm_pair(user, user_tenant.tenant_id, is_tenant_admin=admin_flag),
     )
 
 
@@ -398,7 +428,8 @@ async def refresh_token(
     await db.flush()
     stored.replaced_by_id = new_rt.id
 
-    access_token = _build_access_token(user, user_tenant, session)
+    admin_flag = await _is_tenant_admin(user_tenant.id, db)
+    access_token = _build_access_token(user, user_tenant, session, is_tenant_admin=admin_flag)
     await _log_event("token.refreshed", db, request, user=user, tenant_id=user_tenant.tenant_id)
 
     return AuthResponse(access_token=access_token, refresh_token=raw_new)

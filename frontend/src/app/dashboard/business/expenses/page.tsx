@@ -3,8 +3,9 @@
 /**
  * Expense reports list — /dashboard/business/expenses
  *
- * DRAFT reports: "Edit" link → /edit page, "Delete" button with confirm dialog.
- * SUBMITTED reports: "View" link → read-only detail page.
+ * M4: Status badges extended to cover PENDING_APPROVAL / APPROVED / REJECTED.
+ *     Tab filters updated to reflect all possible statuses.
+ *     REJECTED reports show both View and Edit actions.
  */
 
 import { useEffect, useState } from "react";
@@ -18,12 +19,13 @@ interface ExpenseReport {
   employee_id: string;
   employee_function: string | null;
   report_date: string;
-  status: "DRAFT" | "SUBMITTED";
+  status: string;
   currency: string;
   total_amount: string;
   submitted_at: string | null;
   created_at: string;
   line_count: number;
+  rejection_comment: string | null;
 }
 
 function formatNGN(amount: string | number): string {
@@ -37,21 +39,30 @@ function formatDate(dateStr: string): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "SUBMITTED") {
-    return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-        Submitted
-      </span>
-    );
-  }
+  const map: Record<string, { label: string; cls: string }> = {
+    DRAFT:            { label: "Draft",           cls: "bg-gray-100 text-gray-700" },
+    SUBMITTED:        { label: "Submitted",       cls: "bg-blue-100 text-blue-800" },
+    PENDING_APPROVAL: { label: "Pending Approval", cls: "bg-amber-100 text-amber-800" },
+    APPROVED:         { label: "Approved",        cls: "bg-green-100 text-green-800" },
+    REJECTED:         { label: "Rejected",        cls: "bg-red-100 text-red-800" },
+  };
+  const { label, cls } = map[status] ?? { label: status, cls: "bg-gray-100 text-gray-700" };
   return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
-      Draft
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+      {label}
     </span>
   );
 }
 
-type TabFilter = "ALL" | "DRAFT" | "SUBMITTED";
+type TabFilter = "ALL" | "DRAFT" | "IN_REVIEW" | "APPROVED" | "REJECTED";
+
+const TAB_STATUSES: Record<TabFilter, string[]> = {
+  ALL:       [],
+  DRAFT:     ["DRAFT"],
+  IN_REVIEW: ["SUBMITTED", "PENDING_APPROVAL"],
+  APPROVED:  ["APPROVED"],
+  REJECTED:  ["REJECTED"],
+};
 
 export default function ExpensesListPage() {
   const { accessToken } = useAuth();
@@ -60,19 +71,15 @@ export default function ExpensesListPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabFilter>("ALL");
 
-  // Delete confirm dialog
   const [deleteTarget, setDeleteTarget] = useState<ExpenseReport | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
-
     const fetchReports = async () => {
       try {
-        const data = await apiFetch<ExpenseReport[]>("/api/expenses/reports", {
-          token: accessToken,
-        });
+        const data = await apiFetch<ExpenseReport[]>("/api/expenses/reports", { token: accessToken });
         setReports(data);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to load reports.";
@@ -85,18 +92,21 @@ export default function ExpensesListPage() {
         setIsLoading(false);
       }
     };
-
     fetchReports();
   }, [accessToken]);
 
-  const draftCount = reports.filter((r) => r.status === "DRAFT").length;
-  const submittedCount = reports.filter((r) => r.status === "SUBMITTED").length;
+  const tabCounts: Record<TabFilter, number> = {
+    ALL:       reports.length,
+    DRAFT:     reports.filter((r) => r.status === "DRAFT").length,
+    IN_REVIEW: reports.filter((r) => ["SUBMITTED", "PENDING_APPROVAL"].includes(r.status)).length,
+    APPROVED:  reports.filter((r) => r.status === "APPROVED").length,
+    REJECTED:  reports.filter((r) => r.status === "REJECTED").length,
+  };
+
   const visibleReports =
-    activeTab === "DRAFT"
-      ? reports.filter((r) => r.status === "DRAFT")
-      : activeTab === "SUBMITTED"
-      ? reports.filter((r) => r.status === "SUBMITTED")
-      : reports;
+    activeTab === "ALL"
+      ? reports
+      : reports.filter((r) => TAB_STATUSES[activeTab].includes(r.status));
 
   const handleDelete = async () => {
     if (!deleteTarget || !accessToken) return;
@@ -117,8 +127,16 @@ export default function ExpensesListPage() {
     }
   };
 
+  const TABS: { key: TabFilter; label: string }[] = [
+    { key: "ALL",       label: "All" },
+    { key: "DRAFT",     label: "Drafts" },
+    { key: "IN_REVIEW", label: "In Review" },
+    { key: "APPROVED",  label: "Approved" },
+    { key: "REJECTED",  label: "Rejected" },
+  ];
+
   return (
-    <div className="px-6 py-8 max-w-6xl mx-auto">
+    <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
       {/* Delete confirm dialog */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -127,9 +145,7 @@ export default function ExpensesListPage() {
             <p className="text-sm text-gray-600 mb-1">
               Delete <span className="font-medium">{deleteTarget.report_number}</span>? This cannot be undone.
             </p>
-            {deleteError && (
-              <p className="text-xs text-red-600 mt-2 mb-1">{deleteError}</p>
-            )}
+            {deleteError && <p className="text-xs text-red-600 mt-2 mb-1">{deleteError}</p>}
             <div className="flex gap-3 justify-end mt-5">
               <button
                 type="button"
@@ -160,7 +176,7 @@ export default function ExpensesListPage() {
         </div>
         <Link
           href="/dashboard/business/expenses/new"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
         >
           <span>+</span>
           New Expense Retirement
@@ -169,19 +185,13 @@ export default function ExpensesListPage() {
 
       {/* Filter tabs */}
       {!error && (
-        <div className="flex gap-1 mb-5 border-b border-gray-200">
-          {(
-            [
-              { key: "ALL", label: "All", count: reports.length },
-              { key: "DRAFT", label: "Drafts", count: draftCount },
-              { key: "SUBMITTED", label: "Submitted", count: submittedCount },
-            ] as { key: TabFilter; label: string; count: number }[]
-          ).map(({ key, label, count }) => (
+        <div className="flex gap-1 mb-5 border-b border-gray-200 overflow-x-auto">
+          {TABS.map(({ key, label }) => (
             <button
               key={key}
               type="button"
               onClick={() => setActiveTab(key)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === key
                   ? "border-blue-600 text-blue-700"
                   : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
@@ -191,12 +201,10 @@ export default function ExpensesListPage() {
               {!isLoading && (
                 <span
                   className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-semibold ${
-                    activeTab === key
-                      ? "bg-blue-100 text-blue-700"
-                      : "bg-gray-100 text-gray-500"
+                    activeTab === key ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
                   }`}
                 >
-                  {count}
+                  {tabCounts[key]}
                 </span>
               )}
             </button>
@@ -221,17 +229,9 @@ export default function ExpensesListPage() {
       {!isLoading && !error && visibleReports.length === 0 && (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
           <div className="text-4xl mb-3">🧾</div>
-          <h3 className="text-sm font-semibold text-gray-800">
-            {activeTab === "ALL"
-              ? "No expense reports yet"
-              : activeTab === "DRAFT"
-              ? "No draft reports"
-              : "No submitted reports"}
-          </h3>
+          <h3 className="text-sm font-semibold text-gray-800">No reports in this view</h3>
           <p className="mt-1 text-xs text-gray-500">
-            {activeTab === "ALL"
-              ? "Create your first expense retirement to get started."
-              : "Switch to All to see all reports."}
+            {activeTab === "ALL" ? "Create your first expense retirement to get started." : "Switch to All to see all reports."}
           </p>
           {activeTab === "ALL" && (
             <Link
@@ -245,38 +245,38 @@ export default function ExpensesListPage() {
       )}
 
       {!isLoading && !error && visibleReports.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Report No.</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Function</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Lines</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Amount</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Report No.</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
+                <th className="hidden sm:table-cell px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Function</th>
+                <th className="hidden sm:table-cell px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Lines</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Total Amount</th>
                 <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {visibleReports.map((report) => (
                 <tr key={report.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-3 text-sm font-medium text-gray-900">
+                  <td className="px-5 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">
                     {report.report_number}
                   </td>
-                  <td className="px-5 py-3 text-sm text-gray-600">
+                  <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
                     {formatDate(report.report_date)}
                   </td>
-                  <td className="px-5 py-3 text-sm text-gray-600">
+                  <td className="hidden sm:table-cell px-5 py-3 text-sm text-gray-600">
                     {report.employee_function ?? "—"}
                   </td>
-                  <td className="px-5 py-3 text-sm text-gray-600">
+                  <td className="hidden sm:table-cell px-5 py-3 text-sm text-gray-600">
                     {report.line_count}
                   </td>
                   <td className="px-5 py-3">
                     <StatusBadge status={report.status} />
                   </td>
-                  <td className="px-5 py-3 text-sm font-semibold text-gray-900 text-right">
+                  <td className="px-5 py-3 text-sm font-semibold text-gray-900 text-right whitespace-nowrap">
                     {formatNGN(report.total_amount)}
                   </td>
                   <td className="px-5 py-3 text-right">
@@ -296,6 +296,21 @@ export default function ExpensesListPage() {
                           >
                             Delete
                           </button>
+                        </>
+                      ) : report.status === "REJECTED" ? (
+                        <>
+                          <Link
+                            href={`/dashboard/business/expenses/${report.id}`}
+                            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            View
+                          </Link>
+                          <Link
+                            href={`/dashboard/business/expenses/${report.id}/edit`}
+                            className="text-sm text-orange-600 hover:text-orange-800 font-medium"
+                          >
+                            Edit
+                          </Link>
                         </>
                       ) : (
                         <Link

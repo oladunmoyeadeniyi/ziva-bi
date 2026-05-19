@@ -217,11 +217,16 @@ async def add_line(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status != "DRAFT":
+    if report.status not in ("DRAFT", "REJECTED"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Lines can only be added to DRAFT reports.",
+            detail="Lines can only be added to DRAFT or REJECTED reports.",
         )
+    # Normalize REJECTED → DRAFT when the employee starts editing again
+    if report.status == "REJECTED":
+        report.status = "DRAFT"
+        report.rejection_comment = None
+        report.current_approval_level = None
 
     max_line_result = await db.execute(
         select(func.coalesce(func.max(ExpenseLine.line_number), 0)).where(
@@ -270,11 +275,15 @@ async def delete_line(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status != "DRAFT":
+    if report.status not in ("DRAFT", "REJECTED"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Lines can only be removed from DRAFT reports.",
+            detail="Lines can only be removed from DRAFT or REJECTED reports.",
         )
+    if report.status == "REJECTED":
+        report.status = "DRAFT"
+        report.rejection_comment = None
+        report.current_approval_level = None
 
     line_result = await db.execute(
         select(ExpenseLine).where(
@@ -331,11 +340,17 @@ async def update_report(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status != "DRAFT":
+    if report.status not in ("DRAFT", "REJECTED"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only DRAFT reports can be edited.",
+            detail="Only DRAFT or REJECTED reports can be edited.",
         )
+
+    # Reset rejected report to DRAFT so the employee can re-edit and resubmit
+    if report.status == "REJECTED":
+        report.status = "DRAFT"
+        report.rejection_comment = None
+        report.current_approval_level = None
 
     if data.report_date is not None:
         report.report_date = data.report_date

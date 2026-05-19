@@ -1,20 +1,25 @@
 """
-ZivaBI — expense management ORM models (Milestone 3).
+ZivaBI — expense management ORM models (Milestones 3–4).
 
 Tables:
     expense_reports   parent-level expense retirement submission per employee
     expense_lines     individual expense entries within a report
 
-Business-tier only for M3. Both tables require tenant_id.
+Business-tier only. Both tables require tenant_id.
 report_number is auto-generated on creation as EXP-{YEAR}-{SEQUENCE:04d}.
 total_amount is recalculated on every line add/delete.
+
+M4 additions to expense_reports:
+    current_approval_level  — tracks which approval level is currently active
+    rejection_comment       — stores the rejector's comment when status = REJECTED
+Status enum extended: DRAFT | SUBMITTED | PENDING_APPROVAL | APPROVED | REJECTED
 """
 
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DATE, NUMERIC, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import DATE, NUMERIC, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,6 +65,10 @@ class ExpenseReport(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    current_approval_level: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    rejection_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

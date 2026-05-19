@@ -3,13 +3,18 @@
 /**
  * Expense report detail — /dashboard/business/expenses/{report_id}
  *
- * Read-only view of a single expense report matching the enterprise form layout:
- * header info at top, expense lines in a clean table, grand total at bottom,
- * and a signature/approval placeholder section.
+ * Read-only view of a single expense report with full line detail.
+ *
+ * M4 additions:
+ *   - APPROVED banner (green)
+ *   - REJECTED banner with rejection comment + "Edit & Resubmit" button
+ *   - Live approval chain status section
+ *   - Approve/Reject panel when current user is the active approver
  */
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -34,12 +39,26 @@ interface ExpenseReport {
   employee_code: string | null;
   employee_function: string | null;
   report_date: string;
-  status: "DRAFT" | "SUBMITTED";
+  status: string;
   currency: string;
   total_amount: string;
   submitted_at: string | null;
+  current_approval_level: number | null;
+  rejection_comment: string | null;
   created_at: string;
   lines: ExpenseLine[];
+}
+
+interface ApprovalRecord {
+  id: string;
+  level: number;
+  level_label: string;
+  approver_id: string;
+  approver_name: string;
+  status: string;
+  comment: string | null;
+  actioned_at: string | null;
+  created_at: string;
 }
 
 function formatNGN(amount: string | number): string {
@@ -49,49 +68,65 @@ function formatNGN(amount: string | number): string {
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB");
+  return new Date(dateStr).toLocaleDateString("en-GB");
 }
 
 function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return "—";
-  const d = new Date(dateStr);
-  return d.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+  return new Date(dateStr).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
 }
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "SUBMITTED") {
-    return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
-        Submitted
-      </span>
-    );
-  }
+  const map: Record<string, { label: string; cls: string }> = {
+    DRAFT:            { label: "Draft",           cls: "bg-gray-100 text-gray-700" },
+    SUBMITTED:        { label: "Submitted",       cls: "bg-blue-100 text-blue-800" },
+    PENDING_APPROVAL: { label: "Pending Approval", cls: "bg-amber-100 text-amber-800" },
+    APPROVED:         { label: "Approved",        cls: "bg-green-100 text-green-800" },
+    REJECTED:         { label: "Rejected",        cls: "bg-red-100 text-red-800" },
+  };
+  const { label, cls } = map[status] ?? { label: status, cls: "bg-gray-100 text-gray-700" };
   return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">
-      Draft
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
+      {label}
     </span>
   );
 }
 
 export default function ExpenseDetailPage() {
   const { report_id } = useParams<{ report_id: string }>();
-  const { accessToken } = useAuth();
+  const { user, accessToken } = useAuth();
   const router = useRouter();
+
   const [report, setReport] = useState<ExpenseReport | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Approve/reject panel state
+  const [approveComment, setApproveComment] = useState("");
+  const [rejectComment, setRejectComment] = useState("");
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [isActioning, setIsActioning] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken || !report_id) return;
 
-    const fetchReport = async () => {
+    const fetchAll = async () => {
       try {
-        const data = await apiFetch<ExpenseReport>(
+        const reportData = await apiFetch<ExpenseReport>(
           `/api/expenses/reports/${report_id}`,
           { token: accessToken }
         );
-        setReport(data);
+        setReport(reportData);
+
+        if (["PENDING_APPROVAL", "APPROVED", "REJECTED"].includes(reportData.status)) {
+          const approvalData = await apiFetch<ApprovalRecord[]>(
+            `/api/approvals/reports/${report_id}`,
+            { token: accessToken }
+          );
+          setApprovals(approvalData);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load report.");
       } finally {
@@ -99,12 +134,81 @@ export default function ExpenseDetailPage() {
       }
     };
 
-    fetchReport();
+    fetchAll();
   }, [accessToken, report_id]);
+
+  // The approval record the current user needs to action (if any)
+  const myPendingApproval =
+    report?.status === "PENDING_APPROVAL"
+      ? approvals.find(
+          (a) =>
+            a.approver_id === user?.id &&
+            a.status === "PENDING" &&
+            a.level === report.current_approval_level
+        )
+      : undefined;
+
+  const handleApprove = async () => {
+    if (!myPendingApproval) return;
+    setIsActioning(true);
+    setActionError(null);
+    try {
+      const updated = await apiFetch<ExpenseReport>(
+        `/api/approvals/${myPendingApproval.id}/approve`,
+        {
+          method: "POST",
+          token: accessToken!,
+          body: JSON.stringify({ comment: approveComment || null }),
+        }
+      );
+      setReport(updated);
+      const updatedApprovals = await apiFetch<ApprovalRecord[]>(
+        `/api/approvals/reports/${report_id}`,
+        { token: accessToken! }
+      );
+      setApprovals(updatedApprovals);
+      setApproveComment("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to approve.");
+    } finally {
+      setIsActioning(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!myPendingApproval || !rejectComment.trim()) {
+      setActionError("Rejection comment is required.");
+      return;
+    }
+    setIsActioning(true);
+    setActionError(null);
+    try {
+      const updated = await apiFetch<ExpenseReport>(
+        `/api/approvals/${myPendingApproval.id}/reject`,
+        {
+          method: "POST",
+          token: accessToken!,
+          body: JSON.stringify({ comment: rejectComment }),
+        }
+      );
+      setReport(updated);
+      const updatedApprovals = await apiFetch<ApprovalRecord[]>(
+        `/api/approvals/reports/${report_id}`,
+        { token: accessToken! }
+      );
+      setApprovals(updatedApprovals);
+      setRejectComment("");
+      setShowRejectInput(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to reject.");
+    } finally {
+      setIsActioning(false);
+    }
+  };
 
   if (isLoading) {
     return (
-      <div className="px-6 py-8 max-w-5xl mx-auto space-y-4">
+      <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto space-y-4">
         <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
         <div className="h-40 bg-gray-100 rounded-xl animate-pulse" />
         <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
@@ -114,7 +218,7 @@ export default function ExpenseDetailPage() {
 
   if (error || !report) {
     return (
-      <div className="px-6 py-8 max-w-5xl mx-auto">
+      <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Report not found."}
         </div>
@@ -123,21 +227,35 @@ export default function ExpenseDetailPage() {
   }
 
   return (
-    <div className="px-6 py-8 max-w-5xl mx-auto">
-      {/* Navigation */}
+    <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
       <div className="mb-4">
-        <button
-          onClick={() => router.back()}
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
+        <button onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700">
           ← Back to Expense Reports
         </button>
       </div>
 
-      {/* Report shell */}
+      {/* Status banners */}
+      {report.status === "APPROVED" && (
+        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800 font-medium">
+          This report has been approved.
+        </div>
+      )}
+      {report.status === "REJECTED" && (
+        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+          <p className="font-semibold mb-1">This report was rejected:</p>
+          <p>{report.rejection_comment}</p>
+          <Link
+            href={`/dashboard/business/expenses/${report.id}/edit`}
+            className="inline-block mt-3 px-4 py-2 min-h-[44px] bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Edit &amp; Resubmit
+          </Link>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {/* Document header */}
-        <div className="px-8 py-6 border-b border-gray-200">
+        <div className="px-6 sm:px-8 py-6 border-b border-gray-200">
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-lg font-bold text-gray-900 uppercase tracking-wide">
@@ -153,7 +271,7 @@ export default function ExpenseDetailPage() {
         </div>
 
         {/* Employee + report header info */}
-        <div className="px-8 py-5 bg-gray-50 border-b border-gray-200">
+        <div className="px-6 sm:px-8 py-5 bg-gray-50 border-b border-gray-200">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-3">
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Employee Code</p>
@@ -171,7 +289,7 @@ export default function ExpenseDetailPage() {
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Currency</p>
               <p className="mt-0.5 text-sm text-gray-900">{report.currency}</p>
             </div>
-            {report.status === "SUBMITTED" && (
+            {report.submitted_at && (
               <div className="col-span-2">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitted At</p>
                 <p className="mt-0.5 text-sm text-gray-900">{formatDateTime(report.submitted_at)}</p>
@@ -181,23 +299,14 @@ export default function ExpenseDetailPage() {
         </div>
 
         {/* Lines table */}
-        <div className="px-8 py-6">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            Expense Lines
-          </h2>
+        <div className="px-6 sm:px-8 py-6 overflow-x-auto">
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Expense Lines</h2>
           <table className="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">#</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">GL Account</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">P/L Group</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">IO / Dimension</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">Cost Center</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">Location</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">Inv. Date</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">Inv. No.</th>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200">Description</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 border-b border-gray-200">Amount (NGN)</th>
+                {["#", "GL Account", "P/L Group", "IO / Dimension", "Cost Center", "Location", "Inv. Date", "Inv. No.", "Description", "Amount (NGN)"].map((h) => (
+                  <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -209,10 +318,10 @@ export default function ExpenseDetailPage() {
                   <td className="px-3 py-2 text-gray-600">{line.io_dimension ?? "—"}</td>
                   <td className="px-3 py-2 text-gray-600">{line.cost_center ?? "—"}</td>
                   <td className="px-3 py-2 text-gray-600">{line.location ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-600">{formatDate(line.invoice_date)}</td>
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{formatDate(line.invoice_date)}</td>
                   <td className="px-3 py-2 text-gray-600">{line.invoice_number ?? "—"}</td>
                   <td className="px-3 py-2 text-gray-900">{line.description}</td>
-                  <td className="px-3 py-2 text-gray-900 font-semibold text-right">
+                  <td className="px-3 py-2 text-gray-900 font-semibold text-right whitespace-nowrap">
                     {formatNGN(line.amount)}
                   </td>
                 </tr>
@@ -223,7 +332,7 @@ export default function ExpenseDetailPage() {
                 <td colSpan={9} className="px-3 py-3 text-right text-sm font-bold text-gray-800 uppercase tracking-wider">
                   Grand Total
                 </td>
-                <td className="px-3 py-3 text-right text-base font-bold text-gray-900">
+                <td className="px-3 py-3 text-right text-base font-bold text-gray-900 whitespace-nowrap">
                   {formatNGN(report.total_amount)}
                 </td>
               </tr>
@@ -231,37 +340,142 @@ export default function ExpenseDetailPage() {
           </table>
         </div>
 
-        {/* Approval signature placeholder */}
-        <div className="px-8 py-6 border-t border-gray-200 bg-gray-50">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
-            Approval Status
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
-              <p className="text-xs font-semibold text-gray-600 mb-2">Employee</p>
-              <div className="h-8 flex items-center justify-center">
-                <p className="text-xs text-green-700 font-medium">Submitted</p>
-              </div>
-              <p className="mt-2 text-xs text-gray-500 border-t border-gray-200 pt-2">
-                {report.submitted_at ? formatDateTime(report.submitted_at) : formatDate(report.report_date)}
-              </p>
-            </div>
-            <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
-              <p className="text-xs font-semibold text-gray-600 mb-2">Line Manager</p>
-              <div className="h-8 flex items-center justify-center">
-                <p className="text-xs text-amber-600 font-medium italic">Pending Line Manager Approval</p>
-              </div>
-              <p className="mt-2 text-xs text-gray-400 border-t border-gray-200 pt-2">Available in Milestone 4</p>
-            </div>
-            <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
-              <p className="text-xs font-semibold text-gray-600 mb-2">Finance</p>
-              <div className="h-8 flex items-center justify-center">
-                <p className="text-xs text-gray-400 italic">Awaiting approvals</p>
-              </div>
-              <p className="mt-2 text-xs text-gray-400 border-t border-gray-200 pt-2">Available in Milestone 4</p>
+        {/* Approval chain */}
+        {approvals.length > 0 && (
+          <div className="px-6 sm:px-8 py-6 border-t border-gray-200 bg-gray-50">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Approval Chain</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {approvals.map((a) => {
+                const statusCls =
+                  a.status === "APPROVED"
+                    ? "text-green-700 bg-green-50 border-green-200"
+                    : a.status === "REJECTED"
+                    ? "text-red-700 bg-red-50 border-red-200"
+                    : "text-amber-700 bg-amber-50 border-amber-200";
+                return (
+                  <div key={a.id} className={`border rounded-lg p-4 ${statusCls}`}>
+                    <p className="text-xs font-semibold mb-1">
+                      Level {a.level} — {a.level_label}
+                    </p>
+                    <p className="text-sm font-medium">{a.approver_name}</p>
+                    <p className="text-xs mt-1 font-semibold capitalize">{a.status.toLowerCase()}</p>
+                    {a.comment && <p className="text-xs mt-1 italic">"{a.comment}"</p>}
+                    {a.actioned_at && (
+                      <p className="text-xs mt-1 opacity-70">{formatDateTime(a.actioned_at)}</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Legacy M3 approval placeholder for SUBMITTED reports */}
+        {report.status === "SUBMITTED" && approvals.length === 0 && (
+          <div className="px-6 sm:px-8 py-6 border-t border-gray-200 bg-gray-50">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Approval Status</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Employee</p>
+                <p className="text-xs text-green-700 font-medium">Submitted</p>
+                <p className="mt-2 text-xs text-gray-500 border-t border-gray-200 pt-2">
+                  {formatDateTime(report.submitted_at)}
+                </p>
+              </div>
+              <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Approval</p>
+                <p className="text-xs text-gray-400 italic">Configure approval matrix to enable workflow</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Approve / Reject panel for active approvers */}
+        {myPendingApproval && (
+          <div className="px-6 sm:px-8 py-6 border-t border-gray-200">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
+              Your Action Required — Level {myPendingApproval.level}: {myPendingApproval.level_label}
+            </h2>
+
+            {actionError && (
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                {actionError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Comment <span className="text-gray-400">(optional for approval)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={approveComment}
+                  onChange={(e) => setApproveComment(e.target.value)}
+                  placeholder="Add a comment (optional)…"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {showRejectInput && (
+                <div>
+                  <label className="block text-xs font-medium text-red-700 mb-1">
+                    Rejection Reason <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={rejectComment}
+                    onChange={(e) => setRejectComment(e.target.value)}
+                    placeholder="Explain why this report is being rejected…"
+                    className="w-full px-3 py-2 border border-red-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                {!showRejectInput ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleApprove}
+                      disabled={isActioning}
+                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60"
+                    >
+                      {isActioning ? "Processing…" : "Approve"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowRejectInput(true); setActionError(null); }}
+                      disabled={isActioning}
+                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60"
+                    >
+                      Reject
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleReject}
+                      disabled={isActioning}
+                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60"
+                    >
+                      {isActioning ? "Processing…" : "Confirm Rejection"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowRejectInput(false); setRejectComment(""); setActionError(null); }}
+                      disabled={isActioning}
+                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     #       or a single URL 'https://a.com'
     allowed_origins: list[str] = ["http://localhost:3000"]
 
+    # ── SMTP (email notifications) ────────────────────────────────────────────
+    # If SMTP_HOST / SMTP_USER / SMTP_PASSWORD are not set, rejection emails
+    # are logged to the console instead of sent — safe for local dev.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+
     # ── App ───────────────────────────────────────────────────────────────────
     app_name: str = "ZivaBI"
     debug: bool = False

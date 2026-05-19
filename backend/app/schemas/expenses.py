@@ -113,6 +113,10 @@ class ExpenseReportResponse(BaseModel):
 
     lines is populated only on single-report GET; for the list endpoint
     it is an empty list and line_count reflects the actual count.
+
+    M4 additions:
+      current_approval_level  — active approval level (null when not in approval)
+      rejection_comment       — set when status = REJECTED
     """
 
     id: str
@@ -126,6 +130,8 @@ class ExpenseReportResponse(BaseModel):
     currency: str
     total_amount: Decimal
     submitted_at: datetime | None
+    current_approval_level: int | None
+    rejection_comment: str | None
     created_at: datetime
     updated_at: datetime
     lines: list[ExpenseLineResponse] = []
@@ -153,6 +159,8 @@ class ExpenseReportResponse(BaseModel):
             currency=report.currency,
             total_amount=report.total_amount,
             submitted_at=report.submitted_at,
+            current_approval_level=report.current_approval_level,
+            rejection_comment=report.rejection_comment,
             created_at=report.created_at,
             updated_at=report.updated_at,
             lines=lines,

@@ -33,6 +33,7 @@ class CurrentUser:
     Decoded JWT payload — available in every protected request without a DB hit.
 
     Fields mirror the JWT payload structure defined in app/core/security.py.
+    is_tenant_admin is True when the user has the tenant_admin role within their tenant.
     """
 
     user_id: uuid.UUID
@@ -41,6 +42,7 @@ class CurrentUser:
     tenant_id: uuid.UUID | None
     session_id: uuid.UUID
     is_super_admin: bool = False
+    is_tenant_admin: bool = False
 
 
 async def require_auth(
@@ -68,4 +70,5 @@ async def require_auth(
         tenant_id=uuid.UUID(payload["tenant_id"]) if payload.get("tenant_id") else None,
         session_id=uuid.UUID(payload["session_id"]),
         is_super_admin=payload.get("is_super_admin", False),
+        is_tenant_admin=payload.get("is_tenant_admin", False),
     )

@@ -110,12 +110,19 @@ class UserResponse(BaseModel):
     account_type: str
     tenant_id: str | None
     is_super_admin: bool
+    is_tenant_admin: bool = False
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_pair(cls, user: object, tenant_id: uuid.UUID | None) -> "UserResponse":
-        """Build response from a User ORM object + optional tenant_id."""
+    def from_orm_pair(
+        cls,
+        user: object,
+        tenant_id: uuid.UUID | None,
+        *,
+        is_tenant_admin: bool = False,
+    ) -> "UserResponse":
+        """Build response from a User ORM object + optional tenant_id and role flags."""
         return cls(
             id=str(user.id),  # type: ignore[attr-defined]
             email=user.email,  # type: ignore[attr-defined]
@@ -123,6 +130,7 @@ class UserResponse(BaseModel):
             account_type=user.account_type.value,  # type: ignore[attr-defined]
             tenant_id=str(tenant_id) if tenant_id else None,
             is_super_admin=user.is_super_admin,  # type: ignore[attr-defined]
+            is_tenant_admin=is_tenant_admin,
         )
 
 

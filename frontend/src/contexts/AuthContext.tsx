@@ -34,6 +34,7 @@ export interface AuthUser {
   account_type: "individual" | "business";
   tenant_id: string | null;
   is_super_admin: boolean;
+  is_tenant_admin: boolean;
 }
 
 interface AuthResponse {
