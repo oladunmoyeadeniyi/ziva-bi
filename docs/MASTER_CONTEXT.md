@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (Milestone 2 — Auth & User Management complete)
+> Last updated: May 2026 (Milestone 4 — Approval Workflow complete)
 
 ---
 
@@ -220,8 +220,25 @@ Each milestone:
 - Business dashboard refactored with shared sidebar layout
 - Navigation: "Expenses" added to business dashboard sidebar
 
-### ⏳ Next — Milestone 4
-- Business approval workflow: SUBMITTED → Line Manager → Finance → Posted
+### ✅ Completed — Milestone 4 (May 2026)
+- **Approval Workflow** — full configurable multi-level expense approval chain
+- DB: approval_matrix (per-tenant config), expense_approvals (per-report × level)
+- expense_reports extended: current_approval_level, rejection_comment columns
+- Status flow: DRAFT → PENDING_APPROVAL → APPROVED | REJECTED
+- Alembic migration applied (revision f1e2d3c4b5a6)
+- API: POST/GET /api/approvals/matrix, POST /api/approvals/reports/{id}/submit,
+  GET /api/approvals/queue, GET /api/approvals/reports/{id},
+  POST /api/approvals/{id}/approve, POST /api/approvals/{id}/reject
+- GET /api/users/tenant added for approver dropdown population
+- is_tenant_admin embedded in JWT (login, signup, refresh)
+- SMTP email notifications on rejection (console fallback if not configured)
+- Frontend: Approvals queue page, Approval Matrix settings page (admin only)
+- Sidebar: Approvals nav with pending count badge, Settings nav (admin only)
+- Expense list: 5-tab filter + all status badges + REJECTED edit action
+- Expense detail: full approval chain display + live approve/reject panel
+- Expense edit: approver selection modal, REJECTED report editing
+
+### ⏳ Next — Milestone 5
 - Individual can log a personal expense (simplest possible expense entry)
 
 ### Module PRDs still to rewrite (do each just before building that module)
