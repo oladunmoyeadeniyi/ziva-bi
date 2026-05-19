@@ -12,7 +12,7 @@ const MODULES = [
   { icon: "🧾", title: "Expense Retirement", desc: "Submit and track expense reports", href: "/dashboard/business/expenses", active: true },
   { icon: "📥", title: "Accounts Payable", desc: "Coming soon", href: null, active: false },
   { icon: "📤", title: "Accounts Receivable", desc: "Coming soon", href: null, active: false },
-  { icon: "✅", title: "Approvals", desc: "Coming soon", href: null, active: false },
+  { icon: "✅", title: "Approvals", desc: "Review and action expense reports", href: "/dashboard/business/approvals", active: true },
   { icon: "💼", title: "Payroll", desc: "Coming soon", href: null, active: false },
   { icon: "⚙️", title: "Tenant Admin", desc: "Coming soon", href: null, active: false },
 ];
@@ -55,7 +55,7 @@ export default function BusinessDashboard() {
       </div>
 
       <div className="mt-10 rounded-xl bg-blue-50 border border-blue-100 px-6 py-5">
-        <p className="text-sm text-blue-800 font-medium">Milestone 3 — Expense Retirement is now active.</p>
+        <p className="text-sm text-blue-800 font-medium">Milestone 4 — Approval Workflow is now active.</p>
         <p className="mt-1 text-xs text-blue-600">
           Account: {user?.email} · Tenant: {user?.tenant_id ?? "—"}
         </p>

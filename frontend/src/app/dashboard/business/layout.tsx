@@ -9,7 +9,7 @@
  *
  * M4 additions:
  *   - "Approvals" nav item with live pending-count badge
- *   - "Settings" nav item visible only to Tenant Admins
+ *   - "Settings" nav item (visible to all business users for now)
  */
 
 import { useEffect, useState } from "react";
@@ -39,15 +39,11 @@ export default function BusinessLayout({
       .catch(() => {/* non-fatal — badge stays at 0 */});
   }, [accessToken]);
 
-  const isTenantAdmin = user?.is_tenant_admin ?? false;
-
   const NAV_ITEMS = [
     { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null },
     { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false, badge: null },
     { href: "/dashboard/business/approvals", label: "Approvals", icon: "✅", exact: false, badge: pendingCount > 0 ? pendingCount : null },
-    ...(isTenantAdmin
-      ? [{ href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null }]
-      : []),
+    { href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null },
   ];
 
   return (
