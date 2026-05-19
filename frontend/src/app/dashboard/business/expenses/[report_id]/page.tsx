@@ -363,28 +363,69 @@ export default function ExpenseDetailPage() {
           </table>
         </div>
 
-        {/* Approval chain */}
+        {/* Approval chain — progress-style, one card per configured level */}
         {approvals.length > 0 && (
           <div className="px-6 sm:px-8 py-6 border-t border-gray-200 bg-gray-50">
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Approval Chain</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {approvals.map((a) => {
-                const statusCls =
-                  a.status === "APPROVED"
-                    ? "text-green-700 bg-green-50 border-green-200"
-                    : a.status === "REJECTED"
-                    ? "text-red-700 bg-red-50 border-red-200"
-                    : "text-amber-700 bg-amber-50 border-amber-200";
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
+              Approval Progress
+            </h2>
+            <div className="flex flex-col sm:flex-row items-stretch gap-0">
+              {approvals.map((a, idx) => {
+                const isActive =
+                  report.status === "PENDING_APPROVAL" &&
+                  a.level === report.current_approval_level;
+                const isApproved = a.status === "APPROVED";
+                const isRejected = a.status === "REJECTED";
+
+                const cardBorder = isActive
+                  ? "border-blue-400 bg-white shadow-sm"
+                  : isApproved
+                  ? "border-green-300 bg-green-50"
+                  : isRejected
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200 bg-white opacity-60";
+
+                const statusColor = isApproved
+                  ? "text-green-700"
+                  : isRejected
+                  ? "text-red-700"
+                  : isActive
+                  ? "text-blue-700"
+                  : "text-gray-400";
+
+                const statusIcon = isApproved ? "✓" : isRejected ? "✗" : isActive ? "●" : "○";
+                const statusLabel = isApproved ? "Approved" : isRejected ? "Rejected" : isActive ? "Awaiting" : "Pending";
+
                 return (
-                  <div key={a.id} className={`border rounded-lg p-4 ${statusCls}`}>
-                    <p className="text-xs font-semibold mb-1">
-                      Level {a.level} — {a.level_label}
-                    </p>
-                    <p className="text-sm font-medium">{a.approver_name}</p>
-                    <p className="text-xs mt-1 font-semibold capitalize">{a.status.toLowerCase()}</p>
-                    {a.comment && <p className="text-xs mt-1 italic">"{a.comment}"</p>}
-                    {a.actioned_at && (
-                      <p className="text-xs mt-1 opacity-70">{formatDateTime(a.actioned_at)}</p>
+                  <div key={a.id} className="flex sm:flex-col flex-row flex-1 items-stretch">
+                    {/* Card */}
+                    <div className={`flex-1 border-2 rounded-xl p-4 ${cardBorder} transition-all`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          Level {a.level}
+                        </span>
+                        <span className={`text-base font-bold leading-none ${statusColor}`}>
+                          {statusIcon}
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-gray-600 mb-1">{a.level_label}</p>
+                      <p className="text-sm font-medium text-gray-900 truncate">{a.approver_name}</p>
+                      <p className={`text-xs font-semibold mt-1 ${statusColor}`}>{statusLabel}</p>
+                      {a.comment && (
+                        <p className="text-xs text-gray-500 mt-1 italic line-clamp-2">
+                          "{a.comment}"
+                        </p>
+                      )}
+                      {a.actioned_at && (
+                        <p className="text-xs text-gray-400 mt-1">{formatDateTime(a.actioned_at)}</p>
+                      )}
+                    </div>
+
+                    {/* Connector arrow between cards (hidden after last) */}
+                    {idx < approvals.length - 1 && (
+                      <div className="flex items-center justify-center sm:w-6 sm:flex-none w-auto h-6 sm:h-auto">
+                        <span className="text-gray-300 text-sm font-bold sm:rotate-0 rotate-90">→</span>
+                      </div>
                     )}
                   </div>
                 );

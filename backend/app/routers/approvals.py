@@ -516,26 +516,36 @@ async def get_report_approvals(
             ExpenseApproval.report_id == report_id,
             ExpenseApproval.tenant_id == tenant_id,
         )
-        .order_by(ExpenseApproval.level.asc())
+        # Latest record first so the deduplication below keeps the most recent per level
+        .order_by(ExpenseApproval.level.asc(), ExpenseApproval.created_at.desc())
     )
     rows = result.all()
 
     matrix = await _get_matrix(tenant_id, db)
 
-    return [
-        ApprovalRecordResponse(
-            id=str(approval.id),
-            level=approval.level,
-            level_label=_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}",
-            approver_id=str(approval.approver_id),
-            approver_name=approver.full_name,
-            status=approval.status,
-            comment=approval.comment,
-            actioned_at=approval.actioned_at,
-            created_at=approval.created_at,
+    # Deduplicate: one record per level, keeping the latest (created_at DESC).
+    # Duplicate records can arise from a double-submit race condition; showing
+    # only the latest ensures the display and approve/reject logic stay coherent.
+    seen_levels: set[int] = set()
+    deduped: list[ApprovalRecordResponse] = []
+    for approval, approver in rows:
+        if approval.level in seen_levels:
+            continue
+        seen_levels.add(approval.level)
+        deduped.append(
+            ApprovalRecordResponse(
+                id=str(approval.id),
+                level=approval.level,
+                level_label=_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}",
+                approver_id=str(approval.approver_id),
+                approver_name=approver.full_name,
+                status=approval.status,
+                comment=approval.comment,
+                actioned_at=approval.actioned_at,
+                created_at=approval.created_at,
+            )
         )
-        for approval, approver in rows
-    ]
+    return deduped
 
 
 # ── Approve ───────────────────────────────────────────────────────────────────
@@ -591,14 +601,16 @@ async def approve(
     approval.comment = data.comment
     approval.actioned_at = datetime.now(timezone.utc)
 
-    # Check if there is a next level
+    # Check if there is a next PENDING level (use .first() — not .scalar_one_or_none() —
+    # to tolerate duplicate records that may exist from a double-submit race condition).
     next_result = await db.execute(
         select(ExpenseApproval).where(
             ExpenseApproval.report_id == report.id,
             ExpenseApproval.level == approval.level + 1,
-        )
+            ExpenseApproval.status == "PENDING",
+        ).order_by(ExpenseApproval.created_at.desc())
     )
-    next_approval = next_result.scalar_one_or_none()
+    next_approval = next_result.scalars().first()
 
     if next_approval:
         report.current_approval_level = next_approval.level
