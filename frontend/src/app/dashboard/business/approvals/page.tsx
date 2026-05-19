@@ -3,7 +3,11 @@
 /**
  * Approver queue — /dashboard/business/approvals
  *
- * Shows all expense reports currently awaiting the current user's approval.
+ * Two tabs:
+ *   Pending   — reports awaiting the current user's action (GET /api/approvals/queue)
+ *   Rejected  — reports that were rejected and involved the current user as an approver
+ *               (GET /api/approvals/rejected) — Bug 3 fix
+ *
  * "Review" navigates to the report detail page where approve/reject actions live.
  */
 
@@ -22,7 +26,10 @@ interface ApprovalQueueItem {
   level: number;
   level_label: string;
   created_at: string;
+  rejection_comment: string | null;
 }
+
+type Tab = "pending" | "rejected";
 
 function formatNGN(amount: string): string {
   const num = parseFloat(amount);
@@ -35,28 +42,71 @@ function formatDate(dateStr: string): string {
 
 export default function ApprovalsPage() {
   const { accessToken } = useAuth();
-  const [queue, setQueue] = useState<ApprovalQueueItem[]>([]);
+  const [activeTab, setActiveTab] = useState<Tab>("pending");
+  const [pendingQueue, setPendingQueue] = useState<ApprovalQueueItem[]>([]);
+  const [rejectedQueue, setRejectedQueue] = useState<ApprovalQueueItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
-    apiFetch<ApprovalQueueItem[]>("/api/approvals/queue", { token: accessToken })
-      .then((data) => setQueue(data))
+    setIsLoading(true);
+    setError(null);
+
+    const endpoint = activeTab === "pending" ? "/api/approvals/queue" : "/api/approvals/rejected";
+    apiFetch<ApprovalQueueItem[]>(endpoint, { token: accessToken })
+      .then((data) => {
+        if (activeTab === "pending") setPendingQueue(data);
+        else setRejectedQueue(data);
+      })
       .catch((err) => {
-        const msg = err instanceof Error ? err.message : "Failed to load approval queue.";
+        const msg = err instanceof Error ? err.message : "Failed to load.";
         setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
       })
       .finally(() => setIsLoading(false));
-  }, [accessToken]);
+  }, [accessToken, activeTab]);
+
+  const items = activeTab === "pending" ? pendingQueue : rejectedQueue;
 
   return (
     <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-gray-900">Approvals</h1>
         <p className="mt-0.5 text-sm text-gray-500">
-          Expense reports waiting for your review and approval.
+          Review expense reports assigned to you for approval.
         </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-5 border-b border-gray-200">
+        {(
+          [
+            { key: "pending" as Tab, label: "Pending" },
+            { key: "rejected" as Tab, label: "Rejected" },
+          ]
+        ).map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setActiveTab(key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === key
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            {label}
+            {!isLoading && (
+              <span
+                className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-semibold ${
+                  activeTab === key ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
+                }`}
+              >
+                {key === "pending" ? pendingQueue.length : rejectedQueue.length}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       {isLoading && (
@@ -73,17 +123,21 @@ export default function ApprovalsPage() {
         </div>
       )}
 
-      {!isLoading && !error && queue.length === 0 && (
+      {!isLoading && !error && items.length === 0 && (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
-          <div className="text-4xl mb-3">✅</div>
-          <h3 className="text-sm font-semibold text-gray-800">No pending approvals</h3>
+          <div className="text-4xl mb-3">{activeTab === "pending" ? "✅" : "📋"}</div>
+          <h3 className="text-sm font-semibold text-gray-800">
+            {activeTab === "pending" ? "No pending approvals" : "No rejected reports"}
+          </h3>
           <p className="mt-1 text-xs text-gray-500">
-            You have no expense reports awaiting your review.
+            {activeTab === "pending"
+              ? "You have no expense reports awaiting your review."
+              : "No reports you were involved in have been rejected."}
           </p>
         </div>
       )}
 
-      {!isLoading && !error && queue.length > 0 && (
+      {!isLoading && !error && items.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -92,13 +146,18 @@ export default function ApprovalsPage() {
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Employee</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
                 <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Total Amount</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Your Level</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                  {activeTab === "pending" ? "Your Level" : "Level"}
+                </th>
+                {activeTab === "rejected" && (
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Rejection Reason</th>
+                )}
                 <th className="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {queue.map((item) => (
-                <tr key={item.approval_id} className="hover:bg-gray-50 transition-colors">
+              {items.map((item) => (
+                <tr key={item.report_id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-5 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">
                     {item.report_number}
                   </td>
@@ -112,16 +171,23 @@ export default function ApprovalsPage() {
                     {formatNGN(item.total_amount)}
                   </td>
                   <td className="px-5 py-3">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                      activeTab === "pending" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                    }`}>
                       L{item.level}: {item.level_label}
                     </span>
                   </td>
+                  {activeTab === "rejected" && (
+                    <td className="px-5 py-3 text-sm text-gray-600 max-w-xs">
+                      <span className="line-clamp-2">{item.rejection_comment ?? "—"}</span>
+                    </td>
+                  )}
                   <td className="px-5 py-3 text-right">
                     <Link
                       href={`/dashboard/business/expenses/${item.report_id}`}
                       className="text-sm text-blue-600 hover:text-blue-800 font-medium"
                     >
-                      Review
+                      {activeTab === "pending" ? "Review" : "View"}
                     </Link>
                   </td>
                 </tr>

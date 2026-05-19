@@ -239,16 +239,17 @@ export default function EditExpensePage() {
     }
   };
 
-  // Opens the approver selection modal, fetching matrix + users if not yet loaded
+  // Opens the approver selection modal OR submits directly for resubmissions.
   const openApproverModal = async () => {
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
     setError(null);
 
     try {
-      const [matrixData, usersData] = await Promise.all([
+      // Check if existing approval records exist (= resubmission of a rejected report)
+      const [existingApprovals, matrixData] = await Promise.all([
+        apiFetch<{ id: string }[]>(`/api/approvals/reports/${report_id}`, { token: accessToken! }),
         apiFetch<ApprovalMatrix | null>("/api/approvals/matrix", { token: accessToken! }),
-        apiFetch<TenantUser[]>("/api/users/tenant", { token: accessToken! }),
       ]);
 
       if (!matrixData) {
@@ -256,6 +257,28 @@ export default function EditExpensePage() {
         return;
       }
 
+      if (existingApprovals.length > 0) {
+        // Resubmission — skip the modal, submit directly; backend reuses original approvers
+        setIsSubmitting(true);
+        try {
+          await saveHeaderAndLines();
+          await apiFetch(`/api/approvals/reports/${report_id}/submit`, {
+            method: "POST",
+            token: accessToken!,
+            body: JSON.stringify({}),
+          });
+          router.push("/dashboard/business/expenses");
+        } catch (submitErr) {
+          const msg = submitErr instanceof Error ? submitErr.message : "Failed to submit report.";
+          setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
+        } finally {
+          setIsSubmitting(false);
+        }
+        return;
+      }
+
+      // First-time submission — show the approver selection modal
+      const usersData = await apiFetch<TenantUser[]>("/api/users/tenant", { token: accessToken! });
       setMatrix(matrixData);
       setTenantUsers(usersData);
       setL1Approver("");

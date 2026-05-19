@@ -261,15 +261,17 @@ async def submit_with_approvers(
     """
     Submit an expense report for approval (M4 flow).
 
-    Replaces the legacy /api/expenses/reports/{report_id}/submit endpoint.
+    Handles two scenarios:
 
-    Steps:
-      1. Validate report is DRAFT with at least 1 line.
-      2. Validate the tenant has an approval matrix configured.
-      3. Validate provided approver IDs belong to the same tenant.
-      4. Determine applicable levels (amount thresholds may skip L2 / L3).
-      5. Create ExpenseApproval records for each applicable level.
-      6. Set report status = PENDING_APPROVAL, current_approval_level = 1.
+    First-time submission (no prior expense_approvals records):
+      - level1_approver_id (and l2/l3 where applicable) must be provided.
+      - Creates ExpenseApproval records for each applicable level.
+
+    Resubmission (expense_approvals records already exist from a prior rejected submission):
+      - Approver IDs from the request are ignored.
+      - Old approval records are deleted and recreated with the same approver IDs,
+        all reset to PENDING status — so the approval chain starts fresh.
+      - No modal shown to the employee; original approvers are reused automatically.
     """
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
@@ -292,47 +294,73 @@ async def submit_with_approvers(
             detail="Your company has not configured an approval matrix. Contact your administrator.",
         )
 
-    # Determine which levels are applicable based on amount thresholds
-    applicable_levels: list[tuple[int, uuid.UUID]] = []
+    # ── Check for existing approvals (determines first-time vs resubmission) ──
+    existing_result = await db.execute(
+        select(ExpenseApproval)
+        .where(ExpenseApproval.report_id == report.id)
+        .order_by(ExpenseApproval.level.asc())
+    )
+    existing_approvals = existing_result.scalars().all()
 
-    # Level 1 is always required
-    applicable_levels.append((1, data.level1_approver_id))
+    if existing_approvals:
+        # Resubmission — reuse the same approver IDs, just reset to PENDING
+        level_to_approver: dict[int, uuid.UUID] = {
+            a.level: a.approver_id for a in existing_approvals
+        }
+        for old in existing_approvals:
+            await db.delete(old)
+        await db.flush()
+        for level, approver_id in sorted(level_to_approver.items()):
+            db.add(ExpenseApproval(
+                report_id=report.id,
+                tenant_id=tenant_id,
+                level=level,
+                approver_id=approver_id,
+                status="PENDING",
+            ))
+    else:
+        # First-time submission — require approver IDs from the request body
+        if data.level1_approver_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Level 1 approver is required.",
+            )
 
-    # Level 2: only if matrix has >= 2 levels AND threshold not blocking
-    if matrix.levels >= 2:
-        threshold_l2 = matrix.amount_threshold_l2
-        if threshold_l2 is None or report.total_amount > threshold_l2:
-            if data.level2_approver_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Level 2 approver is required for this report.",
-                )
-            applicable_levels.append((2, data.level2_approver_id))
+        applicable_levels: list[tuple[int, uuid.UUID]] = [
+            (1, data.level1_approver_id)
+        ]
 
-    # Level 3: only if matrix has 3 levels AND threshold not blocking
-    if matrix.levels >= 3:
-        threshold_l3 = matrix.amount_threshold_l3
-        if threshold_l3 is None or report.total_amount > threshold_l3:
-            if data.level3_approver_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Level 3 approver is required for this report.",
-                )
-            applicable_levels.append((3, data.level3_approver_id))
+        if matrix.levels >= 2:
+            threshold_l2 = matrix.amount_threshold_l2
+            if threshold_l2 is None or report.total_amount > threshold_l2:
+                if data.level2_approver_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Level 2 approver is required for this report.",
+                    )
+                applicable_levels.append((2, data.level2_approver_id))
 
-    # Validate all approvers belong to the same tenant
-    for _, approver_id in applicable_levels:
-        await _validate_approver(approver_id, tenant_id, db)
+        if matrix.levels >= 3:
+            threshold_l3 = matrix.amount_threshold_l3
+            if threshold_l3 is None or report.total_amount > threshold_l3:
+                if data.level3_approver_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Level 3 approver is required for this report.",
+                    )
+                applicable_levels.append((3, data.level3_approver_id))
 
-    # Create approval records
-    for level, approver_id in applicable_levels:
-        db.add(ExpenseApproval(
-            report_id=report.id,
-            tenant_id=tenant_id,
-            level=level,
-            approver_id=approver_id,
-            status="PENDING",
-        ))
+        for _, approver_id in applicable_levels:
+            await _validate_approver(approver_id, tenant_id, db)
+
+        for level, approver_id in applicable_levels:
+            db.add(ExpenseApproval(
+                report_id=report.id,
+                tenant_id=tenant_id,
+                level=level,
+                approver_id=approver_id,
+                status="PENDING",
+            ))
 
     report.status = "PENDING_APPROVAL"
     report.current_approval_level = 1
@@ -393,6 +421,62 @@ async def get_approval_queue(
                 level=approval.level,
                 level_label=_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}",
                 created_at=approval.created_at,
+            )
+        )
+    return items
+
+
+# ── Rejected Reports (approver visibility) ───────────────────────────────────
+
+@router.get("/rejected", response_model=list[ApprovalQueueItem])
+async def get_rejected_reports(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[ApprovalQueueItem]:
+    """
+    Return all expense reports that were rejected AND where the current user
+    was assigned as an approver at any level.
+
+    Gives approvers visibility into rejections they were involved in so they
+    can track the outcome without needing to search through every report.
+    Deduplicated — each report appears once even if the same user was assigned
+    at multiple levels.
+    """
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(ExpenseApproval, ExpenseReport, User)
+        .join(ExpenseReport, ExpenseApproval.report_id == ExpenseReport.id)
+        .join(User, ExpenseReport.employee_id == User.id)
+        .where(
+            ExpenseApproval.approver_id == current_user.user_id,
+            ExpenseReport.status == "REJECTED",
+            ExpenseApproval.tenant_id == tenant_id,
+        )
+        .order_by(ExpenseReport.created_at.desc(), ExpenseApproval.level.asc())
+    )
+    rows = result.all()
+
+    matrix = await _get_matrix(tenant_id, db)
+
+    seen: set[uuid.UUID] = set()
+    items: list[ApprovalQueueItem] = []
+    for approval, report, employee in rows:
+        if report.id in seen:
+            continue
+        seen.add(report.id)
+        items.append(
+            ApprovalQueueItem(
+                approval_id=str(approval.id),
+                report_id=str(report.id),
+                report_number=report.report_number,
+                employee_name=employee.full_name,
+                report_date=report.report_date,
+                total_amount=report.total_amount,
+                level=approval.level,
+                level_label=_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}",
+                created_at=approval.created_at,
+                rejection_comment=report.rejection_comment,
             )
         )
     return items

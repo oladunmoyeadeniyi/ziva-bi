@@ -81,12 +81,15 @@ class SubmitWithApproversRequest(BaseModel):
     """
     Payload for the M4 submit endpoint.
 
-    level1_approver_id is always required.
-    level2_approver_id / level3_approver_id are only required when the tenant's
-    approval matrix has >= 2 / >= 3 levels and the report amount meets the threshold.
+    For first-time submissions, level1_approver_id is required (and level 2/3 when
+    applicable based on matrix config and amount thresholds).
+
+    For resubmissions (when expense_approvals records already exist for the report),
+    all fields are optional — the backend reuses the approver IDs from the previous
+    submission automatically.
     """
 
-    level1_approver_id: uuid.UUID
+    level1_approver_id: uuid.UUID | None = None
     level2_approver_id: uuid.UUID | None = None
     level3_approver_id: uuid.UUID | None = None
 
@@ -94,7 +97,7 @@ class SubmitWithApproversRequest(BaseModel):
 # ── Approval Queue ────────────────────────────────────────────────────────────
 
 class ApprovalQueueItem(BaseModel):
-    """One row in the approver's pending-action queue."""
+    """One row in the approver's pending-action queue or rejected history."""
 
     approval_id: str
     report_id: str
@@ -105,6 +108,7 @@ class ApprovalQueueItem(BaseModel):
     level: int
     level_label: str
     created_at: datetime
+    rejection_comment: str | None = None  # populated for rejected items (Bug 3)
 
 
 # ── Approval Record ───────────────────────────────────────────────────────────

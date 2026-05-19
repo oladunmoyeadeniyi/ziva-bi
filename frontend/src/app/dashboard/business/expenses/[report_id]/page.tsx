@@ -149,34 +149,52 @@ export default function ExpenseDetailPage() {
       : undefined;
 
   const handleApprove = async () => {
-    if (!myPendingApproval) return;
+    // Re-derive from current state to avoid stale closure
+    const pendingApproval = report?.status === "PENDING_APPROVAL"
+      ? approvals.find(
+          (a) => a.approver_id === user?.id && a.status === "PENDING" && a.level === report.current_approval_level
+        )
+      : undefined;
+    if (!pendingApproval || !accessToken) return;
+
     setIsActioning(true);
     setActionError(null);
     try {
       const updated = await apiFetch<ExpenseReport>(
-        `/api/approvals/${myPendingApproval.id}/approve`,
+        `/api/approvals/${pendingApproval.id}/approve`,
         {
           method: "POST",
-          token: accessToken!,
+          token: accessToken,
           body: JSON.stringify({ comment: approveComment || null }),
         }
       );
       setReport(updated);
       const updatedApprovals = await apiFetch<ApprovalRecord[]>(
         `/api/approvals/reports/${report_id}`,
-        { token: accessToken! }
+        { token: accessToken }
       );
       setApprovals(updatedApprovals);
       setApproveComment("");
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to approve.");
+      const msg = err instanceof Error ? err.message : "Failed to approve.";
+      setActionError(
+        msg === "Failed to fetch"
+          ? "Cannot reach the server. Make sure the backend is running."
+          : msg
+      );
     } finally {
       setIsActioning(false);
     }
   };
 
   const handleReject = async () => {
-    if (!myPendingApproval || !rejectComment.trim()) {
+    const pendingApproval = report?.status === "PENDING_APPROVAL"
+      ? approvals.find(
+          (a) => a.approver_id === user?.id && a.status === "PENDING" && a.level === report.current_approval_level
+        )
+      : undefined;
+    if (!pendingApproval || !accessToken) return;
+    if (!rejectComment.trim()) {
       setActionError("Rejection comment is required.");
       return;
     }
@@ -184,23 +202,28 @@ export default function ExpenseDetailPage() {
     setActionError(null);
     try {
       const updated = await apiFetch<ExpenseReport>(
-        `/api/approvals/${myPendingApproval.id}/reject`,
+        `/api/approvals/${pendingApproval.id}/reject`,
         {
           method: "POST",
-          token: accessToken!,
+          token: accessToken,
           body: JSON.stringify({ comment: rejectComment }),
         }
       );
       setReport(updated);
       const updatedApprovals = await apiFetch<ApprovalRecord[]>(
         `/api/approvals/reports/${report_id}`,
-        { token: accessToken! }
+        { token: accessToken }
       );
       setApprovals(updatedApprovals);
       setRejectComment("");
       setShowRejectInput(false);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to reject.");
+      const msg = err instanceof Error ? err.message : "Failed to reject.";
+      setActionError(
+        msg === "Failed to fetch"
+          ? "Cannot reach the server. Make sure the backend is running."
+          : msg
+      );
     } finally {
       setIsActioning(false);
     }
