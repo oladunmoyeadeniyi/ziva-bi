@@ -149,6 +149,40 @@ class RejectRequest(BaseModel):
         return v
 
 
+# ── Refer Back ────────────────────────────────────────────────────────────────
+
+class ReferBackRequest(BaseModel):
+    """
+    Payload for the refer-back action.
+
+    target_type = "requestor": sends the report back to the employee for revision.
+      The resubmission will resume from the referring approver's level.
+    target_type = "approver": activates a lower approval level for consultation.
+      After the lower approver acts, control returns to the referring level.
+      target_level is required when target_type is "approver".
+    comment is always required.
+    """
+
+    target_type: str
+    target_level: int | None = None
+    comment: str
+
+    @field_validator("target_type")
+    @classmethod
+    def validate_target_type(cls, v: str) -> str:
+        if v not in ("approver", "requestor"):
+            raise ValueError('target_type must be "approver" or "requestor".')
+        return v
+
+    @field_validator("comment")
+    @classmethod
+    def validate_comment(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Comment is required.")
+        return v
+
+
 # ── Tenant User (for approver dropdowns) ─────────────────────────────────────
 
 class TenantUserResponse(BaseModel):

@@ -1,5 +1,5 @@
 """
-ZivaBI — expense management ORM models (Milestones 3–4).
+ZivaBI — expense management ORM models (Milestones 3–5).
 
 Tables:
     expense_reports   parent-level expense retirement submission per employee
@@ -13,6 +13,14 @@ M4 additions to expense_reports:
     current_approval_level  — tracks which approval level is currently active
     rejection_comment       — stores the rejector's comment when status = REJECTED
 Status enum extended: DRAFT | SUBMITTED | PENDING_APPROVAL | APPROVED | REJECTED
+
+M5 additions to expense_reports:
+    rejected_at_level        — level that rejected or referred-back-to-requestor;
+                               on resubmit, approval chain resumes from this level
+                               (skipping re-approval of already-approved lower levels)
+    referred_back_from_level — set during refer-back-to-approver flow; tracks the
+                               higher level to return to once the lower approver acts
+Status enum extended: + REFERRED_TO_REQUESTOR
 """
 
 import uuid
@@ -57,7 +65,7 @@ class ExpenseReport(Base):
     employee_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     employee_function: Mapped[str | None] = mapped_column(String(255), nullable=True)
     report_date: Mapped[date] = mapped_column(DATE, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="DRAFT")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="NGN")
     total_amount: Mapped[Decimal] = mapped_column(
         NUMERIC(15, 2), nullable=False, default=Decimal("0.00")
@@ -69,6 +77,10 @@ class ExpenseReport(Base):
         Integer, nullable=True
     )
     rejection_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Level that rejected/referred-back-to-requestor; resubmit resumes from here
+    rejected_at_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set during refer-back-to-approver: the higher level to return to once lower approver acts
+    referred_back_from_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -31,13 +31,13 @@ export default function BusinessLayout({
   const pathname = usePathname();
   const [pendingCount, setPendingCount] = useState<number>(0);
 
-  // Fetch pending approval count for the badge
+  // Fetch pending approval count for the badge — refreshes on every navigation change
   useEffect(() => {
     if (!accessToken) return;
     apiFetch<ApprovalQueueItem[]>("/api/approvals/queue", { token: accessToken })
       .then((queue) => setPendingCount(queue.length))
       .catch(() => {/* non-fatal — badge stays at 0 */});
-  }, [accessToken]);
+  }, [accessToken, pathname]);
 
   const NAV_ITEMS = [
     { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null },

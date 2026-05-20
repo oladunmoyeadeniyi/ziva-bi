@@ -217,13 +217,13 @@ async def add_line(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status not in ("DRAFT", "REJECTED"):
+    if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Lines can only be added to DRAFT or REJECTED reports.",
+            detail="Lines can only be added to DRAFT, REJECTED, or REFERRED_TO_REQUESTOR reports.",
         )
-    # Normalize REJECTED → DRAFT when the employee starts editing again
-    if report.status == "REJECTED":
+    # Normalise to DRAFT; preserve rejected_at_level so resubmit can resume from the right level
+    if report.status in ("REJECTED", "REFERRED_TO_REQUESTOR"):
         report.status = "DRAFT"
         report.rejection_comment = None
         report.current_approval_level = None
@@ -275,12 +275,12 @@ async def delete_line(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status not in ("DRAFT", "REJECTED"):
+    if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Lines can only be removed from DRAFT or REJECTED reports.",
+            detail="Lines can only be removed from DRAFT, REJECTED, or REFERRED_TO_REQUESTOR reports.",
         )
-    if report.status == "REJECTED":
+    if report.status in ("REJECTED", "REFERRED_TO_REQUESTOR"):
         report.status = "DRAFT"
         report.rejection_comment = None
         report.current_approval_level = None
@@ -340,14 +340,14 @@ async def update_report(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status not in ("DRAFT", "REJECTED"):
+    if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only DRAFT or REJECTED reports can be edited.",
+            detail="Only DRAFT, REJECTED, or REFERRED_TO_REQUESTOR reports can be edited.",
         )
 
-    # Reset rejected report to DRAFT so the employee can re-edit and resubmit
-    if report.status == "REJECTED":
+    # Reset to DRAFT so the employee can re-edit and resubmit; preserve rejected_at_level
+    if report.status in ("REJECTED", "REFERRED_TO_REQUESTOR"):
         report.status = "DRAFT"
         report.rejection_comment = None
         report.current_approval_level = None

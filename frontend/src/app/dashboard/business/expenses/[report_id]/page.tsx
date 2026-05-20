@@ -6,10 +6,15 @@
  * Read-only view of a single expense report with full line detail.
  *
  * M4 additions:
- *   - APPROVED banner (green)
- *   - REJECTED banner with rejection comment + "Edit & Resubmit" button
+ *   - APPROVED / REJECTED banners
  *   - Live approval chain status section
  *   - Approve/Reject panel when current user is the active approver
+ *
+ * M5 additions:
+ *   - REFERRED_TO_REQUESTOR banner (amber) + Edit & Resubmit action
+ *   - REFERRED_BACK status shown in amber in the approval chain
+ *   - Refer Back action panel (alongside Approve / Reject)
+ *   - Refer Back modal: refer to lower approver or back to requestor
  */
 
 import { useEffect, useState } from "react";
@@ -78,11 +83,13 @@ function formatDateTime(dateStr: string | null): string {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    DRAFT:            { label: "Draft",           cls: "bg-gray-100 text-gray-700" },
-    SUBMITTED:        { label: "Submitted",       cls: "bg-blue-100 text-blue-800" },
-    PENDING_APPROVAL: { label: "Pending Approval", cls: "bg-amber-100 text-amber-800" },
-    APPROVED:         { label: "Approved",        cls: "bg-green-100 text-green-800" },
-    REJECTED:         { label: "Rejected",        cls: "bg-red-100 text-red-800" },
+    DRAFT:                 { label: "Draft",            cls: "bg-gray-100 text-gray-700" },
+    SUBMITTED:             { label: "Submitted",        cls: "bg-blue-100 text-blue-800" },
+    PENDING_APPROVAL:      { label: "Pending Approval", cls: "bg-yellow-100 text-yellow-800" },
+    APPROVED:              { label: "Approved",         cls: "bg-green-100 text-green-800" },
+    REJECTED:              { label: "Rejected",         cls: "bg-red-100 text-red-800" },
+    REFERRED_BACK:         { label: "Referred Back",    cls: "bg-orange-100 text-orange-800" },
+    REFERRED_TO_REQUESTOR: { label: "Referred to You",  cls: "bg-orange-100 text-orange-800" },
   };
   const { label, cls } = map[status] ?? { label: status, cls: "bg-gray-100 text-gray-700" };
   return (
@@ -102,12 +109,19 @@ export default function ExpenseDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Approve/reject panel state
+  // Approve panel state
   const [approveComment, setApproveComment] = useState("");
-  const [rejectComment, setRejectComment] = useState("");
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [rejectComment, setRejectComment] = useState("");
   const [isActioning, setIsActioning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Refer Back modal state
+  const [showReferBackModal, setShowReferBackModal] = useState(false);
+  const [referBackType, setReferBackType] = useState<"approver" | "requestor">("requestor");
+  const [referBackTargetLevel, setReferBackTargetLevel] = useState<number>(0);
+  const [referBackComment, setReferBackComment] = useState("");
+  const [referBackError, setReferBackError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken || !report_id) return;
@@ -120,7 +134,7 @@ export default function ExpenseDetailPage() {
         );
         setReport(reportData);
 
-        if (["PENDING_APPROVAL", "APPROVED", "REJECTED"].includes(reportData.status)) {
+        if (["PENDING_APPROVAL", "APPROVED", "REJECTED", "REFERRED_TO_REQUESTOR"].includes(reportData.status)) {
           const approvalData = await apiFetch<ApprovalRecord[]>(
             `/api/approvals/reports/${report_id}`,
             { token: accessToken }
@@ -148,8 +162,17 @@ export default function ExpenseDetailPage() {
         )
       : undefined;
 
+  const refreshApprovals = async () => {
+    if (!accessToken || !report_id) return;
+    const [updatedReport, updatedApprovals] = await Promise.all([
+      apiFetch<ExpenseReport>(`/api/expenses/reports/${report_id}`, { token: accessToken }),
+      apiFetch<ApprovalRecord[]>(`/api/approvals/reports/${report_id}`, { token: accessToken }),
+    ]);
+    setReport(updatedReport);
+    setApprovals(updatedApprovals);
+  };
+
   const handleApprove = async () => {
-    // Re-derive from current state to avoid stale closure
     const pendingApproval = report?.status === "PENDING_APPROVAL"
       ? approvals.find(
           (a) => a.approver_id === user?.id && a.status === "PENDING" && a.level === report.current_approval_level
@@ -160,28 +183,15 @@ export default function ExpenseDetailPage() {
     setIsActioning(true);
     setActionError(null);
     try {
-      const updated = await apiFetch<ExpenseReport>(
+      await apiFetch<ExpenseReport>(
         `/api/approvals/${pendingApproval.id}/approve`,
-        {
-          method: "POST",
-          token: accessToken,
-          body: JSON.stringify({ comment: approveComment || null }),
-        }
+        { method: "POST", token: accessToken, body: JSON.stringify({ comment: approveComment || null }) }
       );
-      setReport(updated);
-      const updatedApprovals = await apiFetch<ApprovalRecord[]>(
-        `/api/approvals/reports/${report_id}`,
-        { token: accessToken }
-      );
-      setApprovals(updatedApprovals);
       setApproveComment("");
+      await refreshApprovals();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to approve.";
-      setActionError(
-        msg === "Failed to fetch"
-          ? "Cannot reach the server. Make sure the backend is running."
-          : msg
-      );
+      setActionError(msg === "Failed to fetch" ? "Cannot reach the server. Make sure the backend is running." : msg);
     } finally {
       setIsActioning(false);
     }
@@ -194,36 +204,60 @@ export default function ExpenseDetailPage() {
         )
       : undefined;
     if (!pendingApproval || !accessToken) return;
-    if (!rejectComment.trim()) {
-      setActionError("Rejection comment is required.");
-      return;
-    }
+    if (!rejectComment.trim()) { setActionError("Rejection comment is required."); return; }
+
     setIsActioning(true);
     setActionError(null);
     try {
-      const updated = await apiFetch<ExpenseReport>(
+      await apiFetch<ExpenseReport>(
         `/api/approvals/${pendingApproval.id}/reject`,
+        { method: "POST", token: accessToken, body: JSON.stringify({ comment: rejectComment }) }
+      );
+      setRejectComment("");
+      setShowRejectInput(false);
+      await refreshApprovals();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to reject.";
+      setActionError(msg === "Failed to fetch" ? "Cannot reach the server. Make sure the backend is running." : msg);
+    } finally {
+      setIsActioning(false);
+    }
+  };
+
+  const handleReferBack = async () => {
+    const pendingApproval = report?.status === "PENDING_APPROVAL"
+      ? approvals.find(
+          (a) => a.approver_id === user?.id && a.status === "PENDING" && a.level === report.current_approval_level
+        )
+      : undefined;
+    if (!pendingApproval || !accessToken) return;
+    if (!referBackComment.trim()) { setReferBackError("Comment is required."); return; }
+    if (referBackType === "approver" && !referBackTargetLevel) {
+      setReferBackError("Please select a target level."); return;
+    }
+
+    setIsActioning(true);
+    setReferBackError(null);
+    try {
+      await apiFetch<ExpenseReport>(
+        `/api/approvals/${pendingApproval.id}/refer-back`,
         {
           method: "POST",
           token: accessToken,
-          body: JSON.stringify({ comment: rejectComment }),
+          body: JSON.stringify({
+            target_type: referBackType,
+            target_level: referBackType === "approver" ? referBackTargetLevel : null,
+            comment: referBackComment,
+          }),
         }
       );
-      setReport(updated);
-      const updatedApprovals = await apiFetch<ApprovalRecord[]>(
-        `/api/approvals/reports/${report_id}`,
-        { token: accessToken }
-      );
-      setApprovals(updatedApprovals);
-      setRejectComment("");
-      setShowRejectInput(false);
+      setShowReferBackModal(false);
+      setReferBackComment("");
+      setReferBackTargetLevel(0);
+      await refreshApprovals();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to reject.";
-      setActionError(
-        msg === "Failed to fetch"
-          ? "Cannot reach the server. Make sure the backend is running."
-          : msg
-      );
+      const msg = err instanceof Error ? err.message : "Failed to refer back.";
+      setReferBackError(msg === "Failed to fetch" ? "Cannot reach the server. Make sure the backend is running." : msg);
     } finally {
       setIsActioning(false);
     }
@@ -249,8 +283,116 @@ export default function ExpenseDetailPage() {
     );
   }
 
+  // Levels the current approver can refer back to (only levels below the active level)
+  const referBackLevels = myPendingApproval
+    ? approvals.filter((a) => a.level < myPendingApproval.level)
+    : [];
+
   return (
     <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
+      {/* Refer Back modal */}
+      {showReferBackModal && myPendingApproval && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Refer Back</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Refer this report back for further review.
+            </p>
+
+            <div className="space-y-4">
+              {/* Target type */}
+              <div>
+                <p className="text-xs font-medium text-gray-700 mb-2">Refer to:</p>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="referBackType"
+                      value="requestor"
+                      checked={referBackType === "requestor"}
+                      onChange={() => { setReferBackType("requestor"); setReferBackTargetLevel(0); }}
+                      className="accent-orange-500"
+                    />
+                    <span className="text-sm text-gray-800">Requestor (send back for revision)</span>
+                  </label>
+                  {referBackLevels.length > 0 && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="referBackType"
+                        value="approver"
+                        checked={referBackType === "approver"}
+                        onChange={() => setReferBackType("approver")}
+                        className="accent-orange-500"
+                      />
+                      <span className="text-sm text-gray-800">Lower approver (for consultation)</span>
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {/* Target level dropdown — only when "approver" selected */}
+              {referBackType === "approver" && referBackLevels.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Select level <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={referBackTargetLevel}
+                    onChange={(e) => setReferBackTargetLevel(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value={0}>Select level…</option>
+                    {referBackLevels.map((a) => (
+                      <option key={a.level} value={a.level}>
+                        Level {a.level}: {a.level_label} ({a.approver_name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Comment */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Comment <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={referBackComment}
+                  onChange={(e) => setReferBackComment(e.target.value)}
+                  placeholder="Explain what needs to be reviewed or revised…"
+                  className="w-full px-3 py-2 border border-orange-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+            </div>
+
+            {referBackError && (
+              <p className="mt-3 text-xs text-red-600">{referBackError}</p>
+            )}
+
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                type="button"
+                onClick={() => { setShowReferBackModal(false); setReferBackError(null); setReferBackComment(""); }}
+                disabled={isActioning}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleReferBack}
+                disabled={isActioning}
+                className="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 disabled:opacity-60"
+              >
+                {isActioning ? "Sending…" : "Confirm Refer Back"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-4">
         <button onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700">
           ← Back to Expense Reports
@@ -270,6 +412,18 @@ export default function ExpenseDetailPage() {
           <Link
             href={`/dashboard/business/expenses/${report.id}/edit`}
             className="inline-block mt-3 px-4 py-2 min-h-[44px] bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Edit &amp; Resubmit
+          </Link>
+        </div>
+      )}
+      {report.status === "REFERRED_TO_REQUESTOR" && (
+        <div className="mb-4 rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800">
+          <p className="font-semibold mb-1">This report was referred back to you for revision:</p>
+          <p>{report.rejection_comment}</p>
+          <Link
+            href={`/dashboard/business/expenses/${report.id}/edit`}
+            className="inline-block mt-3 px-4 py-2 min-h-[44px] bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 transition-colors"
           >
             Edit &amp; Resubmit
           </Link>
@@ -376,6 +530,7 @@ export default function ExpenseDetailPage() {
                   a.level === report.current_approval_level;
                 const isApproved = a.status === "APPROVED";
                 const isRejected = a.status === "REJECTED";
+                const isReferredBack = a.status === "REFERRED_BACK";
 
                 const cardBorder = isActive
                   ? "border-blue-400 bg-white shadow-sm"
@@ -383,18 +538,38 @@ export default function ExpenseDetailPage() {
                   ? "border-green-300 bg-green-50"
                   : isRejected
                   ? "border-red-300 bg-red-50"
+                  : isReferredBack
+                  ? "border-orange-300 bg-orange-50"
                   : "border-gray-200 bg-white opacity-60";
 
                 const statusColor = isApproved
                   ? "text-green-700"
                   : isRejected
                   ? "text-red-700"
+                  : isReferredBack
+                  ? "text-orange-700"
                   : isActive
                   ? "text-blue-700"
                   : "text-gray-400";
 
-                const statusIcon = isApproved ? "✓" : isRejected ? "✗" : isActive ? "●" : "○";
-                const statusLabel = isApproved ? "Approved" : isRejected ? "Rejected" : isActive ? "Awaiting" : "Pending";
+                const statusIcon = isApproved
+                  ? "✓"
+                  : isRejected
+                  ? "✗"
+                  : isReferredBack
+                  ? "↩"
+                  : isActive
+                  ? "●"
+                  : "○";
+                const statusLabel = isApproved
+                  ? "Approved"
+                  : isRejected
+                  ? "Rejected"
+                  : isReferredBack
+                  ? "Referred Back"
+                  : isActive
+                  ? "Awaiting"
+                  : "Pending";
 
                 return (
                   <div key={a.id} className="flex sm:flex-col flex-row flex-1 items-stretch">
@@ -413,7 +588,7 @@ export default function ExpenseDetailPage() {
                       <p className={`text-xs font-semibold mt-1 ${statusColor}`}>{statusLabel}</p>
                       {a.comment && (
                         <p className="text-xs text-gray-500 mt-1 italic line-clamp-2">
-                          "{a.comment}"
+                          &ldquo;{a.comment}&rdquo;
                         </p>
                       )}
                       {a.actioned_at && (
@@ -421,7 +596,7 @@ export default function ExpenseDetailPage() {
                       )}
                     </div>
 
-                    {/* Connector arrow between cards (hidden after last) */}
+                    {/* Connector arrow between cards */}
                     {idx < approvals.length - 1 && (
                       <div className="flex items-center justify-center sm:w-6 sm:flex-none w-auto h-6 sm:h-auto">
                         <span className="text-gray-300 text-sm font-bold sm:rotate-0 rotate-90">→</span>
@@ -454,7 +629,7 @@ export default function ExpenseDetailPage() {
           </div>
         )}
 
-        {/* Approve / Reject panel for active approvers */}
+        {/* Approve / Refer Back / Reject panel for active approvers */}
         {myPendingApproval && (
           <div className="px-6 sm:px-8 py-6 border-t border-gray-200">
             <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
@@ -506,6 +681,20 @@ export default function ExpenseDetailPage() {
                       className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60"
                     >
                       {isActioning ? "Processing…" : "Approve"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowReferBackModal(true);
+                        setReferBackType("requestor");
+                        setReferBackTargetLevel(0);
+                        setReferBackComment("");
+                        setReferBackError(null);
+                      }}
+                      disabled={isActioning}
+                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600 disabled:opacity-60"
+                    >
+                      Refer Back
                     </button>
                     <button
                       type="button"

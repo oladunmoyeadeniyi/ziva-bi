@@ -1,21 +1,25 @@
 """
-ZivaBI — approval workflow router (Milestone 4).
+ZivaBI — approval workflow router (Milestones 4–5).
 
 Implements the full expense approval chain:
     Tenant Admin configures approval matrix (levels + role labels + amount thresholds).
     Employee selects specific approvers and submits report → PENDING_APPROVAL.
     Level-1 approver sees report in queue; approves → activates level 2 (or APPROVED).
-    Any approver can reject → report returns to DRAFT with rejection comment.
-    Rejection email sent to the employee (falls back to console log if SMTP not set).
+    Any approver can reject → report returns to REJECTED with rejection comment.
+    Any approver can refer back → either to a lower approver (for consultation) or
+      back to the requestor (for revision). Smart resubmission resumes from the
+      rejection/referral level, preserving already-approved lower-level records.
 
 Endpoints:
     POST   /api/approvals/matrix                          Create or update approval matrix
     GET    /api/approvals/matrix                          Get current tenant's matrix
     POST   /api/approvals/reports/{report_id}/submit      Submit report with approver selection
     GET    /api/approvals/queue                           List reports pending current user's action
+    GET    /api/approvals/rejected                        Reports rejected where current user was approver
     GET    /api/approvals/reports/{report_id}             List all approval records for a report
     POST   /api/approvals/{approval_id}/approve           Approve at current level
     POST   /api/approvals/{approval_id}/reject            Reject with comment
+    POST   /api/approvals/{approval_id}/refer-back        Refer back to lower approver or requestor
 """
 
 import logging
@@ -42,6 +46,7 @@ from app.schemas.approvals import (
     ApprovalQueueItem,
     ApprovalRecordResponse,
     ApproveRequest,
+    ReferBackRequest,
     RejectRequest,
     SubmitWithApproversRequest,
 )
@@ -191,6 +196,49 @@ def _send_rejection_email(
         logger.warning("Failed to send rejection email to %s: %s", to_email, exc)
 
 
+def _send_refer_back_email(
+    to_email: str,
+    report_number: str,
+    comment: str,
+    referring_level: int,
+) -> None:
+    """
+    Send a refer-back notification to the employee when an approver refers the
+    report back to them for revision.
+
+    Falls back to console logging when SMTP credentials are not configured.
+    """
+    subject = f"Expense Report {report_number} — Action Required"
+    body = (
+        f"Your expense report {report_number} has been referred back to you by "
+        f"the Level {referring_level} approver.\n\n"
+        f"Comment: {comment}\n\n"
+        f"Please log in to Ziva BI to review and resubmit."
+    )
+
+    if not all([settings.smtp_host, settings.smtp_user, settings.smtp_password]):
+        logger.info(
+            "[EMAIL SIMULATION] Refer-back notification\nTo: %s\nSubject: %s\n\n%s",
+            to_email,
+            subject,
+            body,
+        )
+        return
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = settings.smtp_from_email or settings.smtp_user
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
+            smtp.starttls()
+            smtp.login(settings.smtp_user, settings.smtp_password)
+            smtp.send_message(msg)
+    except Exception as exc:
+        logger.warning("Failed to send refer-back email to %s: %s", to_email, exc)
+
+
 # ── Approval Matrix ───────────────────────────────────────────────────────────
 
 @router.post("/matrix", response_model=ApprovalMatrixResponse)
@@ -276,10 +324,10 @@ async def submit_with_approvers(
     tenant_id = _require_tenant(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
-    if report.status != "DRAFT":
+    if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only DRAFT reports can be submitted.",
+            detail="Only DRAFT, REJECTED, or REFERRED_TO_REQUESTOR reports can be submitted.",
         )
     if not report.lines:
         raise HTTPException(
@@ -303,13 +351,22 @@ async def submit_with_approvers(
     existing_approvals = existing_result.scalars().all()
 
     if existing_approvals:
-        # Resubmission — reuse the same approver IDs, just reset to PENDING
+        # Resubmission — smart resume: keep APPROVED records below the rejection level,
+        # recreate only from rejected_at_level onwards. This means Level-2-rejected reports
+        # skip re-approval at Level 1 on resubmit.
+        rejected_at = report.rejected_at_level or 1
+
+        # Records at levels below rejected_at are already APPROVED — preserve them.
+        # Records at rejected_at and above are deleted and recreated as PENDING.
+        to_recreate = [a for a in existing_approvals if a.level >= rejected_at]
         level_to_approver: dict[int, uuid.UUID] = {
-            a.level: a.approver_id for a in existing_approvals
+            a.level: a.approver_id for a in to_recreate
         }
-        for old in existing_approvals:
+
+        for old in to_recreate:
             await db.delete(old)
         await db.flush()
+
         for level, approver_id in sorted(level_to_approver.items()):
             db.add(ExpenseApproval(
                 report_id=report.id,
@@ -318,6 +375,16 @@ async def submit_with_approvers(
                 approver_id=approver_id,
                 status="PENDING",
             ))
+
+        report.status = "PENDING_APPROVAL"
+        report.current_approval_level = rejected_at
+        report.submitted_at = datetime.now(timezone.utc)
+        report.rejection_comment = None
+        report.rejected_at_level = None
+        report.referred_back_from_level = None
+
+        await db.flush()
+        return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
     else:
         # First-time submission — require approver IDs from the request body
         if data.level1_approver_id is None:
@@ -366,6 +433,8 @@ async def submit_with_approvers(
     report.current_approval_level = 1
     report.submitted_at = datetime.now(timezone.utc)
     report.rejection_comment = None
+    report.rejected_at_level = None
+    report.referred_back_from_level = None
 
     await db.flush()
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
@@ -601,22 +670,45 @@ async def approve(
     approval.comment = data.comment
     approval.actioned_at = datetime.now(timezone.utc)
 
-    # Check if there is a next PENDING level (use .first() — not .scalar_one_or_none() —
-    # to tolerate duplicate records that may exist from a double-submit race condition).
-    next_result = await db.execute(
-        select(ExpenseApproval).where(
-            ExpenseApproval.report_id == report.id,
-            ExpenseApproval.level == approval.level + 1,
-            ExpenseApproval.status == "PENDING",
-        ).order_by(ExpenseApproval.created_at.desc())
-    )
-    next_approval = next_result.scalars().first()
+    if report.referred_back_from_level is not None:
+        # This approval is the lower-level approver completing their refer-back consultation.
+        # Reactivate the referring (higher) level approver to continue their review.
+        referring_level = report.referred_back_from_level
+        referring_result = await db.execute(
+            select(ExpenseApproval).where(
+                ExpenseApproval.report_id == report.id,
+                ExpenseApproval.level == referring_level,
+                ExpenseApproval.status == "REFERRED_BACK",
+            ).order_by(ExpenseApproval.created_at.desc())
+        )
+        referring_approval = referring_result.scalars().first()
 
-    if next_approval:
-        report.current_approval_level = next_approval.level
+        if referring_approval:
+            referring_approval.status = "PENDING"
+            referring_approval.actioned_at = None
+            report.current_approval_level = referring_level
+            report.referred_back_from_level = None
+        else:
+            # Referring record not found (shouldn't happen) — fall back to normal chain
+            report.status = "APPROVED"
+            report.current_approval_level = None
+            report.referred_back_from_level = None
     else:
-        report.status = "APPROVED"
-        report.current_approval_level = None
+        # Normal approval chain — check for the next PENDING level
+        next_result = await db.execute(
+            select(ExpenseApproval).where(
+                ExpenseApproval.report_id == report.id,
+                ExpenseApproval.level == approval.level + 1,
+                ExpenseApproval.status == "PENDING",
+            ).order_by(ExpenseApproval.created_at.desc())
+        )
+        next_approval = next_result.scalars().first()
+
+        if next_approval:
+            report.current_approval_level = next_approval.level
+        else:
+            report.status = "APPROVED"
+            report.current_approval_level = None
 
     await db.flush()
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
@@ -676,9 +768,13 @@ async def reject(
     approval.comment = data.comment
     approval.actioned_at = datetime.now(timezone.utc)
 
-    # Return report to REJECTED so employee sees the rejection with comment
+    # Return report to REJECTED so employee sees the rejection with comment.
+    # Store rejected_at_level so smart resubmission resumes from this level
+    # (skipping re-approval of already-approved lower levels).
     report.status = "REJECTED"
     report.rejection_comment = data.comment
+    report.rejected_at_level = approval.level
+    report.referred_back_from_level = None  # clear any active refer-back state
     report.current_approval_level = None
 
     await db.flush()
@@ -697,4 +793,120 @@ async def reject(
             rejection_comment=data.comment,
         )
 
+    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
+
+
+# ── Refer Back ────────────────────────────────────────────────────────────────
+
+@router.post("/{approval_id}/refer-back", response_model=ExpenseReportResponse)
+async def refer_back(
+    approval_id: uuid.UUID,
+    data: ReferBackRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ExpenseReportResponse:
+    """
+    Refer back an expense report from the current approval level.
+
+    Two modes controlled by target_type:
+
+    "requestor" — sends the report back to the employee for revision with a comment.
+      The report status becomes REFERRED_TO_REQUESTOR. When the employee resubmits,
+      the approval chain resumes from the referring level (not Level 1), so already-
+      approved lower levels are not re-reviewed.
+
+    "approver" — activates a lower approval level for consultation.
+      The target level's approver sees the report in their queue with the comment.
+      - If the target approver approves: control returns to the referring level.
+      - If the target approver rejects: report is REJECTED back to the employee.
+    """
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(ExpenseApproval).where(
+            ExpenseApproval.id == approval_id,
+            ExpenseApproval.tenant_id == tenant_id,
+        )
+    )
+    approval = result.scalar_one_or_none()
+    if not approval:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval record not found.")
+
+    if approval.approver_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the designated approver for this record.",
+        )
+    if approval.status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This approval record has already been actioned.",
+        )
+
+    report = await _get_report_or_404(approval.report_id, tenant_id, db)
+
+    if report.current_approval_level != approval.level:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This approval level is not currently active for this report.",
+        )
+
+    # Mark the current approval as referred back
+    approval.status = "REFERRED_BACK"
+    approval.comment = data.comment
+    approval.actioned_at = datetime.now(timezone.utc)
+
+    if data.target_type == "requestor":
+        # Send back to the employee for revision.
+        # rejected_at_level stores the referring level so resubmit resumes here.
+        report.status = "REFERRED_TO_REQUESTOR"
+        report.rejection_comment = data.comment
+        report.rejected_at_level = approval.level
+        report.current_approval_level = None
+
+        employee_result = await db.execute(select(User).where(User.id == report.employee_id))
+        employee = employee_result.scalar_one_or_none()
+        if employee:
+            _send_refer_back_email(
+                to_email=employee.email,
+                report_number=report.report_number,
+                comment=data.comment,
+                referring_level=approval.level,
+            )
+
+    else:
+        # target_type == "approver"
+        if data.target_level is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="target_level is required when target_type is 'approver'.",
+            )
+        if data.target_level >= approval.level:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Can only refer back to a level lower than the current level.",
+            )
+
+        target_result = await db.execute(
+            select(ExpenseApproval).where(
+                ExpenseApproval.report_id == report.id,
+                ExpenseApproval.level == data.target_level,
+            ).order_by(ExpenseApproval.created_at.desc())
+        )
+        target_approval = target_result.scalars().first()
+        if not target_approval:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No approval record found for level {data.target_level}.",
+            )
+
+        # Reactivate the target approver so they see this report in their queue
+        target_approval.status = "PENDING"
+        target_approval.actioned_at = None
+
+        report.current_approval_level = data.target_level
+        # Track the referring level so approve() knows where to return control after
+        report.referred_back_from_level = approval.level
+
+    await db.flush()
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))

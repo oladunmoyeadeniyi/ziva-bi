@@ -40,11 +40,13 @@ function formatDate(dateStr: string): string {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    DRAFT:            { label: "Draft",           cls: "bg-gray-100 text-gray-700" },
-    SUBMITTED:        { label: "Submitted",       cls: "bg-blue-100 text-blue-800" },
-    PENDING_APPROVAL: { label: "Pending Approval", cls: "bg-amber-100 text-amber-800" },
-    APPROVED:         { label: "Approved",        cls: "bg-green-100 text-green-800" },
-    REJECTED:         { label: "Rejected",        cls: "bg-red-100 text-red-800" },
+    DRAFT:                 { label: "Draft",              cls: "bg-gray-100 text-gray-700" },
+    SUBMITTED:             { label: "Submitted",          cls: "bg-blue-100 text-blue-800" },
+    PENDING_APPROVAL:      { label: "Pending Approval",   cls: "bg-yellow-100 text-yellow-800" },
+    APPROVED:              { label: "Approved",           cls: "bg-green-100 text-green-800" },
+    REJECTED:              { label: "Rejected",           cls: "bg-red-100 text-red-800" },
+    REFERRED_BACK:         { label: "Referred Back",      cls: "bg-orange-100 text-orange-800" },
+    REFERRED_TO_REQUESTOR: { label: "Referred to You",    cls: "bg-orange-100 text-orange-800" },
   };
   const { label, cls } = map[status] ?? { label: status, cls: "bg-gray-100 text-gray-700" };
   return (
@@ -61,7 +63,7 @@ const TAB_STATUSES: Record<TabFilter, string[]> = {
   DRAFT:     ["DRAFT"],
   IN_REVIEW: ["SUBMITTED", "PENDING_APPROVAL"],
   APPROVED:  ["APPROVED"],
-  REJECTED:  ["REJECTED"],
+  REJECTED:  ["REJECTED", "REFERRED_TO_REQUESTOR"],
 };
 
 export default function ExpensesListPage() {
@@ -100,7 +102,7 @@ export default function ExpensesListPage() {
     DRAFT:     reports.filter((r) => r.status === "DRAFT").length,
     IN_REVIEW: reports.filter((r) => ["SUBMITTED", "PENDING_APPROVAL"].includes(r.status)).length,
     APPROVED:  reports.filter((r) => r.status === "APPROVED").length,
-    REJECTED:  reports.filter((r) => r.status === "REJECTED").length,
+    REJECTED:  reports.filter((r) => ["REJECTED", "REFERRED_TO_REQUESTOR"].includes(r.status)).length,
   };
 
   const visibleReports =
@@ -297,7 +299,7 @@ export default function ExpensesListPage() {
                             Delete
                           </button>
                         </>
-                      ) : report.status === "REJECTED" ? (
+                      ) : report.status === "REJECTED" || report.status === "REFERRED_TO_REQUESTOR" ? (
                         <>
                           <Link
                             href={`/dashboard/business/expenses/${report.id}`}

@@ -106,6 +106,7 @@ export default function EditExpensePage() {
   const [originalBackendIds, setOriginalBackendIds] = useState<string[]>([]);
   const [rejectionBanner, setRejectionBanner] = useState<string | null>(null);
 
+  const [originalStatus, setOriginalStatus] = useState<string>("DRAFT");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -129,16 +130,18 @@ export default function EditExpensePage() {
           { token: accessToken }
         );
 
-        if (data.status !== "DRAFT" && data.status !== "REJECTED") {
+        if (data.status !== "DRAFT" && data.status !== "REJECTED" && data.status !== "REFERRED_TO_REQUESTOR") {
           router.replace(`/dashboard/business/expenses/${report_id}`);
           return;
         }
 
+        setOriginalStatus(data.status);
         setReportNumber(data.report_number);
         setReportDate(data.report_date);
         setEmployeeFunction(data.employee_function ?? "");
         setOriginalBackendIds(data.lines.map((l) => l.id));
-        setRejectionBanner(data.rejection_comment ?? null);
+        // Show banner for REJECTED and REFERRED_TO_REQUESTOR (both have rejection_comment)
+        setRejectionBanner(data.status !== "DRAFT" ? (data.rejection_comment ?? null) : null);
         setLines(
           data.lines.length > 0
             ? data.lines.map((l) => ({
@@ -455,10 +458,19 @@ export default function EditExpensePage() {
         <p className="mt-0.5 text-sm text-gray-500">Edit header fields, add or remove lines, then save or submit.</p>
       </div>
 
-      {/* Rejection banner */}
+      {/* Return banner — red for rejected, amber for referred back */}
       {rejectionBanner && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          <span className="font-semibold">This report was rejected:</span> {rejectionBanner}
+        <div className={`mb-4 rounded-lg px-4 py-3 text-sm ${
+          originalStatus === "REFERRED_TO_REQUESTOR"
+            ? "bg-orange-50 border border-orange-200 text-orange-700"
+            : "bg-red-50 border border-red-200 text-red-700"
+        }`}>
+          <span className="font-semibold">
+            {originalStatus === "REFERRED_TO_REQUESTOR"
+              ? "Referred back to you for revision:"
+              : "This report was rejected:"}
+          </span>{" "}
+          {rejectionBanner}
         </div>
       )}
 
