@@ -1,9 +1,9 @@
 """
-ZivaBI — approval workflow Pydantic schemas (Milestone 4).
+ZivaBI — approval workflow Pydantic schemas (Milestones 4–5).
 
 Request/response shapes for the approvals router.
 Covers: approval matrix configuration, report submission with approver selection,
-approver queue, and approve/reject actions.
+approver queue, approve/reject/refer-back actions, audit trail, and snapshots.
 """
 
 import uuid
@@ -108,7 +108,7 @@ class ApprovalQueueItem(BaseModel):
     level: int
     level_label: str
     created_at: datetime
-    rejection_comment: str | None = None  # populated for rejected items (Bug 3)
+    rejection_comment: str | None = None
 
 
 # ── Approval Record ───────────────────────────────────────────────────────────
@@ -123,6 +123,8 @@ class ApprovalRecordResponse(BaseModel):
     approver_name: str
     status: str
     comment: str | None
+    visible_to_requestor: bool
+    response_comment: str | None
     actioned_at: datetime | None
     created_at: datetime
 
@@ -130,9 +132,11 @@ class ApprovalRecordResponse(BaseModel):
 # ── Approve / Reject ──────────────────────────────────────────────────────────
 
 class ApproveRequest(BaseModel):
-    """Optional comment when approving."""
+    """Optional comment and response when approving."""
 
     comment: str | None = None
+    # Response sent back to the referring approver when approving after a refer-back
+    response_comment: str | None = None
 
 
 class RejectRequest(BaseModel):
@@ -157,14 +161,18 @@ class ReferBackRequest(BaseModel):
 
     target_type = "requestor": sends the report back to the employee for revision.
       The resubmission will resume from the referring approver's level.
-    target_type = "approver": activates a lower approval level for consultation.
-      After the lower approver acts, control returns to the referring level.
-      target_level is required when target_type is "approver".
+    target_type = "approver": activates one or more lower approval levels for consultation.
+      target_levels (list) allows referring to multiple levels simultaneously — they are
+      visited sequentially in ascending order. After all complete, control returns to the
+      referring level.
+    visible_to_requestor: when true and target_type = "requestor", the requestor can see
+      the referral comment. When false, they see "Pending internal review".
     comment is always required.
     """
 
     target_type: str
-    target_level: int | None = None
+    target_levels: list[int] | None = None
+    visible_to_requestor: bool = False
     comment: str
 
     @field_validator("target_type")
@@ -181,6 +189,32 @@ class ReferBackRequest(BaseModel):
         if not v:
             raise ValueError("Comment is required.")
         return v
+
+
+# ── Audit Trail ───────────────────────────────────────────────────────────────
+
+class AuditLogEntry(BaseModel):
+    """One audit log entry for the expense report timeline."""
+
+    id: str
+    event_type: str
+    user_id: str | None
+    actor_name: str
+    log_metadata: dict
+    created_at: datetime
+
+
+# ── Snapshot ─────────────────────────────────────────────────────────────────
+
+class SnapshotResponse(BaseModel):
+    """A submitted expense report snapshot at a specific version."""
+
+    id: str
+    report_id: str
+    version: int
+    submitted_at: datetime
+    snapshot_data: dict
+    created_at: datetime
 
 
 # ── Tenant User (for approver dropdowns) ─────────────────────────────────────

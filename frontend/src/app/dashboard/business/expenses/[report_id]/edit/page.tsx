@@ -283,7 +283,8 @@ export default function EditExpensePage() {
       // First-time submission — show the approver selection modal
       const usersData = await apiFetch<TenantUser[]>("/api/users/tenant", { token: accessToken! });
       setMatrix(matrixData);
-      setTenantUsers(usersData);
+      // Exclude the current user — an approver cannot be the same person as the requestor
+      setTenantUsers(usersData.filter((u) => u.id !== user?.id));
       setL1Approver("");
       setL2Approver("");
       setL3Approver("");

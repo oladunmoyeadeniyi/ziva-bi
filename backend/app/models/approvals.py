@@ -1,5 +1,5 @@
 """
-ZivaBI — approval workflow ORM models (Milestone 4).
+ZivaBI — approval workflow ORM models (Milestones 4–5).
 
 Tables:
     approval_matrix    One row per tenant; configures the number of approval levels
@@ -7,18 +7,18 @@ Tables:
     expense_approvals  One row per (report × level); tracks each approver's action
                        on an expense report.
 
-Status flow: PENDING → APPROVED | REJECTED
+Status flow: PENDING → APPROVED | REJECTED | REFERRED_BACK
 
-The approval chain is sequential: current_approval_level on expense_reports controls
-which level is "active" in the queue. Levels above current_approval_level are ignored
-until the prior level is approved.
+M5 additions to expense_approvals:
+    visible_to_requestor — whether the referral comment is visible to the requestor
+    response_comment     — referred approver's reply back to the referring approver
 """
 
 import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import NUMERIC, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, NUMERIC, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -109,6 +109,10 @@ class ExpenseApproval(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # For REFERRED_BACK records: whether the requestor can see the referral comment
+    visible_to_requestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Referred approver's reply back to the referring approver (set when they approve back up)
+    response_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     actioned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

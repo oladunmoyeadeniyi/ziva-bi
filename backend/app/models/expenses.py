@@ -28,7 +28,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import DATE, NUMERIC, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -81,6 +81,8 @@ class ExpenseReport(Base):
     rejected_at_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Set during refer-back-to-approver: the higher level to return to once lower approver acts
     referred_back_from_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Queue of additional levels to visit in multi-level refer-back (JSON array of ints)
+    referred_back_levels: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -134,3 +136,38 @@ class ExpenseLine(Base):
     )
 
     report: Mapped["ExpenseReport"] = relationship("ExpenseReport", back_populates="lines")
+
+
+class ExpenseReportSnapshot(Base):
+    """
+    Immutable point-in-time copy of an expense report at each submission.
+
+    Captures the full line-item detail + header at the moment of submission so
+    that if the employee edits lines between a rejection and resubmission, every
+    version is preserved. version increments with each resubmission (1, 2, 3…).
+    snapshot_data is a JSONB blob containing all header fields and expense lines.
+    """
+
+    __tablename__ = "expense_report_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    snapshot_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
