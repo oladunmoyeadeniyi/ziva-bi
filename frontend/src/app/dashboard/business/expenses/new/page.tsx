@@ -459,6 +459,11 @@ export default function NewExpensePage() {
         </div>
       </div>
 
+      {/* M6 — Document attachment hint (docs available after saving draft) */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-6 text-sm text-blue-700">
+        <span className="font-medium">Attaching receipts or documents?</span> Save as draft first, then open the edit page to attach files to each line.
+      </div>
+
       {/* Action buttons */}
       <div className="flex items-center gap-3 justify-end">
         <button

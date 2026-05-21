@@ -31,14 +31,14 @@ function extractMessage(body: ApiError): string {
 
 export async function apiFetch<T>(
   path: string,
-  options: RequestInit & { token?: string } = {}
+  options: RequestInit & { token?: string; isFormData?: boolean } = {}
 ): Promise<T> {
-  const { token, headers: extraHeaders = {}, ...rest } = options;
+  const { token, isFormData, headers: extraHeaders = {}, ...rest } = options;
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(extraHeaders as Record<string, string>),
-  };
+  // Don't set Content-Type for FormData — the browser sets it with the multipart boundary.
+  const headers: Record<string, string> = isFormData
+    ? { ...(extraHeaders as Record<string, string>) }
+    : { "Content-Type": "application/json", ...(extraHeaders as Record<string, string>) };
 
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;

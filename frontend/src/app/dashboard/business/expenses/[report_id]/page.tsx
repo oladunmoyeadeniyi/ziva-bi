@@ -34,6 +34,36 @@ interface ExpenseLine {
   amount: string;
 }
 
+interface DocumentRecord {
+  id: string;
+  report_id: string;
+  line_id: string | null;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  storage_path: string;
+  signed_url: string | null;
+  created_at: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileTypeIcon({ mimeType }: { mimeType: string }) {
+  if (mimeType === "application/pdf")
+    return <span className="text-red-500 font-bold text-xs">PDF</span>;
+  if (mimeType.startsWith("image/"))
+    return <span className="text-blue-500 font-bold text-xs">IMG</span>;
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel"))
+    return <span className="text-green-600 font-bold text-xs">XLS</span>;
+  if (mimeType.includes("word") || mimeType.includes("document"))
+    return <span className="text-blue-700 font-bold text-xs">DOC</span>;
+  return <span className="text-gray-500 font-bold text-xs">FILE</span>;
+}
+
 interface ExpenseReport {
   id: string;
   report_number: string;
@@ -103,6 +133,7 @@ export default function ExpenseDetailPage() {
 
   const [report, setReport] = useState<ExpenseReport | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +172,16 @@ export default function ExpenseDetailPage() {
             { token: accessToken }
           );
           setApprovals(approvalData);
+        }
+        // Load supporting documents (non-fatal if it fails)
+        try {
+          const docs = await apiFetch<DocumentRecord[]>(
+            `/api/documents/reports/${report_id}`,
+            { token: accessToken }
+          );
+          setDocuments(docs);
+        } catch {
+          // ignore — documents are supplemental
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load report.");
@@ -589,6 +630,75 @@ export default function ExpenseDetailPage() {
               </tfoot>
             </table>
           </div>
+
+          {/* M6 — Supporting documents (read-only) */}
+          {documents.length > 0 && (
+            <div className="px-6 py-5 border-t border-gray-200">
+              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                Supporting Documents
+              </h2>
+              {/* Per-line documents */}
+              {report.lines.map((line) => {
+                const lineDocs = documents.filter((d) => d.line_id === line.id);
+                if (lineDocs.length === 0) return null;
+                return (
+                  <div key={line.id} className="mb-4">
+                    <p className="text-xs font-semibold text-gray-600 mb-1">
+                      Line {line.line_number} — {line.description}
+                    </p>
+                    <ul className="space-y-1">
+                      {lineDocs.map((doc) => (
+                        <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
+                          <FileTypeIcon mimeType={doc.mime_type} />
+                          <span className="flex-1 truncate">{doc.file_name}</span>
+                          <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
+                          {doc.signed_url && (
+                            <a
+                              href={doc.signed_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 font-medium shrink-0"
+                            >
+                              View
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+              {/* Report-level documents */}
+              {(() => {
+                const reportDocs = documents.filter((d) => d.line_id === null);
+                if (reportDocs.length === 0) return null;
+                return (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 mb-1">Report-level</p>
+                    <ul className="space-y-1">
+                      {reportDocs.map((doc) => (
+                        <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
+                          <FileTypeIcon mimeType={doc.mime_type} />
+                          <span className="flex-1 truncate">{doc.file_name}</span>
+                          <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
+                          {doc.signed_url && (
+                            <a
+                              href={doc.signed_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 font-medium shrink-0"
+                            >
+                              View
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {/* Legacy placeholder for SUBMITTED reports without approval matrix */}
           {report.status === "SUBMITTED" && approvals.length === 0 && (

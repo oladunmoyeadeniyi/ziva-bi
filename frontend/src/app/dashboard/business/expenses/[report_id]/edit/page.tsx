@@ -10,9 +10,11 @@
  *   1. Checks if tenant has an approval matrix configured.
  *   2. Shows approver selection modal with dropdowns for each configured level.
  *   3. Calls /api/approvals/reports/{report_id}/submit with selected approvers.
+ *
+ * M6: document upload section per line + report-level section at bottom.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
@@ -69,6 +71,40 @@ interface TenantUser {
   email: string;
 }
 
+interface DocumentRecord {
+  id: string;
+  report_id: string;
+  line_id: string | null;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  storage_path: string;
+  signed_url: string | null;
+  created_at: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileTypeIcon({ mimeType }: { mimeType: string }) {
+  if (mimeType === "application/pdf") {
+    return <span className="text-red-500 font-bold text-xs">PDF</span>;
+  }
+  if (mimeType.startsWith("image/")) {
+    return <span className="text-blue-500 font-bold text-xs">IMG</span>;
+  }
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel")) {
+    return <span className="text-green-600 font-bold text-xs">XLS</span>;
+  }
+  if (mimeType.includes("word") || mimeType.includes("document")) {
+    return <span className="text-blue-700 font-bold text-xs">DOC</span>;
+  }
+  return <span className="text-gray-500 font-bold text-xs">FILE</span>;
+}
+
 function newLine(): LineState {
   return {
     localId: Math.random().toString(36).slice(2),
@@ -109,6 +145,13 @@ export default function EditExpensePage() {
   const [originalStatus, setOriginalStatus] = useState<string>("DRAFT");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // M6 — document attachments
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null); // lineBackendId or "report"
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetRef = useRef<string | null>(null);
 
   // Approval matrix + approver selection modal
   const [showApproverModal, setShowApproverModal] = useState(false);
@@ -159,6 +202,17 @@ export default function EditExpensePage() {
               }))
             : [newLine()]
         );
+
+        // Load existing documents
+        try {
+          const docs = await apiFetch<DocumentRecord[]>(
+            `/api/documents/reports/${report_id}`,
+            { token: accessToken }
+          );
+          setDocuments(docs);
+        } catch {
+          // Non-fatal — page still works without documents
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to load report.";
         setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
@@ -222,6 +276,60 @@ export default function EditExpensePage() {
           amount: parseFloat(l.amount),
         }),
       });
+    }
+  };
+
+  const triggerUpload = (target: string) => {
+    uploadTargetRef.current = target;
+    setUploadError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadTargetRef.current || !accessToken) return;
+    e.target.value = ""; // reset so the same file can be re-selected after delete
+
+    setUploadingFor(uploadTargetRef.current);
+    setUploadError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const target = uploadTargetRef.current;
+    if (target !== "report") {
+      formData.append("line_id", target);
+    }
+
+    try {
+      const doc = await apiFetch<DocumentRecord>(
+        `/api/documents/reports/${report_id}/upload`,
+        {
+          method: "POST",
+          token: accessToken,
+          body: formData,
+          isFormData: true,
+        }
+      );
+      setDocuments((prev) => [...prev, doc]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed.";
+      setUploadError(msg);
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!accessToken) return;
+    try {
+      await apiFetch(`/api/documents/${docId}`, {
+        method: "DELETE",
+        token: accessToken,
+      });
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Delete failed.";
+      setUploadError(msg);
     }
   };
 
@@ -589,6 +697,126 @@ export default function EditExpensePage() {
             <span className="text-lg font-bold text-gray-900">{formatNGN(total)}</span>
           </div>
         </div>
+      </div>
+
+      {/* Hidden file input — shared across all upload buttons */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc"
+        onChange={handleFileSelected}
+      />
+
+      {/* M6 — Per-line documents */}
+      {lines.some((l) => l.backendId) && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">
+            Line Attachments
+          </h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Attach receipts or invoices to individual expense lines. Accepted: PDF, JPG, PNG, Excel, Word (max 10 MB).
+          </p>
+
+          {uploadError && (
+            <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-center justify-between">
+              <span>{uploadError}</span>
+              <button onClick={() => setUploadError(null)} className="ml-2 text-red-400 hover:text-red-600 font-bold">×</button>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {lines.filter((l) => l.backendId).map((line, idx) => {
+              const lineDocs = documents.filter((d) => d.line_id === line.backendId);
+              const isUploading = uploadingFor === line.backendId;
+              return (
+                <div key={line.localId} className="border border-gray-100 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">
+                    Line {idx + 1} — {line.description || line.gl_account || "(new line)"}
+                  </p>
+                  {lineDocs.length > 0 && (
+                    <ul className="mb-2 space-y-1">
+                      {lineDocs.map((doc) => (
+                        <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
+                          <FileTypeIcon mimeType={doc.mime_type} />
+                          <span className="flex-1 truncate">{doc.file_name}</span>
+                          <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
+                          {doc.signed_url && (
+                            <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDocument(doc.id)}
+                            className="text-red-400 hover:text-red-600 shrink-0 font-medium"
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isUploading || !line.backendId}
+                    onClick={() => line.backendId && triggerUpload(line.backendId)}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300"
+                  >
+                    {isUploading ? "Uploading…" : "+ Attach Document"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* M6 — Report-level documents */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">
+          Report Documents
+        </h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Documents that apply to the report as a whole, not a specific line.
+        </p>
+        {(() => {
+          const reportDocs = documents.filter((d) => d.line_id === null);
+          const isUploading = uploadingFor === "report";
+          return (
+            <>
+              {reportDocs.length > 0 && (
+                <ul className="mb-3 space-y-1">
+                  {reportDocs.map((doc) => (
+                    <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
+                      <FileTypeIcon mimeType={doc.mime_type} />
+                      <span className="flex-1 truncate">{doc.file_name}</span>
+                      <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
+                      {doc.signed_url && (
+                        <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteDocument(doc.id)}
+                        className="text-red-400 hover:text-red-600 shrink-0 font-medium"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                disabled={isUploading}
+                onClick={() => triggerUpload("report")}
+                className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300"
+              >
+                {isUploading ? "Uploading…" : "+ Attach Document"}
+              </button>
+            </>
+          );
+        })()}
       </div>
 
       {/* Action buttons */}

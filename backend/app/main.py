@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 
 from app.config import settings
 from app.database import AsyncSessionLocal, engine
@@ -25,6 +25,10 @@ async def _ensure_system_roles() -> None:
     System roles are global (tenant_id=NULL, is_system=True) and cannot be
     deleted by Tenant Admins. If they already exist this is a no-op.
     This eliminates the need to run a separate seed script for role setup.
+
+    Deduplication: if previous seed runs created duplicate rows for the same
+    role name, raw SQL is used to reassign child FK rows to the surviving role
+    then drop the duplicates — bypassing ORM cascade that would NULL the FK.
     """
     from app.models.auth import Role  # imported here to avoid circular import at module load
 
@@ -47,12 +51,61 @@ async def _ensure_system_roles() -> None:
     ]
 
     async with AsyncSessionLocal() as db:
+        # --- Step 1: deduplicate via raw SQL (avoid ORM cascade nullifying FKs) ---
+        for name, _ in system_roles:
+            # Reassign child rows to the earliest surviving role, then delete dupes.
+            await db.execute(text("""
+                WITH surviving AS (
+                    SELECT id FROM roles
+                    WHERE name = :name AND tenant_id IS NULL
+                    ORDER BY created_at LIMIT 1
+                )
+                UPDATE user_roles
+                   SET role_id = (SELECT id FROM surviving)
+                 WHERE role_id IN (
+                     SELECT id FROM roles
+                     WHERE name = :name AND tenant_id IS NULL
+                       AND id NOT IN (SELECT id FROM surviving)
+                 )
+            """), {"name": name})
+
+            await db.execute(text("""
+                WITH surviving AS (
+                    SELECT id FROM roles
+                    WHERE name = :name AND tenant_id IS NULL
+                    ORDER BY created_at LIMIT 1
+                )
+                UPDATE role_permissions
+                   SET role_id = (SELECT id FROM surviving)
+                 WHERE role_id IN (
+                     SELECT id FROM roles
+                     WHERE name = :name AND tenant_id IS NULL
+                       AND id NOT IN (SELECT id FROM surviving)
+                 )
+            """), {"name": name})
+
+            await db.execute(text("""
+                DELETE FROM roles
+                 WHERE name = :name AND tenant_id IS NULL
+                   AND id NOT IN (
+                       SELECT id FROM roles
+                       WHERE name = :name AND tenant_id IS NULL
+                       ORDER BY created_at LIMIT 1
+                   )
+            """), {"name": name})
+
+        await db.flush()
+        # Expire cached ORM state so the next selects see the post-dedup rows.
+        db.expire_all()
+
+        # --- Step 2: insert any missing roles ---
         for name, description in system_roles:
             result = await db.execute(
                 select(Role).where(Role.name == name, Role.tenant_id.is_(None))
             )
-            if result.scalar_one_or_none() is None:
+            if result.scalars().first() is None:
                 db.add(Role(name=name, description=description, is_system=True))
+
         await db.commit()
 
 
@@ -97,6 +150,7 @@ from app.routers import expenses as expenses_router
 from app.routers import approvals as approvals_router
 from app.routers import tenant as tenant_router
 from app.routers import invitations as invitations_router
+from app.routers import documents as documents_router
 
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
@@ -104,6 +158,7 @@ app.include_router(expenses_router.router)
 app.include_router(approvals_router.router)
 app.include_router(tenant_router.router)
 app.include_router(invitations_router.router)
+app.include_router(documents_router.router)
 
 
 @app.get("/api/health", tags=["system"])
