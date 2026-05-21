@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (Milestone 4 — Approval Workflow complete)
+> Last updated: May 2026 (Approval Workflow Enhancements — refer back, audit trail, snapshots, separation of duties, full email coverage)
 
 ---
 
@@ -134,6 +134,12 @@ Each milestone:
 - PowerShell execution policy: RemoteSigned (current user)
 - Project root: `C:\Users\oladu\Projects\ziva-bi`
 - Docs folder: `C:\Users\oladu\Projects\ziva-bi\docs`
+- **PostgreSQL 17** installed locally; server runs on port 5432
+- Local dev database: `ziva_dev` (user: `postgres`, password: `postgres`)
+- `backend/.env` configured with `DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/ziva_dev`
+- Backend started with: `cd backend && .venv\Scripts\uvicorn.exe app.main:app --reload --port 8000`
+- Frontend started with: `cd frontend && npm run dev`
+- CORS: `localhost:3000` and `localhost:3001` hardcoded in `main.py` — always allowed regardless of ALLOWED_ORIGINS env var
 
 ## 9. GitHub
 
@@ -171,75 +177,123 @@ Each milestone:
 
 ## 13. Current Status — Where We Are
 
-### ✅ Completed
-- Dev environment fully set up
+### ✅ Completed — Foundation
+- Dev environment fully set up (see Section 8)
 - Claude Code installed, CLAUDE.md initialised
 - Tech stack confirmed (Next.js + FastAPI + PostgreSQL + Render)
 - Product vision finalised (Individuals + Businesses, tiered)
-- Build approach: milestones, not chunks
-- 3 master docs rewritten in clean markdown:
-  - `MASTER_CONTEXT.md` (this file)
-  - `MASTER_INSTRUCTION.md`
-  - `MASTER_SYSTEM_SUMMARY.md`
-- **MILESTONE 1 COMPLETE (May 2026):**
-  - Monorepo scaffold: Next.js 15 frontend + FastAPI backend
-  - Backend: `main.py` (FastAPI app + /api/health), `config.py` (pydantic-settings), `database.py` (async SQLAlchemy + session factory), `alembic/` (migration tooling ready)
-  - Frontend: App Router layout, placeholder landing page, ShadCN + Tailwind configured
-  - Dockerfiles for both services (Render-optimised)
-  - `render.yaml` — full infra-as-code: 2 web services + managed PostgreSQL
-  - `.gitignore`, `.env.example` for both services
-  - `README.md` at root
-  - All PDF PRDs removed from `docs/`; markdown versions remain
-  - First commit pushed to GitHub (`oladunmoyeadeniyi/ziva-bi`, branch: `main`)
+- 3 master docs in clean markdown: `MASTER_CONTEXT.md`, `MASTER_INSTRUCTION.md`, `MASTER_SYSTEM_SUMMARY.md`
+
+### ✅ Completed — Milestone 1 (May 2026)
+- Monorepo scaffold: Next.js 15 frontend + FastAPI backend
+- Backend: `main.py`, `config.py` (pydantic-settings), `database.py` (async SQLAlchemy), `alembic/`
+- Frontend: App Router layout, placeholder landing page, ShadCN + Tailwind configured
+- Dockerfiles for both services (Render-optimised)
+- `render.yaml` — infra-as-code: 2 web services + managed PostgreSQL
+- Repo pushed to GitHub (`oladunmoyeadeniyi/ziva-bi`, branch: `main`)
 
 ### ✅ Completed — Milestone 2 (May 2026)
-- **Auth & User Management** — full signup, login, token refresh, logout
-- Business signup creates a company (tenant) with name + country; user becomes Tenant Admin
-- Individual signup creates a single-user account (tenant_id = NULL)
+- **Auth & User Management** — signup, login, token refresh, logout
+- Business signup creates tenant + Tenant Admin; individual signup has tenant_id = NULL
 - JWT access tokens (30 min) + rotating refresh tokens (7 days), replay-attack protection
-- Account lockout after 5 failed attempts (15-min lockout)
-- Argon2-compatible bcrypt password hashing (bcrypt 5.x direct, no passlib)
-- System roles seeded on startup (super_admin, tenant_admin, employee, etc.)
+- Account lockout after 5 failed attempts (15-min lockout); bcrypt password hashing
+- System roles seeded on startup (super_admin, tenant_admin, employee, approver, finance_*, etc.)
 - DB models: tenants, users, user_tenants, roles, permissions, role_permissions, user_roles, sessions, refresh_tokens, audit_logs
-- Alembic migration for all auth tables
-- Seed script: Super Admin + test tenant + individual test user
-- Frontend: two-step signup page, login page, dashboard layout with auth guard
-- Dashboards route by account_type → /dashboard/personal or /dashboard/business
-- AuthContext handles session persistence (refresh token in localStorage, access token in memory)
-- All endpoints: POST /api/auth/signup, /api/auth/login, /api/auth/refresh-token, /api/auth/logout, GET /api/users/me
+- Alembic migration: revision `72a96af108c3`
+- Frontend: two-step signup, login, dashboard auth guard, AuthContext (refresh token in localStorage)
+- Dashboards route by account_type → `/dashboard/personal` or `/dashboard/business`
+- Endpoints: POST /api/auth/signup, /login, /refresh-token, /logout; GET /api/users/me, /api/users/tenant
 
 ### ✅ Completed — Milestone 3 (May 2026)
-- **Business Expense Retirement Submission** — full multi-line expense report form with GL coding
-- DB models: expense_reports, expense_lines with tenant isolation
-- Alembic migration applied (revision 87e40b59d47f)
-- API: POST/GET/PATCH /api/expenses/reports, POST/DELETE lines, POST submit
-- Status flow: DRAFT → SUBMITTED (no approvals in M3)
-- Report numbering: EXP-{YEAR}-{SEQUENCE:04d} auto-generated per tenant/year
-- Currency: NGN only (no FX)
-- Frontend: list page, new report form, read-only detail view
-- Business dashboard refactored with shared sidebar layout
-- Navigation: "Expenses" added to business dashboard sidebar
+- **Business Expense Retirement Submission** — multi-line expense report with GL coding
+- DB models: expense_reports, expense_lines (both tenant-scoped)
+- Alembic migration: revision `87e40b59d47f`
+- Status flow: DRAFT → SUBMITTED
+- Report numbering: `EXP-{YEAR}-{SEQUENCE:04d}` per tenant/year
+- API: POST/GET/PATCH /api/expenses/reports, POST/DELETE lines
+- Frontend: expense list page (tab filters), new report form, read-only detail view
+- Sidebar: Expenses nav item added
 
 ### ✅ Completed — Milestone 4 (May 2026)
-- **Approval Workflow** — full configurable multi-level expense approval chain
-- DB: approval_matrix (per-tenant config), expense_approvals (per-report × level)
-- expense_reports extended: current_approval_level, rejection_comment columns
+- **Approval Workflow** — configurable multi-level expense approval chain
+- DB: approval_matrix (per-tenant), expense_approvals (per report × level)
+- expense_reports extended: `current_approval_level`, `rejection_comment`
 - Status flow: DRAFT → PENDING_APPROVAL → APPROVED | REJECTED
-- Alembic migration applied (revision f1e2d3c4b5a6)
-- API: POST/GET /api/approvals/matrix, POST /api/approvals/reports/{id}/submit,
-  GET /api/approvals/queue, GET /api/approvals/reports/{id},
-  POST /api/approvals/{id}/approve, POST /api/approvals/{id}/reject
-- GET /api/users/tenant added for approver dropdown population
-- is_tenant_admin embedded in JWT (login, signup, refresh)
-- SMTP email notifications on rejection (console fallback if not configured)
+- Alembic migrations: `f1e2d3c4b5a6` (approval tables), `a2b3c4d5e6f7` (unique constraint on report+level)
+- `is_tenant_admin` embedded in JWT
+- API: POST/GET /api/approvals/matrix, POST /api/approvals/reports/{id}/submit, GET /api/approvals/queue, GET /api/approvals/rejected, GET /api/approvals/reports/{id}, POST /api/approvals/{id}/approve, POST /api/approvals/{id}/reject
 - Frontend: Approvals queue page, Approval Matrix settings page (admin only)
-- Sidebar: Approvals nav with pending count badge, Settings nav (admin only)
-- Expense list: 5-tab filter + all status badges + REJECTED edit action
-- Expense detail: full approval chain display + live approve/reject panel
-- Expense edit: approver selection modal, REJECTED report editing
+- Sidebar: Approvals nav with pending-count badge, Settings nav (admin only)
+- Expense list: 5-tab filter (All / Drafts / In Review / Approved / Rejected) + status badges
+- Expense detail: approval chain progress display + live approve/reject action panel
+- SMTP email on rejection (console fallback when not configured)
+
+### ✅ Completed — Approval Workflow Enhancements (May 2026)
+All built on top of Milestone 4. Alembic migrations applied: `c3d4e5f6a7b8` and `d4e5f6a7b8c9`.
+
+**Bug fixes:**
+- Submit endpoint bug: new expense form (`new/page.tsx`) was calling the old M3 submit endpoint (→ SUBMITTED). Fixed to call the M4 approval submit endpoint (→ PENDING_APPROVAL) with the approver selection modal.
+- Sidebar badge: pending count badge was only refreshing on token change. Fixed by adding `pathname` to the `useEffect` dependency — badge now refreshes on every navigation and after every approve/reject action.
+- CORS: `localhost:3000` and `localhost:3001` hardcoded in `main.py` — not dependent on `ALLOWED_ORIGINS` env var.
+
+**Refer Back action** (new):
+- `POST /api/approvals/{id}/refer-back` with `target_type: "approver" | "requestor"`
+- `target_type = "requestor"` → report becomes `REFERRED_TO_REQUESTOR`; resubmit resumes from the referring level (not Level 1)
+- `target_type = "approver"` → activates one or more lower levels for consultation (`target_levels: list[int]`); levels visited sequentially in ascending order; after all complete, control returns to the referring level
+- `visible_to_requestor` bool: controls whether the requestor can see the referral comment or only sees "Pending internal review"
+- `response_comment` on approve: referred approver can send a reply back to the referring approver
+- New report status: `REFERRED_TO_REQUESTOR`; new approval record status: `REFERRED_BACK`
+- `expense_reports.status` widened to VARCHAR(30) to fit `REFERRED_TO_REQUESTOR`
+
+**Smart rejection resume:**
+- `expense_reports.rejected_at_level` (INTEGER): tracks which level rejected/referred-back-to-requestor
+- On resubmit, approval chain resumes from `rejected_at_level` — already-approved lower levels are preserved and not re-reviewed
+- `expense_reports.referred_back_from_level` (INTEGER): tracks the higher level to return to during approver-to-approver refer-back
+- `expense_reports.referred_back_levels` (JSONB): queue of additional levels to visit in multi-level refer-back
+
+**Audit trail:**
+- Every approval action writes an immutable entry to `audit_logs` with full JSONB metadata
+- Event types: `EXPENSE_SUBMITTED`, `EXPENSE_APPROVED`, `EXPENSE_REJECTED`, `EXPENSE_REFERRED_BACK`, `EXPENSE_RESUBMITTED`
+- `GET /api/approvals/reports/{id}/audit-log` — chronological event trail (tenant admin / super admin only)
+- Frontend: `/dashboard/business/expenses/{id}/audit` — vertical timeline page with event type, actor, timestamp, comments; "View Audit Trail" link on detail page (admin only)
+
+**Expense snapshots:**
+- New table: `expense_report_snapshots` — immutable JSONB copy of all lines + header at each submission
+- Version increments per resubmission (1, 2, 3…)
+- `GET /api/approvals/reports/{id}/snapshot/{version}` — returns the snapshot
+- Snapshot version included in audit log entries for `EXPENSE_SUBMITTED` and `EXPENSE_RESUBMITTED`
+- Frontend: `/dashboard/business/expenses/{id}/snapshot/{version}` — snapshot viewer with full line detail; "View snapshot" links on the audit trail page
+
+**Separation of duties:**
+- Backend: submit validates no `approver_id == employee_id` at any level (HTTP 400 if violated)
+- Frontend: approver dropdowns filter out the currently logged-in user entirely
+
+**Full email coverage** (all fall back to console log when SMTP not configured):
+- Approver notified when report enters their queue (on submit / resubmit)
+- Approver notified when referred to by a higher-level approver
+- Requestor notified when report is fully approved
+- Requestor notified when referred back with `visible_to_requestor = true`
+- Requestor notified on rejection (existing from M4)
+
+**New DB columns (applied via migrations):**
+- `expense_approvals.visible_to_requestor` BOOLEAN DEFAULT false
+- `expense_approvals.response_comment` TEXT nullable
+- `expense_reports.rejected_at_level` INTEGER nullable
+- `expense_reports.referred_back_from_level` INTEGER nullable
+- `expense_reports.referred_back_levels` JSONB nullable
+- `expense_reports.status` widened from VARCHAR(20) → VARCHAR(30)
+
+**Frontend additions:**
+- Status badges updated: REFERRED_BACK and REFERRED_TO_REQUESTOR shown in amber throughout
+- Refer Back modal: multi-select checkboxes for target levels + `visible_to_requestor` toggle + required comment
+- Referred approver context panel: shows who referred and the comment
+- Response field: referred approver enters a reply before approving back up
+- Requestor view: inline query banners while report is PENDING_APPROVAL (shows comment if visible, else greyed-out "Pending internal review")
+- Expense list: Rejected tab includes REFERRED_TO_REQUESTOR; Edit action shown for both
+- Approvals queue page: unchanged (existing PENDING detection works correctly for refer-back flows)
 
 ### ⏳ Next — Milestone 5
-- Individual can log a personal expense (simplest possible expense entry)
+- Individual can log a personal expense (simplest possible expense entry, saved to DB, listed on dashboard)
 
 ### Module PRDs still to rewrite (do each just before building that module)
 - Accounts Payable (PDF exists — rewrite to markdown before building AP)
@@ -249,4 +303,4 @@ Each milestone:
 
 ---
 
-*End of Master Context. Update after every major session.*
+*End of Master Context. Last updated: May 2026 (Approval Workflow Enhancements complete).*
