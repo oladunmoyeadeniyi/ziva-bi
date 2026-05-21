@@ -111,6 +111,11 @@ class UserResponse(BaseModel):
     tenant_id: str | None
     is_super_admin: bool
     is_tenant_admin: bool = False
+    # Extended profile fields (null until the user fills them in)
+    employee_code: str | None = None
+    department: str | None = None
+    job_title: str | None = None
+    phone: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -131,6 +136,10 @@ class UserResponse(BaseModel):
             tenant_id=str(tenant_id) if tenant_id else None,
             is_super_admin=user.is_super_admin,  # type: ignore[attr-defined]
             is_tenant_admin=is_tenant_admin,
+            employee_code=getattr(user, "employee_code", None),
+            department=getattr(user, "department", None),
+            job_title=getattr(user, "job_title", None),
+            phone=getattr(user, "phone", None),
         )
 
 

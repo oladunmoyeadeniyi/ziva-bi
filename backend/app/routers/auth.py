@@ -290,13 +290,11 @@ async def login(
 
     # ── 2. Resolve user_tenant (primary membership for this login) ────────────
     # Individual accounts have tenant_id IS NULL.
-    # Business accounts: use the first active membership for now.
-    # Multi-tenant account-switching is a future milestone.
+    # Business accounts: use the first membership (active or not) — then check
+    # is_active to provide a specific deactivation message instead of the
+    # generic "invalid credentials" response.
     ut_result = await db.execute(
-        select(UserTenant).where(
-            UserTenant.user_id == user.id,
-            UserTenant.is_active.is_(True),
-        )
+        select(UserTenant).where(UserTenant.user_id == user.id)
     )
     user_tenant: UserTenant | None = ut_result.scalars().first()
 
@@ -304,6 +302,12 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
+        )
+
+    if not user_tenant.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your account has been deactivated. Contact your administrator.",
         )
 
     # ── 3. Lockout check ──────────────────────────────────────────────────────

@@ -111,7 +111,7 @@ async def seed() -> None:
             role_result = await db.execute(
                 select(Role).where(Role.name == "tenant_admin", Role.tenant_id.is_(None))
             )
-            role = role_result.scalar_one_or_none()
+            role = role_result.scalars().first()
             if role:
                 db.add(UserRole(user_tenant_id=ta_ut.id, role_id=role.id))
 
@@ -139,6 +139,45 @@ async def seed() -> None:
             print(f"  Created Individual user: {ind_email}")
         else:
             print(f"  Individual user already exists: {ind_email}")
+
+        # ── Additional test users for the test tenant ─────────────────────────
+        # These allow testing the full multi-user approval flow locally.
+        test_users = [
+            ("employee@testcorp.ziva.bi",  "Employee One",   "Employee123!", "employee"),
+            ("manager@testcorp.ziva.bi",   "Manager One",    "Manager123!",  "line_manager"),
+            ("finance@testcorp.ziva.bi",   "Finance One",    "Finance123!",  "finance_manager"),
+            ("gm@testcorp.ziva.bi",        "GM One",         "GM123!",       "gm"),
+        ]
+
+        for email, full_name, password, role_name in test_users:
+            existing = await db.execute(select(User).where(User.email == email))
+            if existing.scalar_one_or_none() is None:
+                user = User(
+                    email=email,
+                    full_name=full_name,
+                    account_type=AccountType.business,
+                )
+                db.add(user)
+                await db.flush()
+
+                ut = UserTenant(
+                    user_id=user.id,
+                    tenant_id=tenant.id,
+                    password_hash=hash_password(password),
+                )
+                db.add(ut)
+                await db.flush()
+
+                role_result = await db.execute(
+                    select(Role).where(Role.name == role_name, Role.tenant_id.is_(None))
+                )
+                role = role_result.scalars().first()
+                if role:
+                    db.add(UserRole(user_tenant_id=ut.id, role_id=role.id))
+
+                print(f"  Created test user: {email} (role: {role_name})")
+            else:
+                print(f"  Test user already exists: {email}")
 
         await db.commit()
         print("\nSeed complete.")

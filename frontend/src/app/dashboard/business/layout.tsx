@@ -3,18 +3,13 @@
 /**
  * Business dashboard layout — shared shell for all /dashboard/business/* pages.
  *
- * Provides the top header and left sidebar so every business page inherits the
- * same chrome without duplicating markup. The auth guard is handled by the
- * parent /dashboard/layout.tsx so this layout can assume the user is logged in.
- *
- * M4 additions:
- *   - "Approvals" nav item with live pending-count badge
- *   - "Settings" nav item (visible to all business users for now)
+ * M4: Approvals badge, Settings link.
+ * M5: User name → dropdown (Profile / Sign out). Team link (admin only).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -29,36 +24,83 @@ export default function BusinessLayout({
 }) {
   const { user, logout, accessToken } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
   const [pendingCount, setPendingCount] = useState<number>(0);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  // Fetch pending approval count for the badge — refreshes on every navigation change
+  // Fetch pending approval badge count on every navigation
   useEffect(() => {
     if (!accessToken) return;
     apiFetch<ApprovalQueueItem[]>("/api/approvals/queue", { token: accessToken })
       .then((queue) => setPendingCount(queue.length))
-      .catch(() => {/* non-fatal — badge stays at 0 */});
+      .catch(() => {});
   }, [accessToken, pathname]);
 
+  // Close the dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
+
   const NAV_ITEMS = [
-    { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null },
-    { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false, badge: null },
-    { href: "/dashboard/business/approvals", label: "Approvals", icon: "✅", exact: false, badge: pendingCount > 0 ? pendingCount : null },
-    { href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null },
+    { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null, adminOnly: false },
+    { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false, badge: null, adminOnly: false },
+    { href: "/dashboard/business/approvals", label: "Approvals", icon: "✅", exact: false, badge: pendingCount > 0 ? pendingCount : null, adminOnly: false },
+    { href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null, adminOnly: true },
+    { href: "/dashboard/business/admin/users", label: "Team", icon: "👥", exact: false, badge: null, adminOnly: true },
   ];
+
+  const visibleNav = NAV_ITEMS.filter((item) => !item.adminOnly || user?.is_tenant_admin);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       {/* Top header */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shrink-0">
         <span className="text-lg font-bold text-gray-900">ZivaBI</span>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-600">{user?.full_name}</span>
+
+        {/* User menu */}
+        <div className="relative" ref={menuRef}>
           <button
-            onClick={logout}
-            className="text-sm text-gray-500 hover:text-gray-800 transition-colors"
+            type="button"
+            onClick={() => setShowUserMenu((v) => !v)}
+            className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 focus:outline-none"
           >
-            Sign out
+            <span className="font-medium">{user?.full_name}</span>
+            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
           </button>
+
+          {showUserMenu && (
+            <div className="absolute right-0 mt-2 w-44 bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
+              <Link
+                href="/dashboard/profile"
+                onClick={() => setShowUserMenu(false)}
+                className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Profile
+              </Link>
+              <hr className="my-1 border-gray-100" />
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -69,7 +111,7 @@ export default function BusinessLayout({
           <p className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
             Business
           </p>
-          {NAV_ITEMS.map((item) => {
+          {visibleNav.map((item) => {
             const active = item.exact
               ? pathname === item.href
               : pathname === item.href || pathname.startsWith(item.href + "/");

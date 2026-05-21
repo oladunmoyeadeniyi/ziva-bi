@@ -32,10 +32,12 @@ async def _ensure_system_roles() -> None:
         ("super_admin",     "Global platform administrator"),
         ("tenant_admin",    "Company administrator — full control within their tenant"),
         ("employee",        "Standard employee — can submit requests"),
-        ("approver",        "Line manager approver"),
+        ("line_manager",    "Line manager — approves team expense reports"),
+        ("approver",        "Designated approver (legacy label, prefer line_manager)"),
+        ("gm",              "General Manager — senior approver"),
         ("finance_reviewer","Finance team reviewer"),
         ("finance_poster",  "Finance team — posts to ERP"),
-        ("finance_manager", "Finance Director / CFO"),
+        ("finance_manager", "Finance Director / CFO — sees all reports"),
         ("internal_auditor","Read-only auditor — internal"),
         ("external_auditor","Read-only auditor — external"),
         ("vendor_admin",    "Vendor company administrator"),
@@ -93,11 +95,15 @@ from app.routers import auth as auth_router
 from app.routers import users as users_router
 from app.routers import expenses as expenses_router
 from app.routers import approvals as approvals_router
+from app.routers import tenant as tenant_router
+from app.routers import invitations as invitations_router
 
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
 app.include_router(expenses_router.router)
 app.include_router(approvals_router.router)
+app.include_router(tenant_router.router)
+app.include_router(invitations_router.router)
 
 
 @app.get("/api/health", tags=["system"])

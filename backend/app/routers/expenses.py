@@ -26,6 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
+from app.models.auth import Role, UserRole, UserTenant
 from app.models.expenses import ExpenseLine, ExpenseReport
 from app.schemas.expenses import (
     ExpenseLineCreate,
@@ -178,6 +179,24 @@ async def list_reports(
         .options(selectinload(ExpenseReport.lines))
         .order_by(ExpenseReport.created_at.desc())
     )
+
+    # Role-based visibility: admins and finance roles see all reports;
+    # regular employees see only their own.
+    if not current_user.is_tenant_admin and not current_user.is_super_admin:
+        finance_roles = {"finance_reviewer", "finance_poster", "finance_manager"}
+        role_check = await db.execute(
+            select(Role.name)
+            .join(UserRole, Role.id == UserRole.role_id)
+            .join(UserTenant, UserRole.user_tenant_id == UserTenant.id)
+            .where(
+                UserTenant.user_id == current_user.user_id,
+                UserTenant.tenant_id == tenant_id,
+                Role.name.in_(finance_roles),
+            )
+        )
+        has_finance_role = role_check.scalar_one_or_none() is not None
+        if not has_finance_role:
+            q = q.where(ExpenseReport.employee_id == current_user.user_id)
 
     if status_filter:
         q = q.where(ExpenseReport.status == status_filter.upper())

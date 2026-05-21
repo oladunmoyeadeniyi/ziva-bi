@@ -35,6 +35,10 @@ export interface AuthUser {
   tenant_id: string | null;
   is_super_admin: boolean;
   is_tenant_admin: boolean;
+  employee_code?: string | null;
+  department?: string | null;
+  job_title?: string | null;
+  phone?: string | null;
 }
 
 interface AuthResponse {
@@ -61,6 +65,8 @@ interface AuthContextType {
   signup: (data: SignupData) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Refresh the stored user object (e.g. after a profile update). */
+  refreshUser: () => Promise<void>;
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -153,6 +159,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveSession(res);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const token = accessToken;
+    if (!token) return;
+    try {
+      const updated = await apiFetch<AuthUser>("/api/users/me", { token });
+      setUser(updated);
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+    } catch {
+      // non-fatal — user stays as-is
+    }
+  }, [accessToken]);
+
   const logout = useCallback(async () => {
     const storedRefresh = localStorage.getItem(REFRESH_KEY);
     try {
@@ -180,6 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signup,
         login,
         logout,
+        refreshUser,
       }}
     >
       {children}
