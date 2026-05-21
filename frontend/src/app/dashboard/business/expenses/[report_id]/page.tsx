@@ -4,10 +4,14 @@
  * Expense report detail — /dashboard/business/expenses/{report_id}
  *
  * M4: APPROVED/REJECTED banners, approval chain, approve/reject panel.
- * M5: REFERRED_TO_REQUESTOR banner, REFERRED_BACK chain display,
- *     refer-back modal (multi-select levels + visible_to_requestor toggle),
- *     referred approver context panel + response field,
- *     requestor referral visibility, audit trail link.
+ * M5: REFERRED_TO_REQUESTOR banner, refer-back modal, audit trail link.
+ * M5 UI fixes:
+ *   FIX 1 — query banner uses approver's actual name, not level number
+ *   FIX 2 — REFERRED_BACK label is contextual ("Referred back to you" / "Referred to [Name]")
+ *   FIX 3 — visible_to_requestor defaulted ON; toggle relabelled "Hide from requestor"
+ *   FIX 4 — two-column layout on desktop (65/35 split); single column on mobile
+ *   FIX 5 — approval chain cards vertical, compact, name-first
+ *   FIX 6 — action panel in right column on desktop; fixed bottom bar on mobile
  */
 
 import { useEffect, useState } from "react";
@@ -102,7 +106,7 @@ export default function ExpenseDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Approve/reject panel
+  // Desktop action panel state
   const [approveComment, setApproveComment] = useState("");
   const [approveResponse, setApproveResponse] = useState("");
   const [showRejectInput, setShowRejectInput] = useState(false);
@@ -110,11 +114,15 @@ export default function ExpenseDetailPage() {
   const [isActioning, setIsActioning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Refer Back modal
+  // Mobile reject bottom sheet
+  const [showMobileRejectModal, setShowMobileRejectModal] = useState(false);
+  const [mobileRejectComment, setMobileRejectComment] = useState("");
+
+  // Refer Back modal — FIX 3: default visible (hide = false)
   const [showReferBackModal, setShowReferBackModal] = useState(false);
   const [referBackType, setReferBackType] = useState<"approver" | "requestor">("requestor");
   const [referBackSelectedLevels, setReferBackSelectedLevels] = useState<number[]>([]);
-  const [referBackVisibleToRequestor, setReferBackVisibleToRequestor] = useState(false);
+  const [referBackHideFromRequestor, setReferBackHideFromRequestor] = useState(false); // FIX 3
   const [referBackComment, setReferBackComment] = useState("");
   const [referBackError, setReferBackError] = useState<string | null>(null);
 
@@ -150,17 +158,30 @@ export default function ExpenseDetailPage() {
         )
       : undefined;
 
-  // Detect if current user is the target of a refer-back (from a higher-level approver)
+  // Detect referring approval (higher-level approver who referred down to me)
   const referringApproval = myPendingApproval
     ? approvals.find((a) => a.status === "REFERRED_BACK" && a.level > myPendingApproval.level)
     : undefined;
 
-  // Levels available for refer-back (below current)
+  // Levels below current that can be refer-back targets
   const referBackLevels = myPendingApproval
     ? approvals.filter((a) => a.level < myPendingApproval.level)
     : [];
 
   const isRequestor = user?.id === report?.employee_id;
+
+  // FIX 2: contextual REFERRED_BACK label using actual names
+  const getReferredBackLabel = (a: ApprovalRecord): string => {
+    if (report?.status === "REFERRED_TO_REQUESTOR") {
+      return isRequestor ? "Referred back to you" : "Referred to requestor";
+    }
+    const lowerPending = approvals.filter((la) => la.level < a.level && la.status === "PENDING");
+    if (lowerPending.length > 0) {
+      const firstNames = lowerPending.map((la) => la.approver_name.split(" ")[0]);
+      return `Referred to ${firstNames.join(" & ")}`;
+    }
+    return "Referred Back";
+  };
 
   const refreshApprovals = async () => {
     if (!accessToken || !report_id) return;
@@ -172,7 +193,7 @@ export default function ExpenseDetailPage() {
     setApprovals(a);
   };
 
-  const handleApprove = async () => {
+  const handleApprove = async (comment?: string, responseComment?: string) => {
     const pending = report?.status === "PENDING_APPROVAL"
       ? approvals.find((a) => a.approver_id === user?.id && a.status === "PENDING" && a.level === report.current_approval_level)
       : undefined;
@@ -181,7 +202,10 @@ export default function ExpenseDetailPage() {
     try {
       await apiFetch<ExpenseReport>(`/api/approvals/${pending.id}/approve`, {
         method: "POST", token: accessToken,
-        body: JSON.stringify({ comment: approveComment || null, response_comment: approveResponse || null }),
+        body: JSON.stringify({
+          comment: (comment ?? approveComment) || null,
+          response_comment: (responseComment ?? approveResponse) || null,
+        }),
       });
       setApproveComment(""); setApproveResponse("");
       await refreshApprovals();
@@ -191,19 +215,21 @@ export default function ExpenseDetailPage() {
     } finally { setIsActioning(false); }
   };
 
-  const handleReject = async () => {
+  const handleReject = async (comment?: string) => {
     const pending = report?.status === "PENDING_APPROVAL"
       ? approvals.find((a) => a.approver_id === user?.id && a.status === "PENDING" && a.level === report.current_approval_level)
       : undefined;
     if (!pending || !accessToken) return;
-    if (!rejectComment.trim()) { setActionError("Rejection comment is required."); return; }
+    const finalComment = comment ?? rejectComment;
+    if (!finalComment.trim()) { setActionError("Rejection comment is required."); return; }
     setIsActioning(true); setActionError(null);
     try {
       await apiFetch<ExpenseReport>(`/api/approvals/${pending.id}/reject`, {
         method: "POST", token: accessToken,
-        body: JSON.stringify({ comment: rejectComment }),
+        body: JSON.stringify({ comment: finalComment }),
       });
       setRejectComment(""); setShowRejectInput(false);
+      setMobileRejectComment(""); setShowMobileRejectModal(false);
       await refreshApprovals();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to reject.";
@@ -227,17 +253,26 @@ export default function ExpenseDetailPage() {
         body: JSON.stringify({
           target_type: referBackType,
           target_levels: referBackType === "approver" ? referBackSelectedLevels : null,
-          visible_to_requestor: referBackVisibleToRequestor,
+          visible_to_requestor: !referBackHideFromRequestor, // FIX 3: inverted
           comment: referBackComment,
         }),
       });
       setShowReferBackModal(false); setReferBackComment(""); setReferBackSelectedLevels([]);
-      setReferBackVisibleToRequestor(false);
+      setReferBackHideFromRequestor(false);
       await refreshApprovals();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to refer back.";
       setReferBackError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
     } finally { setIsActioning(false); }
+  };
+
+  const openReferBackModal = () => {
+    setShowReferBackModal(true);
+    setReferBackType("requestor");
+    setReferBackSelectedLevels([]);
+    setReferBackComment("");
+    setReferBackHideFromRequestor(false); // FIX 3: default visible
+    setReferBackError(null);
   };
 
   const toggleLevel = (level: number) => {
@@ -248,7 +283,7 @@ export default function ExpenseDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto space-y-4">
+      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto space-y-4">
         <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
         <div className="h-40 bg-gray-100 rounded-xl animate-pulse" />
         <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
@@ -257,7 +292,7 @@ export default function ExpenseDetailPage() {
   }
   if (error || !report) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
+      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Report not found."}
         </div>
@@ -265,9 +300,12 @@ export default function ExpenseDetailPage() {
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
-      {/* Refer Back modal */}
+    // pb-24 on mobile to clear the fixed bottom action bar (FIX 6)
+    <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto pb-24 md:pb-8">
+
+      {/* ── Refer Back modal ─────────────────────────────────────────────── */}
       {showReferBackModal && myPendingApproval && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
@@ -310,7 +348,7 @@ export default function ExpenseDetailPage() {
                           onChange={() => toggleLevel(a.level)}
                           className="accent-orange-500 w-4 h-4" />
                         <span className="text-sm text-gray-800">
-                          Level {a.level}: {a.level_label} ({a.approver_name})
+                          {a.approver_name} — {a.level_label}
                         </span>
                       </label>
                     ))}
@@ -318,22 +356,22 @@ export default function ExpenseDetailPage() {
                 </div>
               )}
 
-              {/* Visible to requestor toggle */}
+              {/* FIX 3: "Hide from requestor" toggle, default OFF (visible by default) */}
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={referBackVisibleToRequestor}
-                  onClick={() => setReferBackVisibleToRequestor((v) => !v)}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                    referBackVisibleToRequestor ? "bg-orange-500" : "bg-gray-300"
+                  aria-checked={referBackHideFromRequestor}
+                  onClick={() => setReferBackHideFromRequestor((v) => !v)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                    referBackHideFromRequestor ? "bg-red-500" : "bg-gray-300"
                   }`}
                 >
                   <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                    referBackVisibleToRequestor ? "translate-x-4.5" : "translate-x-0.5"
+                    referBackHideFromRequestor ? "translate-x-4" : "translate-x-0.5"
                   }`} />
                 </button>
-                <span className="text-sm text-gray-700">Allow requestor to see this query</span>
+                <span className="text-sm text-gray-700">Hide from requestor (internal query only)</span>
               </div>
 
               {/* Comment */}
@@ -351,7 +389,8 @@ export default function ExpenseDetailPage() {
             {referBackError && <p className="mt-3 text-xs text-red-600">{referBackError}</p>}
 
             <div className="flex gap-3 justify-end mt-6">
-              <button type="button" onClick={() => { setShowReferBackModal(false); setReferBackError(null); setReferBackComment(""); }}
+              <button type="button"
+                onClick={() => { setShowReferBackModal(false); setReferBackError(null); setReferBackComment(""); }}
                 disabled={isActioning}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                 Cancel
@@ -365,11 +404,44 @@ export default function ExpenseDetailPage() {
         </div>
       )}
 
+      {/* ── Mobile reject bottom sheet (FIX 6) ───────────────────────────── */}
+      {showMobileRejectModal && myPendingApproval && (
+        <div className="fixed inset-0 z-50 md:hidden flex items-end bg-black/40">
+          <div className="bg-white rounded-t-2xl w-full px-4 pt-4 pb-8 space-y-3">
+            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-2" />
+            <h3 className="text-base font-semibold text-gray-900">Rejection Reason</h3>
+            <textarea
+              rows={4}
+              value={mobileRejectComment}
+              onChange={(e) => setMobileRejectComment(e.target.value)}
+              placeholder="Explain why this report is being rejected…"
+              className="w-full px-3 py-2 border border-red-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+            {actionError && <p className="text-xs text-red-600">{actionError}</p>}
+            <div className="flex gap-3">
+              <button type="button"
+                onClick={() => { setShowMobileRejectModal(false); setMobileRejectComment(""); setActionError(null); }}
+                disabled={isActioning}
+                className="flex-1 py-3 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg disabled:opacity-60">
+                Cancel
+              </button>
+              <button type="button"
+                onClick={() => handleReject(mobileRejectComment)}
+                disabled={isActioning}
+                className="flex-1 py-3 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                {isActioning ? "Processing…" : "Confirm Rejection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Back + Audit link ─────────────────────────────────────────────── */}
       <div className="mb-4 flex items-center justify-between">
         <button onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700">
           ← Back to Expense Reports
         </button>
-        {(user?.is_tenant_admin) && (
+        {user?.is_tenant_admin && (
           <Link href={`/dashboard/business/expenses/${report.id}/audit`}
             className="text-xs text-gray-400 hover:text-gray-600 underline">
             View Audit Trail
@@ -377,10 +449,10 @@ export default function ExpenseDetailPage() {
         )}
       </div>
 
-      {/* Status banners */}
+      {/* ── Full-width status banners ─────────────────────────────────────── */}
       {report.status === "APPROVED" && (
         <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800 font-medium">
-          This report has been approved.
+          This report has been fully approved.
         </div>
       )}
       {report.status === "REJECTED" && (
@@ -404,236 +476,277 @@ export default function ExpenseDetailPage() {
         </div>
       )}
 
-      {/* Requestor view of internal referrals while report is PENDING_APPROVAL */}
-      {report.status === "PENDING_APPROVAL" && isRequestor && approvals.some((a) => a.status === "REFERRED_BACK") && (
+      {/* FIX 1 — query banners: use approver name, not level number */}
+      {report.status === "PENDING_APPROVAL" && isRequestor &&
+        approvals.some((a) => a.status === "REFERRED_BACK") && (
         <div className="mb-4 space-y-2">
           {approvals.filter((a) => a.status === "REFERRED_BACK").map((a) => (
             a.visible_to_requestor ? (
               <div key={a.id} className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800">
-                <p className="font-semibold mb-0.5">Query from approver (Level {a.level} — {a.level_label}):</p>
+                {/* FIX 1: use a.approver_name instead of "Level X" */}
+                <p className="font-semibold mb-0.5">
+                  Query from {a.approver_name} ({a.level_label}):
+                </p>
                 <p>{a.comment}</p>
               </div>
             ) : (
               <div key={a.id} className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-500 italic">
-                Pending internal review at Level {a.level}
+                Pending internal review at {a.level_label}
               </div>
             )
           ))}
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {/* Header */}
-        <div className="px-6 sm:px-8 py-6 border-b border-gray-200">
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-gray-900 uppercase tracking-wide">Business Expense Retirement</h1>
-              <p className="mt-0.5 text-xs text-gray-500">Ziva BI — Expense Management</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-semibold text-gray-800">{report.report_number}</p>
-              <StatusBadge status={report.status} />
-            </div>
-          </div>
-        </div>
+      {/* ── FIX 4: Two-column layout ──────────────────────────────────────── */}
+      <div className="md:grid md:grid-cols-[1fr_340px] md:gap-5 md:items-start">
 
-        {/* Employee info */}
-        <div className="px-6 sm:px-8 py-5 bg-gray-50 border-b border-gray-200">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-3">
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Employee Code</p>
-              <p className="mt-0.5 text-sm text-gray-900">{report.employee_code ?? "—"}</p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Function</p>
-              <p className="mt-0.5 text-sm text-gray-900">{report.employee_function ?? "—"}</p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Report Date</p>
-              <p className="mt-0.5 text-sm text-gray-900">{formatDate(report.report_date)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Currency</p>
-              <p className="mt-0.5 text-sm text-gray-900">{report.currency}</p>
-            </div>
-            {report.submitted_at && (
-              <div className="col-span-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitted At</p>
-                <p className="mt-0.5 text-sm text-gray-900">{formatDateTime(report.submitted_at)}</p>
+        {/* LEFT COLUMN: report card ────────────────────────────────────────── */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          {/* Document header */}
+          <div className="px-6 py-5 border-b border-gray-200">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-base font-bold text-gray-900 uppercase tracking-wide">
+                  Business Expense Retirement
+                </h1>
+                <p className="mt-0.5 text-xs text-gray-500">Ziva BI — Expense Management</p>
               </div>
-            )}
+              <div className="text-right shrink-0">
+                <p className="text-sm font-semibold text-gray-800">{report.report_number}</p>
+                <div className="mt-1"><StatusBadge status={report.status} /></div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Lines table */}
-        <div className="px-6 sm:px-8 py-6 overflow-x-auto">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Expense Lines</h2>
-          <table className="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
-            <thead className="bg-gray-50">
-              <tr>
-                {["#", "GL Account", "P/L Group", "IO / Dimension", "Cost Center", "Location", "Inv. Date", "Inv. No.", "Description", "Amount (NGN)"].map((h) => (
-                  <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {report.lines.map((line) => (
-                <tr key={line.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 text-gray-500">{line.line_number}</td>
-                  <td className="px-3 py-2 text-gray-900 font-medium">{line.gl_account}</td>
-                  <td className="px-3 py-2 text-gray-600">{line.pl_group ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-600">{line.io_dimension ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-600">{line.cost_center ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-600">{line.location ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{formatDate(line.invoice_date)}</td>
-                  <td className="px-3 py-2 text-gray-600">{line.invoice_number ?? "—"}</td>
-                  <td className="px-3 py-2 text-gray-900">{line.description}</td>
-                  <td className="px-3 py-2 text-gray-900 font-semibold text-right whitespace-nowrap">{formatNGN(line.amount)}</td>
+          {/* Employee info */}
+          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Employee Code</p>
+                <p className="mt-0.5 text-sm text-gray-900">{report.employee_code ?? "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Function</p>
+                <p className="mt-0.5 text-sm text-gray-900">{report.employee_function ?? "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Report Date</p>
+                <p className="mt-0.5 text-sm text-gray-900">{formatDate(report.report_date)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Currency</p>
+                <p className="mt-0.5 text-sm text-gray-900">{report.currency}</p>
+              </div>
+              {report.submitted_at && (
+                <div className="col-span-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Submitted At</p>
+                  <p className="mt-0.5 text-sm text-gray-900">{formatDateTime(report.submitted_at)}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Lines table */}
+          <div className="px-6 py-5 overflow-x-auto">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Expense Lines</h2>
+            <table className="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+              <thead className="bg-gray-50">
+                <tr>
+                  {["#", "GL Account", "P/L Group", "IO / Dimension", "Cost Center", "Location",
+                    "Inv. Date", "Inv. No.", "Description", "Amount (NGN)"].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-gray-50 border-t-2 border-gray-300">
-              <tr>
-                <td colSpan={9} className="px-3 py-3 text-right text-sm font-bold text-gray-800 uppercase tracking-wider">Grand Total</td>
-                <td className="px-3 py-3 text-right text-base font-bold text-gray-900 whitespace-nowrap">{formatNGN(report.total_amount)}</td>
-              </tr>
-            </tfoot>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {report.lines.map((line) => (
+                  <tr key={line.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-500">{line.line_number}</td>
+                    <td className="px-3 py-2 text-gray-900 font-medium">{line.gl_account}</td>
+                    <td className="px-3 py-2 text-gray-600">{line.pl_group ?? "—"}</td>
+                    <td className="px-3 py-2 text-gray-600">{line.io_dimension ?? "—"}</td>
+                    <td className="px-3 py-2 text-gray-600">{line.cost_center ?? "—"}</td>
+                    <td className="px-3 py-2 text-gray-600">{line.location ?? "—"}</td>
+                    <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{formatDate(line.invoice_date)}</td>
+                    <td className="px-3 py-2 text-gray-600">{line.invoice_number ?? "—"}</td>
+                    <td className="px-3 py-2 text-gray-900">{line.description}</td>
+                    <td className="px-3 py-2 text-gray-900 font-semibold text-right whitespace-nowrap">
+                      {formatNGN(line.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                <tr>
+                  <td colSpan={9} className="px-3 py-3 text-right text-sm font-bold text-gray-700 uppercase tracking-wider">
+                    Grand Total
+                  </td>
+                  <td className="px-3 py-3 text-right text-base font-bold text-gray-900 whitespace-nowrap">
+                    {formatNGN(report.total_amount)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Legacy placeholder for SUBMITTED reports without approval matrix */}
+          {report.status === "SUBMITTED" && approvals.length === 0 && (
+            <div className="px-6 py-5 border-t border-gray-200 bg-gray-50">
+              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Approval Status</h2>
+              <div className="flex gap-4">
+                <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center flex-1">
+                  <p className="text-xs font-semibold text-gray-600 mb-1">Employee</p>
+                  <p className="text-xs text-green-700 font-medium">Submitted</p>
+                  <p className="mt-2 text-xs text-gray-400">{formatDateTime(report.submitted_at)}</p>
+                </div>
+                <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center flex-1">
+                  <p className="text-xs font-semibold text-gray-600 mb-1">Approval</p>
+                  <p className="text-xs text-gray-400 italic">No approval matrix configured</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Approval chain */}
-        {approvals.length > 0 && (
-          <div className="px-6 sm:px-8 py-6 border-t border-gray-200 bg-gray-50">
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Approval Progress</h2>
-            <div className="flex flex-col sm:flex-row items-stretch gap-0">
-              {approvals.map((a, idx) => {
-                const isActive = report.status === "PENDING_APPROVAL" && a.level === report.current_approval_level;
-                const isApproved = a.status === "APPROVED";
-                const isRejected = a.status === "REJECTED";
-                const isReferredBack = a.status === "REFERRED_BACK";
+        {/* RIGHT COLUMN: approval progress + action panel ─────────────────── */}
+        {/* FIX 4: sticky on desktop, regular block on mobile (shows below left column) */}
+        <div className="mt-4 md:mt-0 space-y-3 md:sticky md:top-6">
 
-                const cardBorder = isActive ? "border-blue-400 bg-white shadow-sm"
-                  : isApproved ? "border-green-300 bg-green-50"
-                  : isRejected ? "border-red-300 bg-red-50"
-                  : isReferredBack ? "border-orange-300 bg-orange-50"
-                  : "border-gray-200 bg-white opacity-60";
+          {/* Referred-to context panel (shown to the target approver) */}
+          {myPendingApproval && referringApproval && (
+            <div className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4">
+              <p className="text-xs font-semibold text-orange-700 uppercase tracking-wider mb-1">
+                Referred to you by {referringApproval.approver_name}
+              </p>
+              <p className="text-sm text-orange-800">{referringApproval.comment}</p>
+            </div>
+          )}
 
-                const statusColor = isApproved ? "text-green-700"
-                  : isRejected ? "text-red-700"
-                  : isReferredBack ? "text-orange-700"
-                  : isActive ? "text-blue-700"
-                  : "text-gray-400";
+          {/* FIX 5: Approval Progress — compact vertical cards */}
+          {approvals.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Approval Progress</h2>
+              </div>
+              <div className="p-3 space-y-2">
+                {approvals.map((a, idx) => {
+                  const isActive = report.status === "PENDING_APPROVAL" && a.level === report.current_approval_level;
+                  const isApproved = a.status === "APPROVED";
+                  const isRejected = a.status === "REJECTED";
+                  const isReferredBack = a.status === "REFERRED_BACK";
 
-                const statusIcon = isApproved ? "✓" : isRejected ? "✗" : isReferredBack ? "↩" : isActive ? "●" : "○";
-                const statusLabel = isApproved ? "Approved" : isRejected ? "Rejected"
-                  : isReferredBack ? "Referred Back" : isActive ? "Awaiting" : "Pending";
+                  const cardCls = isActive ? "border-blue-300 bg-blue-50"
+                    : isApproved ? "border-green-200 bg-green-50"
+                    : isRejected ? "border-red-200 bg-red-50"
+                    : isReferredBack ? "border-orange-200 bg-orange-50"
+                    : "border-gray-200 bg-white opacity-60";
 
-                // Determine comment visibility for requestor
-                const showComment = !isRequestor || a.visible_to_requestor || !isReferredBack;
-                const displayComment = showComment ? a.comment : null;
+                  const statusColor = isApproved ? "text-green-700"
+                    : isRejected ? "text-red-700"
+                    : isReferredBack ? "text-orange-700"
+                    : isActive ? "text-blue-700"
+                    : "text-gray-400";
 
-                return (
-                  <div key={a.id} className="flex sm:flex-col flex-row flex-1 items-stretch">
-                    <div className={`flex-1 border-2 rounded-xl p-4 ${cardBorder} transition-all`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Level {a.level}</span>
-                        <span className={`text-base font-bold leading-none ${statusColor}`}>{statusIcon}</span>
+                  const statusIcon = isApproved ? "✓" : isRejected ? "✗"
+                    : isReferredBack ? "↩" : isActive ? "●" : "○";
+
+                  // FIX 2: contextual label
+                  const statusLabel = isApproved ? "Approved"
+                    : isRejected ? "Rejected"
+                    : isReferredBack ? getReferredBackLabel(a)
+                    : isActive ? "Awaiting your action"
+                    : "Pending";
+
+                  // Comment visibility for requestor
+                  const showComment = !isRequestor || a.visible_to_requestor || !isReferredBack;
+
+                  return (
+                    <div key={a.id}>
+                      <div className={`rounded-lg border-2 p-3 ${cardCls} transition-all`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            {/* FIX 5: name first, large and prominent */}
+                            <p className="text-sm font-semibold text-gray-900 truncate">{a.approver_name}</p>
+                            <p className="text-xs text-gray-500 truncate">L{a.level} — {a.level_label}</p>
+                            <p className={`text-xs font-semibold mt-1 ${statusColor}`}>{statusLabel}</p>
+                            {a.actioned_at && (
+                              <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(a.actioned_at)}</p>
+                            )}
+                            {showComment && a.comment && (
+                              <p className="text-xs text-gray-500 mt-1 italic line-clamp-2">
+                                &ldquo;{a.comment}&rdquo;
+                              </p>
+                            )}
+                            {isReferredBack && !showComment && (
+                              <p className="text-xs text-gray-400 mt-1 italic">Internal query</p>
+                            )}
+                            {a.response_comment && (
+                              <p className="text-xs text-blue-600 mt-1 italic line-clamp-2">
+                                Response: &ldquo;{a.response_comment}&rdquo;
+                              </p>
+                            )}
+                          </div>
+                          <span className={`text-lg font-bold leading-none shrink-0 ${statusColor}`}>
+                            {statusIcon}
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-xs font-semibold text-gray-600 mb-1">{a.level_label}</p>
-                      <p className="text-sm font-medium text-gray-900 truncate">{a.approver_name}</p>
-                      <p className={`text-xs font-semibold mt-1 ${statusColor}`}>{statusLabel}</p>
-                      {displayComment && (
-                        <p className="text-xs text-gray-500 mt-1 italic line-clamp-2">&ldquo;{displayComment}&rdquo;</p>
-                      )}
-                      {isReferredBack && !showComment && (
-                        <p className="text-xs text-gray-400 mt-1 italic">Pending internal review</p>
-                      )}
-                      {a.response_comment && (
-                        <p className="text-xs text-blue-600 mt-1 italic line-clamp-2">
-                          Response: &ldquo;{a.response_comment}&rdquo;
-                        </p>
-                      )}
-                      {a.actioned_at && (
-                        <p className="text-xs text-gray-400 mt-1">{formatDateTime(a.actioned_at)}</p>
+                      {/* Vertical connector */}
+                      {idx < approvals.length - 1 && (
+                        <div className="flex justify-center h-4 items-center">
+                          <span className="text-gray-300 text-xs">↓</span>
+                        </div>
                       )}
                     </div>
-                    {idx < approvals.length - 1 && (
-                      <div className="flex items-center justify-center sm:w-6 sm:flex-none w-auto h-6 sm:h-auto">
-                        <span className="text-gray-300 text-sm font-bold sm:rotate-0 rotate-90">→</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Legacy placeholder for SUBMITTED reports with no approval matrix */}
-        {report.status === "SUBMITTED" && approvals.length === 0 && (
-          <div className="px-6 sm:px-8 py-6 border-t border-gray-200 bg-gray-50">
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">Approval Status</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
-                <p className="text-xs font-semibold text-gray-600 mb-2">Employee</p>
-                <p className="text-xs text-green-700 font-medium">Submitted</p>
-                <p className="mt-2 text-xs text-gray-500 border-t border-gray-200 pt-2">{formatDateTime(report.submitted_at)}</p>
-              </div>
-              <div className="border border-dashed border-gray-300 rounded-lg p-4 text-center">
-                <p className="text-xs font-semibold text-gray-600 mb-2">Approval</p>
-                <p className="text-xs text-gray-400 italic">Configure approval matrix to enable workflow</p>
+                  );
+                })}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Referred-to context panel for the target approver */}
-        {myPendingApproval && referringApproval && (
-          <div className="px-6 sm:px-8 py-5 border-t border-orange-200 bg-orange-50">
-            <p className="text-xs font-semibold text-orange-700 uppercase tracking-wider mb-1">
-              Referred to you by {referringApproval.approver_name} — Level {referringApproval.level} ({referringApproval.level_label})
-            </p>
-            <p className="text-sm text-orange-800">{referringApproval.comment}</p>
-          </div>
-        )}
+          {/* FIX 6: Action panel — desktop only (hidden on mobile, fixed bar handles mobile) */}
+          {myPendingApproval && (
+            <div className="hidden md:block bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Your Action — {myPendingApproval.level_label}
+              </h2>
 
-        {/* Approve / Refer Back / Reject action panel */}
-        {myPendingApproval && (
-          <div className="px-6 sm:px-8 py-6 border-t border-gray-200">
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
-              Your Action Required — Level {myPendingApproval.level}: {myPendingApproval.level_label}
-            </h2>
-
-            {actionError && (
-              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{actionError}</div>
-            )}
-
-            <div className="space-y-4">
-              {/* Response field (shown when this is a refer-back) */}
-              {referringApproval && (
-                <div>
-                  <label className="block text-xs font-medium text-blue-700 mb-1">
-                    Your response <span className="text-gray-400">(sent back to {referringApproval.approver_name})</span>
-                  </label>
-                  <textarea rows={2} value={approveResponse} onChange={(e) => setApproveResponse(e.target.value)}
-                    placeholder="Enter your response or findings…"
-                    className="w-full px-3 py-2 border border-blue-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              {actionError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                  {actionError}
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Comment <span className="text-gray-400">(optional for approval)</span>
-                </label>
-                <textarea rows={2} value={approveComment} onChange={(e) => setApproveComment(e.target.value)}
-                  placeholder="Add a comment (optional)…"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
+              {/* Response field when in a refer-back scenario */}
+              {referringApproval && (
+                <div>
+                  <label className="block text-xs font-medium text-blue-700 mb-1">
+                    Your response <span className="text-gray-400 font-normal">(sent to {referringApproval.approver_name})</span>
+                  </label>
+                  <textarea rows={2} value={approveResponse} onChange={(e) => setApproveResponse(e.target.value)}
+                    placeholder="Enter your findings or response…"
+                    className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              )}
 
+              {/* Approval comment */}
+              {!showRejectInput && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Comment <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <textarea rows={2} value={approveComment} onChange={(e) => setApproveComment(e.target.value)}
+                    placeholder="Add a note…"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              )}
+
+              {/* Rejection comment */}
               {showRejectInput && (
                 <div>
                   <label className="block text-xs font-medium text-red-700 mb-1">
-                    Rejection Reason <span className="text-red-500">*</span>
+                    Rejection reason <span className="text-red-500">*</span>
                   </label>
                   <textarea rows={3} value={rejectComment} onChange={(e) => setRejectComment(e.target.value)}
                     placeholder="Explain why this report is being rejected…"
@@ -641,47 +754,65 @@ export default function ExpenseDetailPage() {
                 </div>
               )}
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                {!showRejectInput ? (
-                  <>
-                    <button type="button" onClick={handleApprove} disabled={isActioning}
-                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
-                      {isActioning ? "Processing…" : "Approve"}
-                    </button>
-                    <button type="button"
-                      onClick={() => {
-                        setShowReferBackModal(true); setReferBackType("requestor");
-                        setReferBackSelectedLevels([]); setReferBackComment("");
-                        setReferBackVisibleToRequestor(false); setReferBackError(null);
-                      }}
-                      disabled={isActioning}
-                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600 disabled:opacity-60">
-                      Refer Back
-                    </button>
-                    <button type="button" onClick={() => { setShowRejectInput(true); setActionError(null); }}
-                      disabled={isActioning}
-                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
-                      Reject
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button type="button" onClick={handleReject} disabled={isActioning}
-                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
-                      {isActioning ? "Processing…" : "Confirm Rejection"}
-                    </button>
-                    <button type="button" onClick={() => { setShowRejectInput(false); setRejectComment(""); setActionError(null); }}
-                      disabled={isActioning}
-                      className="px-6 py-2 min-h-[44px] text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
-                      Cancel
-                    </button>
-                  </>
-                )}
-              </div>
+              {/* Action buttons */}
+              {!showRejectInput ? (
+                <div className="flex flex-col gap-2">
+                  <button type="button" onClick={() => handleApprove()} disabled={isActioning}
+                    className="w-full py-2.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-60">
+                    {isActioning ? "Processing…" : "Approve"}
+                  </button>
+                  <button type="button" onClick={openReferBackModal} disabled={isActioning}
+                    className="w-full py-2.5 text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600 disabled:opacity-60">
+                    Refer Back
+                  </button>
+                  <button type="button" onClick={() => { setShowRejectInput(true); setActionError(null); }}
+                    disabled={isActioning}
+                    className="w-full py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                    Reject
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => handleReject()} disabled={isActioning}
+                    className="flex-1 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                    {isActioning ? "Processing…" : "Confirm Rejection"}
+                  </button>
+                  <button type="button"
+                    onClick={() => { setShowRejectInput(false); setRejectComment(""); setActionError(null); }}
+                    disabled={isActioning}
+                    className="flex-1 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {/* FIX 6: Mobile fixed bottom action bar — visible only when approver has action */}
+      {myPendingApproval && (
+        <div className="fixed bottom-0 inset-x-0 z-40 md:hidden bg-white border-t border-gray-200 px-4 py-3 flex gap-2 shadow-lg">
+          <button type="button"
+            onClick={() => handleApprove()}
+            disabled={isActioning}
+            className="flex-1 min-h-[48px] text-sm font-semibold text-white bg-green-600 rounded-xl hover:bg-green-700 disabled:opacity-60">
+            {isActioning ? "…" : "Approve"}
+          </button>
+          <button type="button"
+            onClick={openReferBackModal}
+            disabled={isActioning}
+            className="flex-1 min-h-[48px] text-sm font-semibold text-white bg-orange-500 rounded-xl hover:bg-orange-600 disabled:opacity-60">
+            Refer Back
+          </button>
+          <button type="button"
+            onClick={() => { setShowMobileRejectModal(true); setActionError(null); }}
+            disabled={isActioning}
+            className="flex-1 min-h-[48px] text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 disabled:opacity-60">
+            Reject
+          </button>
+        </div>
+      )}
     </div>
   );
 }
