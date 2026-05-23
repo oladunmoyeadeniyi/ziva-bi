@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (M7 bug fixes — duplicate save, P/L Group visibility, Team tab dedup, Tenant Admin config-only)
+> Last updated: May 2026 (M8 — Intelligent Expense Form Foundation: dimensions, CoA, expense categories overhaul, coding levels 0–4)
 
 ---
 
@@ -339,8 +339,24 @@ All four bugs identified during M7 testing fixed and tested:
 - Users with both tenant_admin and an operational role are treated as operational (restrictions do not apply)
 - `has_non_admin_role` embedded in JWT at login/refresh/invite-accept; propagated through all auth response paths
 
+### ✅ Completed — Milestone 8: Intelligent Expense Form Foundation (May 2026)
+- **5 new DB tables:** `tenant_dimensions`, `dimension_values`, `chart_of_accounts`, `gl_dimension_requirements`, `category_gl_mappings`
+- **`coding_level` (int 0–4)** replaces `gl_coding_mode` enum in `tenant_expense_config`; `show_location` and `require_location` added
+- **Expense categories overhauled:** `code` field widened to 100 chars, NOT NULL, unique indexes swapped from name-based to code-based
+- **Dimensions:** Full CRUD + reorder + per-dimension values management + xlsx/csv bulk upload
+- **Chart of Accounts:** Full CRUD + xlsx template download + bulk upload + GL↔dimension requirement mapping
+- **Category GL mappings:** Many GL accounts per subcategory, `is_default` flag per mapping, search by gl_number/name
+- **7 default expense categories** seeded on new tenant signup (Travel Cost, Entertainment, Staff Cost, Car Cost, Insurance, Consulting, Other Indirect Costs)
+- **Coding Level cards UI:** 5 selection cards (0–4) replace old GL Coding Mode radio buttons on Expense Config page; Form Fields section (show/require location) added
+- **Master Data sidebar group** (collapsible): Dimensions, Chart of Accounts, Expense Categories links
+- **Alembic migration:** `h8i9j0k1l2m3` — `m8_intelligent_form_foundation`
+- **`openpyxl`** added to requirements for xlsx upload/download
+- **Backward compat:** `FormConfigResponse` still returns `gl_coding_mode` derived from `coding_level` so M7 expense forms continue working
+- API: 24 new routes under `/api/config/` prefix
+- Frontend: 4 new admin pages — Dimensions, Dimension Values, Chart of Accounts, Expense Categories
+
 ### ⏳ Next milestone TBD
-Suggested candidates: Personal Expense Tracking (individual dashboard) or Accounts Payable module.
+Suggested candidates: M9 (expense form integration with dimensions/CoA/coding level), Personal Expense Tracking (individual dashboard), or Accounts Payable module.
 
 ### Module PRDs still to rewrite (do each just before building that module)
 - Accounts Payable (PDF exists — rewrite to markdown before building AP)
@@ -350,4 +366,4 @@ Suggested candidates: Personal Expense Tracking (individual dashboard) or Accoun
 
 ---
 
-*End of Master Context. Last updated: May 2026 (M7 bug fixes complete — duplicate save, P/L Group, Team tab, Tenant Admin config-only).*
+*End of Master Context. Last updated: May 2026 (M8 complete — intelligent form foundation: dimensions, CoA, expense categories, coding levels 0–4).*
