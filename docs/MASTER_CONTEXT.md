@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (Approval Workflow Enhancements — refer back, audit trail, snapshots, separation of duties, full email coverage)
+> Last updated: May 2026 (M7 bug fixes — duplicate save, P/L Group visibility, Team tab dedup, Tenant Admin config-only)
 
 ---
 
@@ -292,8 +292,55 @@ All built on top of Milestone 4. Alembic migrations applied: `c3d4e5f6a7b8` and 
 - Expense list: Rejected tab includes REFERRED_TO_REQUESTOR; Edit action shown for both
 - Approvals queue page: unchanged (existing PENDING detection works correctly for refer-back flows)
 
-### ⏳ Next — Milestone 5
-- Individual can log a personal expense (simplest possible expense entry, saved to DB, listed on dashboard)
+### ✅ Completed — Milestone 5: Tenant User Management (May 2026)
+- Invite users to tenant by email with a named role
+- Invitation link accepts → creates user_tenant + role assignment, returns JWT
+- Deactivate / reactivate users; deactivated users blocked at login
+- Role management: change a user's role within the tenant
+- API: POST /api/invitations, POST /api/invitations/{token}/accept, GET /api/admin/users, PATCH /api/admin/users/{id}
+- Frontend: Team page (admin only) — user list, invite modal, deactivate/reactivate toggle
+
+### ✅ Completed — Milestone 6: Supporting Documents (May 2026)
+- File attachments per expense line and per report (Supabase Storage, bucket: `documents`)
+- Accepted: PDF, JPG, PNG, Excel, Word (max 10 MB)
+- Signed URLs returned on document fetch (time-limited read access)
+- API: POST /api/documents/reports/{id}/upload, GET /api/documents/reports/{id}, DELETE /api/documents/{id}
+- Frontend: Line Attachments and Report Documents sections on new/edit expense forms; file type icons, size display, View/Remove actions
+- Auto-save creates report first (assigns line IDs), then attachment buttons appear inline without page reload
+
+### ✅ Completed — Milestone 7: Expense Categories & GL Coding Mode Config (May 2026)
+- Tenant-configurable GL coding mode: `employee` | `finance` | `category_mapped`
+- Category and subcategory hierarchy (tenant-scoped, with optional GL account suggestion)
+- `GET /api/expense-config/form-config` — returns mode + category tree for expense forms
+- `POST/PUT /api/expense-config` — admin saves mode config; `GET/POST/PATCH/DELETE /api/expense-config/categories`
+- Expense Config settings page: mode selector + live category CRUD
+- Expense forms adapt columns based on mode: employee shows GL+PL, finance hides both, category_mapped shows category→subcategory→GL (pre-filled)
+- `require_category`, `require_subcategory`, `allow_free_text_description` flags enforced on submission
+
+### ✅ Completed — M7 Bug Fixes (May 2026)
+All four bugs identified during M7 testing fixed and tested:
+
+**FIX 1 — Duplicate expense from auto-save + manual Save Draft:**
+- `currentSavePromiseRef` tracks the in-flight auto-save promise
+- `handleSaveDraft` cancels pending timer and awaits the promise before proceeding
+- If report is newly created (first save), redirects to edit page; if already saved by auto-save, stays in place with "Saved ✓"
+
+**FIX 2 — P/L Group hidden in category modes:**
+- P/L Group column removed from `finance` and `category_mapped` modes on both new and edit expense forms
+- Only visible in `employee` mode where employees do their own GL coding
+
+**FIX 3 — Duplicate Team tab in Settings sidebar:**
+- Removed Team link from the Settings sub-nav (was duplicated — already in main sidebar nav)
+
+**FIX 4 — Tenant Admin is config-only:**
+- `has_non_admin_role` boolean added to JWT, `CurrentUser`, `UserResponse`, and `AuthUser`
+- Exclusively-admin users (tenant_admin role with no other role): sidebar shows only Settings + Team; cannot see Expenses/Approvals/Overview; `+ New Expense Retirement` button hidden; backend blocks create_report and submit_with_approvers with 403
+- Exclusively-admin users excluded from approver dropdowns (`/api/users/tenant` filters them out)
+- Users with both tenant_admin and an operational role are treated as operational (restrictions do not apply)
+- `has_non_admin_role` embedded in JWT at login/refresh/invite-accept; propagated through all auth response paths
+
+### ⏳ Next milestone TBD
+Suggested candidates: Personal Expense Tracking (individual dashboard) or Accounts Payable module.
 
 ### Module PRDs still to rewrite (do each just before building that module)
 - Accounts Payable (PDF exists — rewrite to markdown before building AP)
@@ -303,4 +350,4 @@ All built on top of Milestone 4. Alembic migrations applied: `c3d4e5f6a7b8` and 
 
 ---
 
-*End of Master Context. Last updated: May 2026 (Approval Workflow Enhancements complete).*
+*End of Master Context. Last updated: May 2026 (M7 bug fixes complete — duplicate save, P/L Group, Team tab, Tenant Admin config-only).*
