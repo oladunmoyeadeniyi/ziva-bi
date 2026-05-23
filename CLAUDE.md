@@ -109,7 +109,8 @@ ruff check app/
 | M4 | Approval Workflow (matrix, multi-level approve/reject) | ✅ Done |
 | M4+ | Approval Enhancements (refer-back, audit trail, snapshots, separation of duties) | ✅ Done |
 | M5 | Tenant User Management (invite, roles, deactivate) | ✅ Done |
-| M6 | Supporting Documents (file upload per expense line, Supabase Storage) | 🔨 In progress |
+| M6 | Supporting Documents (file upload per expense line, Supabase Storage) | ✅ Done |
+| M7 | Expense Categories & GL Coding Mode Config | ✅ Done |
 
 ## Module PRDs
 
