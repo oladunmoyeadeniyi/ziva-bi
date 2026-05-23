@@ -38,11 +38,17 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
-    # ── Cloudflare R2 (file storage) ──────────────────────────────────────────
+    # ── Cloudflare R2 (file storage — reserved for future use) ───────────────
     r2_account_id: str = ""
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
     r2_bucket_name: str = ""
+
+    # ── Supabase Storage (M6 — document attachments) ──────────────────────────
+    # Service-role key grants full bucket access — keep secret, never expose to frontend.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_bucket: str = "documents"
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     # Accepts: JSON array '["https://a.com","https://b.com"]'

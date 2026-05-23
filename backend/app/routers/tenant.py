@@ -388,6 +388,7 @@ async def create_invitation(
         expires_at=invitation.expires_at,
         accepted_at=invitation.accepted_at,
         created_at=invitation.created_at,
+        accept_url=accept_url,
     )
 
 
@@ -413,6 +414,11 @@ async def list_invitations(
     for inv, inviter in rows:
         if inv.status == "PENDING" and inv.expires_at < now:
             inv.status = "EXPIRED"
+        pending_url = (
+            f"{settings.frontend_url}/invite/accept?token={inv.token}"
+            if inv.status == "PENDING"
+            else None
+        )
         items.append(InvitationResponse(
             id=str(inv.id),
             email=inv.email,
@@ -422,6 +428,7 @@ async def list_invitations(
             expires_at=inv.expires_at,
             accepted_at=inv.accepted_at,
             created_at=inv.created_at,
+            accept_url=pending_url,
         ))
     return items
 

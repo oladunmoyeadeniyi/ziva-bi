@@ -1,8 +1,13 @@
 """
 ZivaBI — expense management Pydantic schemas.
 
-Request/response shapes for the expenses router (Milestone 3).
+Request/response shapes for the expenses router (Milestones 3–7).
 All monetary amounts are Decimal to avoid floating-point drift.
+
+M7 changes:
+  - gl_account is now optional (null in Finance-mode submissions)
+  - ExpenseLineCreate/Update accept category_id and subcategory_id
+  - ExpenseLineResponse surfaces category_id and subcategory_id
 """
 
 import uuid
@@ -16,9 +21,16 @@ from pydantic import BaseModel, field_validator
 # ── Expense Line ──────────────────────────────────────────────────────────────
 
 class ExpenseLineCreate(BaseModel):
-    """Payload for adding a single line to a DRAFT report."""
+    """
+    Payload for adding a single line to a DRAFT report.
 
-    gl_account: str
+    gl_account is optional since M7: Finance-mode tenants leave it blank and
+    Finance fills it in during the approval step.  Employee-mode tenants should
+    always provide it (enforced by the frontend; the backend stores whatever
+    it receives).
+    """
+
+    gl_account: str | None = None
     pl_group: str | None = None
     io_dimension: str | None = None
     cost_center: str | None = None
@@ -27,13 +39,16 @@ class ExpenseLineCreate(BaseModel):
     invoice_number: str | None = None
     description: str
     amount: Decimal
+    # M7 category fields
+    category_id: uuid.UUID | None = None
+    subcategory_id: uuid.UUID | None = None
 
     @field_validator("gl_account")
     @classmethod
-    def validate_gl(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("GL account is required.")
+    def validate_gl(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            return v or None  # coerce empty string to None
         return v
 
     @field_validator("description")
@@ -59,7 +74,7 @@ class ExpenseLineResponse(BaseModel):
     report_id: str
     line_number: int
     pl_group: str | None
-    gl_account: str
+    gl_account: str | None
     io_dimension: str | None
     cost_center: str | None
     location: str | None
@@ -67,6 +82,8 @@ class ExpenseLineResponse(BaseModel):
     invoice_number: str | None
     description: str
     amount: Decimal
+    category_id: str | None
+    subcategory_id: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -87,11 +104,58 @@ class ExpenseLineResponse(BaseModel):
             invoice_number=line.invoice_number,
             description=line.description,
             amount=line.amount,
+            category_id=str(line.category_id) if line.category_id else None,
+            subcategory_id=str(line.subcategory_id) if line.subcategory_id else None,
             created_at=line.created_at,
         )
 
 
 # ── Expense Report ────────────────────────────────────────────────────────────
+
+class ExpenseLineUpdate(BaseModel):
+    """
+    Payload for updating individual fields on an existing expense line (PATCH semantics).
+
+    M7: category_id and subcategory_id are patchable. gl_account accepts None
+    to clear the value (Finance-mode tenants may leave it blank).
+    """
+
+    gl_account: str | None = None
+    pl_group: str | None = None
+    io_dimension: str | None = None
+    cost_center: str | None = None
+    location: str | None = None
+    invoice_date: date | None = None
+    invoice_number: str | None = None
+    description: str | None = None
+    amount: Decimal | None = None
+    category_id: uuid.UUID | None = None
+    subcategory_id: uuid.UUID | None = None
+
+    @field_validator("gl_account")
+    @classmethod
+    def validate_gl(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            return v or None
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: str | None) -> str | None:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Description cannot be empty.")
+        return v
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v <= 0:
+            raise ValueError("Amount must be greater than zero.")
+        return v
+
 
 class ExpenseReportCreate(BaseModel):
     """Payload for creating a new DRAFT expense report."""

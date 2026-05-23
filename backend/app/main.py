@@ -151,6 +151,7 @@ from app.routers import approvals as approvals_router
 from app.routers import tenant as tenant_router
 from app.routers import invitations as invitations_router
 from app.routers import documents as documents_router
+from app.routers import expense_config as expense_config_router
 
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
@@ -159,6 +160,7 @@ app.include_router(approvals_router.router)
 app.include_router(tenant_router.router)
 app.include_router(invitations_router.router)
 app.include_router(documents_router.router)
+app.include_router(expense_config_router.router)
 
 
 @app.get("/api/health", tags=["system"])

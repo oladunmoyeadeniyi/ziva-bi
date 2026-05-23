@@ -197,7 +197,7 @@ async def upload_document(
         tenant_id=tenant_id,
         report_id=report_id,
         line_id=resolved_line_id,
-        uploaded_by=current_user.id,
+        uploaded_by=current_user.user_id,
         file_name=file.filename or "upload",
         file_size=len(file_bytes),
         mime_type=mime,

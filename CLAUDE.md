@@ -50,7 +50,7 @@ ziva-bi/                       ← monorepo root
 | Backend | Python 3.12 + FastAPI |
 | Database | PostgreSQL (Render managed) via SQLAlchemy async + Alembic |
 | Auth | JWT (access + refresh tokens) |
-| File Storage | Cloudflare R2 |
+| File Storage | Supabase Storage (bucket: `documents`, private). Config via `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_BUCKET`. |
 | Deployment | Render (GitHub → auto-deploy pipeline) |
 | PWA | Enabled (mobile-first for individuals) |
 
@@ -99,6 +99,18 @@ ruff check app/
 5. **Migrations via Alembic only** — never edit the database directly.
 6. **Every milestone ends with a commit + push** — work that isn't on GitHub doesn't exist.
 
+## Milestone Status
+
+| # | Milestone | Status |
+|---|---|---|
+| M1 | Foundation deployed (Next.js + FastAPI + PostgreSQL on Render) | ✅ Done |
+| M2 | Auth & User Management (signup, login, JWT, roles) | ✅ Done |
+| M3 | Business Expense Submission (multi-line reports, DRAFT→SUBMITTED) | ✅ Done |
+| M4 | Approval Workflow (matrix, multi-level approve/reject) | ✅ Done |
+| M4+ | Approval Enhancements (refer-back, audit trail, snapshots, separation of duties) | ✅ Done |
+| M5 | Tenant User Management (invite, roles, deactivate) | ✅ Done |
+| M6 | Supporting Documents (file upload per expense line, Supabase Storage) | 🔨 In progress |
+
 ## Module PRDs
 
 Read the corresponding PRD before building any module:
@@ -108,6 +120,7 @@ Read the corresponding PRD before building any module:
 | Authentication & User Management | `docs/AUTH_USER_MANAGEMENT_PRD.md` |
 | Tenant Admin Portal | `docs/TENANT_ADMIN_PORTAL_PRD.md` |
 | Inter-Company Eliminations (ICE) | `docs/ICE_PRD.md` |
+| Supporting Documents (M6) | `docs/M6 Supporting Documents.md` |
 | Accounts Payable | *(rewrite PDF → markdown when building this module)* |
 | Accounts Receivable | *(rewrite PDF → markdown when building this module)* |
 | Expense Management | *(rewrite PDF → markdown when building this module)* |

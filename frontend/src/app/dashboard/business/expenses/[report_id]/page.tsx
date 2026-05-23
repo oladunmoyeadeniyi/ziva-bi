@@ -24,7 +24,7 @@ interface ExpenseLine {
   id: string;
   line_number: number;
   pl_group: string | null;
-  gl_account: string;
+  gl_account: string | null;
   io_dimension: string | null;
   cost_center: string | null;
   location: string | null;
@@ -32,6 +32,22 @@ interface ExpenseLine {
   invoice_number: string | null;
   description: string;
   amount: string;
+  category_id: string | null;
+  subcategory_id: string | null;
+}
+
+interface FormCategory {
+  id: string;
+  name: string;
+  subcategories: { id: string; name: string }[];
+}
+
+interface FormConfig {
+  gl_coding_mode: string;
+  require_category: boolean;
+  require_subcategory: boolean;
+  allow_free_text_description: boolean;
+  categories: FormCategory[];
 }
 
 interface DocumentRecord {
@@ -134,8 +150,21 @@ export default function ExpenseDetailPage() {
   const [report, setReport] = useState<ExpenseReport | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [formConfig, setFormConfig] = useState<FormConfig>({
+    gl_coding_mode: "employee",
+    require_category: false,
+    require_subcategory: false,
+    allow_free_text_description: true,
+    categories: [],
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Finance GL coding state: line_id → { gl_account, pl_group }
+  const [glCodes, setGlCodes] = useState<Record<string, { gl_account: string; pl_group: string }>>({});
+  const [savingGlCodes, setSavingGlCodes] = useState(false);
+  const [glSaveError, setGlSaveError] = useState<string | null>(null);
+  const [glSaveSuccess, setGlSaveSuccess] = useState(false);
 
   // Desktop action panel state
   const [approveComment, setApproveComment] = useState("");
@@ -161,11 +190,20 @@ export default function ExpenseDetailPage() {
     if (!accessToken || !report_id) return;
     const fetchAll = async () => {
       try {
-        const reportData = await apiFetch<ExpenseReport>(
-          `/api/expenses/reports/${report_id}`,
-          { token: accessToken }
-        );
+        const [reportData, cfg] = await Promise.all([
+          apiFetch<ExpenseReport>(`/api/expenses/reports/${report_id}`, { token: accessToken }),
+          apiFetch<FormConfig>("/api/expense-config/form-config", { token: accessToken }).catch(() => null),
+        ]);
         setReport(reportData);
+        if (cfg) {
+          setFormConfig(cfg);
+          // Initialise GL codes from existing line values
+          const initial: Record<string, { gl_account: string; pl_group: string }> = {};
+          for (const ln of reportData.lines) {
+            initial[ln.id] = { gl_account: ln.gl_account ?? "", pl_group: ln.pl_group ?? "" };
+          }
+          setGlCodes(initial);
+        }
         if (["PENDING_APPROVAL", "APPROVED", "REJECTED", "REFERRED_TO_REQUESTOR"].includes(reportData.status)) {
           const approvalData = await apiFetch<ApprovalRecord[]>(
             `/api/approvals/reports/${report_id}`,
@@ -305,6 +343,54 @@ export default function ExpenseDetailPage() {
       const msg = err instanceof Error ? err.message : "Failed to refer back.";
       setReferBackError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
     } finally { setIsActioning(false); }
+  };
+
+  // Category name lookup helpers
+  const getCategoryName = (categoryId: string | null): string => {
+    if (!categoryId) return "—";
+    const cat = formConfig.categories.find((c) => c.id === categoryId);
+    return cat?.name ?? "—";
+  };
+
+  const getSubcategoryName = (categoryId: string | null, subcategoryId: string | null): string => {
+    if (!subcategoryId || !categoryId) return "—";
+    const cat = formConfig.categories.find((c) => c.id === categoryId);
+    const sub = cat?.subcategories.find((s) => s.id === subcategoryId);
+    return sub?.name ?? "—";
+  };
+
+  // Finance GL codes save
+  const handleSaveGlCodes = async () => {
+    if (!accessToken || !report_id) return;
+    setSavingGlCodes(true);
+    setGlSaveError(null);
+    setGlSaveSuccess(false);
+    try {
+      await apiFetch(`/api/expense-config/reports/${report_id}/gl-codes`, {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({
+          lines: Object.entries(glCodes).map(([line_id, codes]) => ({
+            line_id,
+            gl_account: codes.gl_account || null,
+            pl_group: codes.pl_group || null,
+          })),
+        }),
+      });
+      setGlSaveSuccess(true);
+      setTimeout(() => setGlSaveSuccess(false), 3000);
+      // Refresh report to reflect saved values
+      const updated = await apiFetch<ExpenseReport>(
+        `/api/expenses/reports/${report_id}`,
+        { token: accessToken }
+      );
+      setReport(updated);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to save GL codes.";
+      setGlSaveError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
+    } finally {
+      setSavingGlCodes(false);
+    }
   };
 
   const openReferBackModal = () => {
@@ -591,21 +677,63 @@ export default function ExpenseDetailPage() {
           {/* Lines table */}
           <div className="px-6 py-5 overflow-x-auto">
             <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Expense Lines</h2>
+
+            {/* Finance mode pending GL banner */}
+            {formConfig.gl_coding_mode === "finance" && (
+              <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+                GL coding pending — will be assigned by Finance during review.
+              </div>
+            )}
+
             <table className="min-w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
               <thead className="bg-gray-50">
                 <tr>
-                  {["#", "GL Account", "P/L Group", "IO / Dimension", "Cost Center", "Location",
-                    "Inv. Date", "Inv. No.", "Description", "Amount (NGN)"].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">{h}</th>
-                  ))}
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">#</th>
+                  {formConfig.gl_coding_mode !== "finance" && (
+                    <>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">GL Account</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">P/L Group</th>
+                    </>
+                  )}
+                  {formConfig.gl_coding_mode === "finance" && (
+                    <>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">GL Account</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">P/L Group</th>
+                    </>
+                  )}
+                  {formConfig.require_category && (
+                    <>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Category</th>
+                      {formConfig.require_subcategory && (
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Subcategory</th>
+                      )}
+                    </>
+                  )}
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">IO / Dimension</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Cost Center</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Location</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Inv. Date</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Inv. No.</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Description</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 border-b border-gray-200 whitespace-nowrap">Amount (NGN)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {report.lines.map((line) => (
                   <tr key={line.id} className="hover:bg-gray-50">
                     <td className="px-3 py-2 text-gray-500">{line.line_number}</td>
-                    <td className="px-3 py-2 text-gray-900 font-medium">{line.gl_account}</td>
+                    <td className="px-3 py-2 text-gray-900 font-medium">
+                      {line.gl_account ?? <span className="text-gray-400 italic text-xs">Pending</span>}
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{line.pl_group ?? "—"}</td>
+                    {formConfig.require_category && (
+                      <>
+                        <td className="px-3 py-2 text-gray-700">{getCategoryName(line.category_id)}</td>
+                        {formConfig.require_subcategory && (
+                          <td className="px-3 py-2 text-gray-700">{getSubcategoryName(line.category_id, line.subcategory_id)}</td>
+                        )}
+                      </>
+                    )}
                     <td className="px-3 py-2 text-gray-600">{line.io_dimension ?? "—"}</td>
                     <td className="px-3 py-2 text-gray-600">{line.cost_center ?? "—"}</td>
                     <td className="px-3 py-2 text-gray-600">{line.location ?? "—"}</td>
@@ -620,7 +748,8 @@ export default function ExpenseDetailPage() {
               </tbody>
               <tfoot className="bg-gray-50 border-t-2 border-gray-300">
                 <tr>
-                  <td colSpan={9} className="px-3 py-3 text-right text-sm font-bold text-gray-700 uppercase tracking-wider">
+                  <td colSpan={formConfig.require_category ? (formConfig.require_subcategory ? 11 : 10) : 9}
+                    className="px-3 py-3 text-right text-sm font-bold text-gray-700 uppercase tracking-wider">
                     Grand Total
                   </td>
                   <td className="px-3 py-3 text-right text-base font-bold text-gray-900 whitespace-nowrap">
@@ -812,6 +941,64 @@ export default function ExpenseDetailPage() {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Finance GL coding panel — shown in finance mode before the action buttons */}
+          {myPendingApproval && formConfig.gl_coding_mode === "finance" && report.lines.length > 0 && (
+            <div className="bg-white rounded-xl border border-blue-200 p-4 space-y-3">
+              <h2 className="text-xs font-semibold text-blue-600 uppercase tracking-wider">
+                GL Coding
+              </h2>
+              <p className="text-xs text-gray-500">
+                Enter GL account and P/L group for each expense line before approving.
+              </p>
+              <div className="space-y-2">
+                {report.lines.map((line) => (
+                  <div key={line.id} className="border border-gray-100 rounded-lg p-2">
+                    <p className="text-xs font-semibold text-gray-600 mb-1.5 truncate">
+                      L{line.line_number} — {line.description}
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={glCodes[line.id]?.gl_account ?? ""}
+                        onChange={(e) =>
+                          setGlCodes((prev) => ({
+                            ...prev,
+                            [line.id]: { ...prev[line.id], gl_account: e.target.value },
+                          }))
+                        }
+                        placeholder="GL Account"
+                        className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={glCodes[line.id]?.pl_group ?? ""}
+                        onChange={(e) =>
+                          setGlCodes((prev) => ({
+                            ...prev,
+                            [line.id]: { ...prev[line.id], pl_group: e.target.value },
+                          }))
+                        }
+                        placeholder="P/L Group"
+                        className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {glSaveError && (
+                <p className="text-xs text-red-600">{glSaveError}</p>
+              )}
+              <button
+                type="button"
+                onClick={handleSaveGlCodes}
+                disabled={savingGlCodes}
+                className="w-full py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-60"
+              >
+                {savingGlCodes ? "Saving GL codes…" : glSaveSuccess ? "GL codes saved" : "Save GL Codes"}
+              </button>
             </div>
           )}
 

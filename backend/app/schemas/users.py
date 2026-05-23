@@ -112,6 +112,7 @@ class InvitationResponse(BaseModel):
     expires_at: datetime
     accepted_at: datetime | None
     created_at: datetime
+    accept_url: str | None = None
 
 
 class InvitationValidateResponse(BaseModel):

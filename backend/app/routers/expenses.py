@@ -11,6 +11,7 @@ Endpoints:
     GET    /api/expenses/reports/{report_id}                Single report with lines
     POST   /api/expenses/reports/{report_id}/lines          Add line to DRAFT report
     DELETE /api/expenses/reports/{report_id}/lines/{line_id} Remove line from DRAFT report
+    PATCH  /api/expenses/reports/{report_id}/lines/{line_id} Update individual line fields (auto-save)
     PATCH  /api/expenses/reports/{report_id}                Update DRAFT header
     POST   /api/expenses/reports/{report_id}/submit         Submit DRAFT → SUBMITTED
 """
@@ -31,6 +32,7 @@ from app.models.expenses import ExpenseLine, ExpenseReport
 from app.schemas.expenses import (
     ExpenseLineCreate,
     ExpenseLineResponse,
+    ExpenseLineUpdate,
     ExpenseReportCreate,
     ExpenseReportResponse,
     ExpenseReportUpdate,
@@ -266,6 +268,8 @@ async def add_line(
         invoice_number=data.invoice_number,
         description=data.description,
         amount=data.amount,
+        category_id=data.category_id,
+        subcategory_id=data.subcategory_id,
     )
     db.add(line)
     await db.flush()
@@ -321,6 +325,53 @@ async def delete_line(
     await db.flush()
 
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
+
+
+@router.patch("/reports/{report_id}/lines/{line_id}", response_model=ExpenseLineResponse)
+async def update_line(
+    report_id: uuid.UUID,
+    line_id: uuid.UUID,
+    data: ExpenseLineUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ExpenseLineResponse:
+    """
+    Update individual fields on an existing line of a DRAFT report.
+
+    Uses PATCH semantics — only fields present in the request body are updated.
+    Recalculates the report total when amount changes. Designed for auto-save
+    so that document attachments (keyed on line_id) are never orphaned.
+    """
+    tenant_id = _require_tenant(current_user)
+    report = await _get_report_or_404(report_id, tenant_id, db)
+
+    if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Lines can only be updated on DRAFT, REJECTED, or REFERRED_TO_REQUESTOR reports.",
+        )
+
+    line_result = await db.execute(
+        select(ExpenseLine).where(
+            ExpenseLine.id == line_id,
+            ExpenseLine.report_id == report.id,
+        )
+    )
+    line = line_result.scalar_one_or_none()
+    if not line:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Line not found.")
+
+    update_data = data.model_dump(exclude_unset=True)
+    amount_changed = "amount" in update_data
+
+    for field, value in update_data.items():
+        setattr(line, field, value)
+
+    if amount_changed:
+        await _recalculate_total(report, db)
+
+    await db.flush()
+    return ExpenseLineResponse.from_orm(line)
 
 
 @router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT)

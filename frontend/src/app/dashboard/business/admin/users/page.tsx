@@ -33,6 +33,7 @@ interface Invitation {
   expires_at: string;
   accepted_at: string | null;
   created_at: string;
+  accept_url: string | null;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -452,10 +453,21 @@ export default function TeamPage() {
                       <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatDate(inv.expires_at)}</td>
                       <td className="px-4 py-3">
                         {inv.status === "PENDING" && (
-                          <button type="button" onClick={() => handleCancelInvite(inv.id)}
-                            className="text-xs text-red-500 hover:text-red-700 font-medium">
-                            Cancel
-                          </button>
+                          <div className="flex items-center gap-3">
+                            {inv.accept_url && (
+                              <button type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(inv.accept_url!);
+                                }}
+                                className="text-xs text-blue-600 hover:text-blue-800 font-medium whitespace-nowrap">
+                                Copy Link
+                              </button>
+                            )}
+                            <button type="button" onClick={() => handleCancelInvite(inv.id)}
+                              className="text-xs text-red-500 hover:text-red-700 font-medium">
+                              Cancel
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

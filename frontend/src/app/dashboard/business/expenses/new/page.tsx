@@ -3,28 +3,29 @@
 /**
  * New expense retirement form — /dashboard/business/expenses/new
  *
- * Two-section layout:
- *   Section 1 — Report Header (employee info + function + date)
- *   Section 2 — Expense Lines table (add/remove lines, running total)
+ * M7: Fetches /api/expense-config/form-config on load and adapts the
+ * expense line table based on gl_coding_mode:
  *
- * Submit flow (M4/M5):
- *   1. POST /api/expenses/reports  → creates the DRAFT report
- *   2. POST each line individually
- *   3. GET /api/approvals/matrix + GET /api/users/tenant → fetch config + approvers
- *   4. Show approver selection modal
- *   5. POST /api/approvals/reports/{id}/submit with selected approver IDs
- *      → report moves to PENDING_APPROVAL and enters the approval queue
+ *   'employee'        — show GL Account, P/L Group (existing behaviour)
+ *   'finance'         — hide GL/PL fields; show category/subcategory dropdowns;
+ *                       note "GL coding will be assigned by Finance"
+ *   'category_mapped' — show Category first, then Subcategory, then GL Account
+ *                       (pre-filled from category suggestion, editable), then P/L Group
  *
- * Save Draft skips steps 3–5.
+ * Auto-saves in the background once the user fills in a report date and at
+ * least one line with description + amount. The first auto-save creates the
+ * DRAFT report and obtains line IDs; subsequent saves PATCH in-place so
+ * that document attachments (keyed on line_id) are never orphaned.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
 interface LineState {
   localId: string;
+  backendId: string | null;
   gl_account: string;
   pl_group: string;
   io_dimension: string;
@@ -34,6 +35,8 @@ interface LineState {
   invoice_number: string;
   description: string;
   amount: string;
+  category_id: string;
+  subcategory_id: string;
 }
 
 interface ApprovalMatrix {
@@ -51,9 +54,48 @@ interface TenantUser {
   email: string;
 }
 
+interface DocumentRecord {
+  id: string;
+  report_id: string;
+  line_id: string | null;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  storage_path: string;
+  signed_url: string | null;
+  created_at: string;
+}
+
+interface ApiLine {
+  id: string;
+  line_number: number;
+}
+
+interface ApiReport {
+  id: string;
+  lines: ApiLine[];
+}
+
+interface FormCategory {
+  id: string;
+  name: string;
+  code: string | null;
+  gl_account_suggestion: string | null;
+  subcategories: { id: string; name: string }[];
+}
+
+interface FormConfig {
+  gl_coding_mode: string;
+  require_category: boolean;
+  require_subcategory: boolean;
+  allow_free_text_description: boolean;
+  categories: FormCategory[];
+}
+
 function newLine(): LineState {
   return {
     localId: Math.random().toString(36).slice(2),
+    backendId: null,
     gl_account: "",
     pl_group: "",
     io_dimension: "",
@@ -63,6 +105,8 @@ function newLine(): LineState {
     invoice_number: "",
     description: "",
     amount: "",
+    category_id: "",
+    subcategory_id: "",
   };
 }
 
@@ -75,7 +119,45 @@ function formatTotal(lines: LineState[]): string {
   return "₦" + total.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileTypeIcon({ mimeType }: { mimeType: string }) {
+  if (mimeType === "application/pdf") return <span className="text-red-500 font-bold text-xs">PDF</span>;
+  if (mimeType.startsWith("image/")) return <span className="text-blue-500 font-bold text-xs">IMG</span>;
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel")) return <span className="text-green-600 font-bold text-xs">XLS</span>;
+  if (mimeType.includes("word") || mimeType.includes("document")) return <span className="text-blue-700 font-bold text-xs">DOC</span>;
+  return <span className="text-gray-500 font-bold text-xs">FILE</span>;
+}
+
+function linePayload(l: LineState, mode: string) {
+  return {
+    gl_account: mode === "finance" ? null : (l.gl_account.trim() || null),
+    pl_group: l.pl_group.trim() || null,
+    io_dimension: l.io_dimension.trim() || null,
+    cost_center: l.cost_center.trim() || null,
+    location: l.location.trim() || null,
+    invoice_date: l.invoice_date || null,
+    invoice_number: l.invoice_number.trim() || null,
+    description: l.description.trim(),
+    amount: parseFloat(l.amount),
+    category_id: l.category_id || null,
+    subcategory_id: l.subcategory_id || null,
+  };
+}
+
 const today = () => new Date().toISOString().slice(0, 10);
+
+const DEFAULT_FORM_CONFIG: FormConfig = {
+  gl_coding_mode: "employee",
+  require_category: false,
+  require_subcategory: false,
+  allow_free_text_description: true,
+  categories: [],
+};
 
 export default function NewExpensePage() {
   const { user, accessToken } = useAuth();
@@ -87,7 +169,19 @@ export default function NewExpensePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Approver selection modal state
+  // M7 form config
+  const [formConfig, setFormConfig] = useState<FormConfig>(DEFAULT_FORM_CONFIG);
+
+  // Auto-save state
+  const [savedReportId, setSavedReportId] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  // M6 — document attachments
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Approver modal state
   const [createdReportId, setCreatedReportId] = useState<string | null>(null);
   const [showApproverModal, setShowApproverModal] = useState(false);
   const [matrix, setMatrix] = useState<ApprovalMatrix | null>(null);
@@ -97,18 +191,242 @@ export default function NewExpensePage() {
   const [l3Approver, setL3Approver] = useState("");
   const [approverError, setApproverError] = useState<string | null>(null);
 
+  // Refs for async auto-save callbacks
+  const savedReportIdRef = useRef<string | null>(null);
+  const pendingDeleteIdsRef = useRef<Set<string>>(new Set());
+  const isSavingRef = useRef(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveCallbackRef = useRef<() => Promise<void>>(async () => {});
+  const linesRef = useRef(lines);
+  const formConfigRef = useRef(formConfig);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetRef = useRef<string | null>(null);
+
+  useEffect(() => { linesRef.current = lines; }, [lines]);
+  useEffect(() => { formConfigRef.current = formConfig; }, [formConfig]);
+
+  // Load form config (M7)
+  useEffect(() => {
+    if (!accessToken) return;
+    apiFetch<FormConfig>("/api/expense-config/form-config", { token: accessToken })
+      .then((cfg) => setFormConfig(cfg))
+      .catch(() => {}); // fall back to defaults on error
+  }, [accessToken]);
+
+  // ── Auto-save implementation ──────────────────────────────────────────────
+
+  const runAutoSave = async () => {
+    if (!accessToken) return;
+    if (!reportDate) return;
+
+    const currentLines = linesRef.current;
+    const mode = formConfigRef.current.gl_coding_mode;
+    const hasValidLine = currentLines.some(
+      (l) => l.description.trim().length > 0 && parseFloat(l.amount) > 0
+    );
+    if (!hasValidLine) return;
+    if (isSavingRef.current) return;
+
+    isSavingRef.current = true;
+    setSaveStatus("saving");
+
+    try {
+      if (!savedReportIdRef.current) {
+        const report = await apiFetch<ApiReport>("/api/expenses/reports", {
+          method: "POST",
+          token: accessToken,
+          body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
+        });
+        const newReportId = report.id;
+
+        const updatedLines = [...currentLines];
+        const knownIds = new Set<string>();
+
+        for (let i = 0; i < updatedLines.length; i++) {
+          const l = updatedLines[i];
+          if (!l.description.trim() || !(parseFloat(l.amount) > 0)) continue;
+          if (mode !== "finance" && !l.gl_account.trim()) continue;
+
+          const resp = await apiFetch<ApiReport>(
+            `/api/expenses/reports/${newReportId}/lines`,
+            { method: "POST", token: accessToken, body: JSON.stringify(linePayload(l, mode)) }
+          );
+          const nl = resp.lines.find((rl) => !knownIds.has(rl.id));
+          if (nl) {
+            updatedLines[i] = { ...updatedLines[i], backendId: nl.id };
+            knownIds.add(nl.id);
+          }
+        }
+
+        savedReportIdRef.current = newReportId;
+        setSavedReportId(newReportId);
+        setLines(updatedLines);
+      } else {
+        const reportId = savedReportIdRef.current;
+
+        await apiFetch(`/api/expenses/reports/${reportId}`, {
+          method: "PATCH",
+          token: accessToken,
+          body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
+        });
+
+        for (const bid of pendingDeleteIdsRef.current) {
+          try {
+            await apiFetch(`/api/expenses/reports/${reportId}/lines/${bid}`, {
+              method: "DELETE", token: accessToken,
+            });
+          } catch { /* non-fatal */ }
+        }
+        pendingDeleteIdsRef.current.clear();
+
+        const knownIds = new Set<string>(
+          currentLines.filter((l) => l.backendId).map((l) => l.backendId!)
+        );
+        const updatedLines = [...currentLines];
+
+        for (let i = 0; i < updatedLines.length; i++) {
+          const l = updatedLines[i];
+          if (!l.description.trim() || !(parseFloat(l.amount) > 0)) continue;
+          if (mode !== "finance" && !l.gl_account.trim()) continue;
+
+          if (l.backendId) {
+            try {
+              await apiFetch(`/api/expenses/reports/${reportId}/lines/${l.backendId}`, {
+                method: "PATCH", token: accessToken, body: JSON.stringify(linePayload(l, mode)),
+              });
+            } catch { /* non-fatal */ }
+          } else {
+            try {
+              const resp = await apiFetch<ApiReport>(
+                `/api/expenses/reports/${reportId}/lines`,
+                { method: "POST", token: accessToken, body: JSON.stringify(linePayload(l, mode)) }
+              );
+              const nl = resp.lines.find((rl) => !knownIds.has(rl.id));
+              if (nl) {
+                updatedLines[i] = { ...updatedLines[i], backendId: nl.id };
+                knownIds.add(nl.id);
+              }
+            } catch { /* non-fatal */ }
+          }
+        }
+
+        const hasUpdates = updatedLines.some((l, i) => l.backendId !== currentLines[i].backendId);
+        if (hasUpdates) setLines(updatedLines);
+      }
+
+      setSaveStatus("saved");
+    } catch {
+      setSaveStatus("error");
+    } finally {
+      isSavingRef.current = false;
+    }
+  };
+
+  autoSaveCallbackRef.current = runAutoSave;
+
+  const scheduleAutoSave = useCallback(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => autoSaveCallbackRef.current(), 800);
+  }, []);
+
+  // ── Line management ───────────────────────────────────────────────────────
+
   const updateLine = (localId: string, field: keyof LineState, value: string) => {
     setLines((prev) => prev.map((l) => (l.localId === localId ? { ...l, [field]: value } : l)));
   };
-  const removeLine = (localId: string) => setLines((prev) => prev.filter((l) => l.localId !== localId));
-  const addLine = () => setLines((prev) => [...prev, newLine()]);
+
+  // When category changes in category_mapped mode, auto-fill GL suggestion
+  const handleCategoryChange = (localId: string, categoryId: string) => {
+    const cat = formConfig.categories.find((c) => c.id === categoryId);
+    setLines((prev) =>
+      prev.map((l) =>
+        l.localId === localId
+          ? {
+              ...l,
+              category_id: categoryId,
+              subcategory_id: "",
+              gl_account: formConfig.gl_coding_mode === "category_mapped"
+                ? (cat?.gl_account_suggestion ?? l.gl_account)
+                : l.gl_account,
+            }
+          : l
+      )
+    );
+    scheduleAutoSave();
+  };
+
+  const removeLine = (localId: string) => {
+    setLines((prev) => {
+      const line = prev.find((l) => l.localId === localId);
+      if (line?.backendId) pendingDeleteIdsRef.current.add(line.backendId);
+      return prev.filter((l) => l.localId !== localId);
+    });
+    scheduleAutoSave();
+  };
+
+  const addLine = () => {
+    setLines((prev) => [...prev, newLine()]);
+    scheduleAutoSave();
+  };
+
+  // ── File upload handlers ──────────────────────────────────────────────────
+
+  const triggerUpload = (target: string) => {
+    uploadTargetRef.current = target;
+    setUploadError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !uploadTargetRef.current || !accessToken || !savedReportIdRef.current) return;
+    e.target.value = "";
+
+    setUploadingFor(uploadTargetRef.current);
+    setUploadError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const target = uploadTargetRef.current;
+    if (target !== "report") formData.append("line_id", target);
+
+    try {
+      const doc = await apiFetch<DocumentRecord>(
+        `/api/documents/reports/${savedReportIdRef.current}/upload`,
+        { method: "POST", token: accessToken, body: formData, isFormData: true }
+      );
+      setDocuments((prev) => [...prev, doc]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!accessToken) return;
+    try {
+      await apiFetch(`/api/documents/${docId}`, { method: "DELETE", token: accessToken });
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Delete failed.");
+    }
+  };
+
+  // ── Validation ────────────────────────────────────────────────────────────
 
   const validate = (): string | null => {
+    const mode = formConfig.gl_coding_mode;
     if (!reportDate) return "Report date is required.";
     if (lines.length === 0) return "At least one expense line is required.";
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      if (!l.gl_account.trim()) return `Line ${i + 1}: GL Account is required.`;
+      if (mode === "employee" && !l.gl_account.trim())
+        return `Line ${i + 1}: GL Account is required.`;
+      if (formConfig.require_category && !l.category_id)
+        return `Line ${i + 1}: Category is required.`;
+      if (formConfig.require_subcategory && formConfig.require_category && !l.subcategory_id)
+        return `Line ${i + 1}: Subcategory is required.`;
       if (!l.description.trim()) return `Line ${i + 1}: Description is required.`;
       const amount = parseFloat(l.amount);
       if (!l.amount || isNaN(amount) || amount <= 0)
@@ -117,58 +435,79 @@ export default function NewExpensePage() {
     return null;
   };
 
-  const createReportAndLines = async (): Promise<string> => {
-    const report = await apiFetch<{ id: string }>("/api/expenses/reports", {
-      method: "POST",
+  // ── Save helper ───────────────────────────────────────────────────────────
+
+  const saveReportAndLines = async (): Promise<string> => {
+    const mode = formConfig.gl_coding_mode;
+    const existingId = savedReportIdRef.current;
+
+    if (!existingId) {
+      const report = await apiFetch<{ id: string }>("/api/expenses/reports", {
+        method: "POST",
+        token: accessToken!,
+        body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
+      });
+      for (const l of lines) {
+        await apiFetch(`/api/expenses/reports/${report.id}/lines`, {
+          method: "POST", token: accessToken!, body: JSON.stringify(linePayload(l, mode)),
+        });
+      }
+      savedReportIdRef.current = report.id;
+      return report.id;
+    }
+
+    await apiFetch(`/api/expenses/reports/${existingId}`, {
+      method: "PATCH",
       token: accessToken!,
       body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
     });
-    for (const l of lines) {
-      await apiFetch(`/api/expenses/reports/${report.id}/lines`, {
-        method: "POST",
-        token: accessToken!,
-        body: JSON.stringify({
-          gl_account: l.gl_account.trim(),
-          pl_group: l.pl_group.trim() || null,
-          io_dimension: l.io_dimension.trim() || null,
-          cost_center: l.cost_center.trim() || null,
-          location: l.location.trim() || null,
-          invoice_date: l.invoice_date || null,
-          invoice_number: l.invoice_number.trim() || null,
-          description: l.description.trim(),
-          amount: parseFloat(l.amount),
-        }),
-      });
+    for (const bid of pendingDeleteIdsRef.current) {
+      try {
+        await apiFetch(`/api/expenses/reports/${existingId}/lines/${bid}`, {
+          method: "DELETE", token: accessToken!,
+        });
+      } catch { /* ignore */ }
     }
-    return report.id;
+    pendingDeleteIdsRef.current.clear();
+    for (const l of lines) {
+      if (l.backendId) {
+        await apiFetch(`/api/expenses/reports/${existingId}/lines/${l.backendId}`, {
+          method: "PATCH", token: accessToken!, body: JSON.stringify(linePayload(l, mode)),
+        });
+      } else {
+        await apiFetch(`/api/expenses/reports/${existingId}/lines`, {
+          method: "POST", token: accessToken!, body: JSON.stringify(linePayload(l, mode)),
+        });
+      }
+    }
+    return existingId;
   };
+
+  // ── Button handlers ───────────────────────────────────────────────────────
 
   const handleSaveDraft = async () => {
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
-
     setIsSubmitting(true);
     setError(null);
     try {
-      await createReportAndLines();
+      await saveReportAndLines();
       router.push("/dashboard/business/expenses");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to save report.";
-      setError(msg === "Failed to fetch" ? "Cannot reach the backend server. Make sure uvicorn is running on http://localhost:8000." : msg);
+      setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Creates the report + lines, fetches matrix + users, then opens the approver modal
   const handleOpenApproverModal = async () => {
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
     setError(null);
     setIsSubmitting(true);
-
     try {
-      const reportId = await createReportAndLines();
+      const reportId = await saveReportAndLines();
       setCreatedReportId(reportId);
 
       const [matrixData, usersData] = await Promise.all([
@@ -177,24 +516,19 @@ export default function NewExpensePage() {
       ]);
 
       if (!matrixData) {
-        // No matrix configured — delete the draft and show an error
-        await apiFetch(`/api/expenses/reports/${reportId}`, { method: "DELETE", token: accessToken! });
         setCreatedReportId(null);
         setError("Your company has not configured an approval matrix. Contact your administrator.");
         return;
       }
 
       setMatrix(matrixData);
-      // Exclude the current user — an approver cannot be the same person as the requestor
       setTenantUsers(usersData.filter((u) => u.id !== user?.id));
-      setL1Approver("");
-      setL2Approver("");
-      setL3Approver("");
+      setL1Approver(""); setL2Approver(""); setL3Approver("");
       setApproverError(null);
       setShowApproverModal(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to prepare submission.";
-      setError(msg === "Failed to fetch" ? "Cannot reach the backend server. Make sure uvicorn is running on http://localhost:8000." : msg);
+      setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -235,6 +569,8 @@ export default function NewExpensePage() {
   const total = calcTotal(lines);
   const needsL2 = matrix ? matrix.levels >= 2 && (matrix.amount_threshold_l2 === null || total > parseFloat(matrix.amount_threshold_l2)) : false;
   const needsL3 = matrix ? matrix.levels >= 3 && (matrix.amount_threshold_l3 === null || total > parseFloat(matrix.amount_threshold_l3)) : false;
+  const hasBackendLines = lines.some((l) => l.backendId);
+  const mode = formConfig.gl_coding_mode;
 
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">
@@ -243,83 +579,52 @@ export default function NewExpensePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
             <h2 className="text-base font-semibold text-gray-900 mb-1">Select Approvers</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Choose who should review this report at each level.
-            </p>
-
+            <p className="text-sm text-gray-500 mb-4">Choose who should review this report at each level.</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   {matrix.level1_role} <span className="text-red-500">*</span>
                 </label>
-                <select
-                  value={l1Approver}
-                  onChange={(e) => setL1Approver(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+                <select value={l1Approver} onChange={(e) => setL1Approver(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">Select approver…</option>
-                  {tenantUsers.map((u) => (
-                    <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
-                  ))}
+                  {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
                 </select>
               </div>
-
               {needsL2 && matrix.level2_role && (
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">
                     {matrix.level2_role} <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={l2Approver}
-                    onChange={(e) => setL2Approver(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
+                  <select value={l2Approver} onChange={(e) => setL2Approver(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="">Select approver…</option>
-                    {tenantUsers.map((u) => (
-                      <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
-                    ))}
+                    {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
                   </select>
                 </div>
               )}
-
               {needsL3 && matrix.level3_role && (
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">
                     {matrix.level3_role} <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={l3Approver}
-                    onChange={(e) => setL3Approver(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
+                  <select value={l3Approver} onChange={(e) => setL3Approver(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="">Select approver…</option>
-                    {tenantUsers.map((u) => (
-                      <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
-                    ))}
+                    {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
                   </select>
                 </div>
               )}
             </div>
-
-            {approverError && (
-              <p className="mt-3 text-xs text-red-600">{approverError}</p>
-            )}
-
+            {approverError && <p className="mt-3 text-xs text-red-600">{approverError}</p>}
             <div className="flex gap-3 justify-end mt-6">
-              <button
-                type="button"
-                onClick={() => { setShowApproverModal(false); setApproverError(null); }}
+              <button type="button" onClick={() => { setShowApproverModal(false); setApproverError(null); }}
                 disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
-              >
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleSubmitWithApprovers}
-                disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-              >
+              <button type="button" onClick={handleSubmitWithApprovers} disabled={isSubmitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
                 {isSubmitting ? "Submitting…" : "Confirm & Submit"}
               </button>
             </div>
@@ -327,72 +632,67 @@ export default function NewExpensePage() {
         </div>
       )}
 
-      <div className="mb-6">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="text-sm text-gray-500 hover:text-gray-700 mb-2"
-        >
-          ← Back
-        </button>
-        <h1 className="text-xl font-bold text-gray-900">New Expense Retirement</h1>
-        <p className="mt-0.5 text-sm text-gray-500">Fill in all required fields, then save or submit.</p>
+      {/* Page header */}
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <button type="button" onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700 mb-2">
+            ← Back
+          </button>
+          <h1 className="text-xl font-bold text-gray-900">New Expense Retirement</h1>
+          <p className="mt-0.5 text-sm text-gray-500">Fill in all required fields, then save or submit.</p>
+        </div>
+        <div className="mt-8 shrink-0">
+          {saveStatus === "saving" && <span className="text-xs text-gray-400">Saving…</span>}
+          {saveStatus === "saved" && <span className="text-xs text-green-600 font-medium">Saved ✓</span>}
+          {saveStatus === "error" && <span className="text-xs text-red-500">Not saved</span>}
+        </div>
       </div>
 
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
           <span>{error}</span>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none"
-            aria-label="Dismiss error"
-          >
-            ×
-          </button>
+          <button type="button" onClick={() => setError(null)}
+            className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
+        </div>
+      )}
+
+      {/* Finance mode banner */}
+      {mode === "finance" && (
+        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
+          GL coding will be assigned by Finance during review. You do not need to enter GL accounts.
         </div>
       )}
 
       {/* Section 1 — Report Header */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <h2 className="text-sm font-semibold text-gray-800 mb-4 uppercase tracking-wide">
-          Report Header
-        </h2>
+        <h2 className="text-sm font-semibold text-gray-800 mb-4 uppercase tracking-wide">Report Header</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Employee Name</label>
-            <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">
-              {user?.full_name ?? "—"}
-            </div>
+            <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">{user?.full_name ?? "—"}</div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Employee Code</label>
-            <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-400 italic">
-              Not set on profile
-            </div>
+            <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-400 italic">Not set on profile</div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               Employee Function <span className="text-gray-400">(optional)</span>
             </label>
-            <input
-              type="text"
-              value={employeeFunction}
+            <input type="text" value={employeeFunction}
               onChange={(e) => setEmployeeFunction(e.target.value)}
+              onBlur={scheduleAutoSave}
               placeholder="e.g. Marketing, Finance, Operations"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               Report Date <span className="text-red-500">*</span>
             </label>
-            <input
-              type="date"
-              value={reportDate}
+            <input type="date" value={reportDate}
               onChange={(e) => setReportDate(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+              onBlur={scheduleAutoSave}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
       </div>
@@ -400,14 +700,8 @@ export default function NewExpensePage() {
       {/* Section 2 — Expense Lines */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">
-            Expense Lines
-          </h2>
-          <button
-            type="button"
-            onClick={addLine}
-            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-          >
+          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">Expense Lines</h2>
+          <button type="button" onClick={addLine} className="text-sm text-blue-600 hover:text-blue-800 font-medium">
             + Add Line
           </button>
         </div>
@@ -417,36 +711,111 @@ export default function NewExpensePage() {
             <thead>
               <tr className="border-b border-gray-200">
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">#</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">GL Account *</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
+                {/* Category column: shown in finance and category_mapped modes */}
+                {(mode === "finance" || mode === "category_mapped") && formConfig.categories.length > 0 && (
+                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                    Category{formConfig.require_category && <span className="text-red-500"> *</span>}
+                  </th>
+                )}
+                {(mode === "finance" || mode === "category_mapped") && formConfig.require_subcategory && (
+                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                    Subcategory<span className="text-red-500"> *</span>
+                  </th>
+                )}
+                {/* GL columns: hidden in finance mode */}
+                {mode !== "finance" && (
+                  <>
+                    <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                      GL Account{mode === "employee" && <span className="text-red-500"> *</span>}
+                    </th>
+                    <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
+                  </>
+                )}
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">IO / Dimension</th>
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Cost Center</th>
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Location</th>
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Invoice Date</th>
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Invoice No.</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Description *</th>
-                <th className="pb-2 pr-3 text-right text-xs font-semibold text-gray-500 whitespace-nowrap">Amount (NGN) *</th>
+                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Description <span className="text-red-500">*</span></th>
+                <th className="pb-2 pr-3 text-right text-xs font-semibold text-gray-500 whitespace-nowrap">Amount (NGN) <span className="text-red-500">*</span></th>
                 <th className="pb-2 text-right text-xs font-semibold text-gray-500"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {lines.map((line, idx) => (
-                <tr key={line.localId}>
-                  <td className="py-2 pr-3 text-gray-400">{idx + 1}</td>
-                  <td className="py-2 pr-3"><input type="text" value={line.gl_account} onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)} placeholder="e.g. 733060" className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="text" value={line.pl_group} onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)} placeholder="e.g. PL4" className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="text" value={line.io_dimension} onChange={(e) => updateLine(line.localId, "io_dimension", e.target.value)} placeholder="IO" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="text" value={line.cost_center} onChange={(e) => updateLine(line.localId, "cost_center", e.target.value)} placeholder="CC" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="text" value={line.location} onChange={(e) => updateLine(line.localId, "location", e.target.value)} placeholder="e.g. Lagos" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="date" value={line.invoice_date} onChange={(e) => updateLine(line.localId, "invoice_date", e.target.value)} className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="text" value={line.invoice_number} onChange={(e) => updateLine(line.localId, "invoice_number", e.target.value)} placeholder="Inv #" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3"><input type="text" value={line.description} onChange={(e) => updateLine(line.localId, "description", e.target.value)} placeholder="Description" className="w-48 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 pr-3 text-right"><input type="number" min="0.01" step="0.01" value={line.amount} onChange={(e) => updateLine(line.localId, "amount", e.target.value)} placeholder="0.00" className="w-28 px-2 py-1 border border-gray-300 rounded text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                  <td className="py-2 text-right">
-                    <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1} className="text-xs text-red-500 hover:text-red-700 disabled:text-gray-300 font-medium">Remove</button>
-                  </td>
-                </tr>
-              ))}
+              {lines.map((line, idx) => {
+                const selectedCat = formConfig.categories.find((c) => c.id === line.category_id);
+                const availableSubs = selectedCat?.subcategories ?? [];
+                return (
+                  <tr key={line.localId}>
+                    <td className="py-2 pr-3 text-gray-400">{idx + 1}</td>
+
+                    {/* Category dropdown */}
+                    {(mode === "finance" || mode === "category_mapped") && formConfig.categories.length > 0 && (
+                      <td className="py-2 pr-3">
+                        <select
+                          value={line.category_id}
+                          onChange={(e) => handleCategoryChange(line.localId, e.target.value)}
+                          className="w-36 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="">Select…</option>
+                          {formConfig.categories.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </td>
+                    )}
+
+                    {/* Subcategory dropdown */}
+                    {(mode === "finance" || mode === "category_mapped") && formConfig.require_subcategory && (
+                      <td className="py-2 pr-3">
+                        <select
+                          value={line.subcategory_id}
+                          onChange={(e) => { updateLine(line.localId, "subcategory_id", e.target.value); scheduleAutoSave(); }}
+                          disabled={availableSubs.length === 0}
+                          className="w-36 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+                        >
+                          <option value="">{availableSubs.length === 0 ? "—" : "Select…"}</option>
+                          {availableSubs.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </td>
+                    )}
+
+                    {/* GL fields: hidden in finance mode */}
+                    {mode !== "finance" && (
+                      <>
+                        <td className="py-2 pr-3">
+                          <input type="text" value={line.gl_account}
+                            onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)}
+                            onBlur={scheduleAutoSave}
+                            placeholder="e.g. 733060"
+                            className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input type="text" value={line.pl_group}
+                            onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)}
+                            onBlur={scheduleAutoSave}
+                            placeholder="e.g. PL4"
+                            className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </td>
+                      </>
+                    )}
+
+                    <td className="py-2 pr-3"><input type="text" value={line.io_dimension} onChange={(e) => updateLine(line.localId, "io_dimension", e.target.value)} onBlur={scheduleAutoSave} placeholder="IO" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-3"><input type="text" value={line.cost_center} onChange={(e) => updateLine(line.localId, "cost_center", e.target.value)} onBlur={scheduleAutoSave} placeholder="CC" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-3"><input type="text" value={line.location} onChange={(e) => updateLine(line.localId, "location", e.target.value)} onBlur={scheduleAutoSave} placeholder="e.g. Lagos" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-3"><input type="date" value={line.invoice_date} onChange={(e) => updateLine(line.localId, "invoice_date", e.target.value)} onBlur={scheduleAutoSave} className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-3"><input type="text" value={line.invoice_number} onChange={(e) => updateLine(line.localId, "invoice_number", e.target.value)} onBlur={scheduleAutoSave} placeholder="Inv #" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-3"><input type="text" value={line.description} onChange={(e) => updateLine(line.localId, "description", e.target.value)} onBlur={scheduleAutoSave} placeholder="Description" className="w-48 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-3 text-right"><input type="number" min="0.01" step="0.01" value={line.amount} onChange={(e) => updateLine(line.localId, "amount", e.target.value)} onBlur={scheduleAutoSave} placeholder="0.00" className="w-28 px-2 py-1 border border-gray-300 rounded text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 text-right">
+                      <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1}
+                        className="text-xs text-red-500 hover:text-red-700 disabled:text-gray-300 font-medium">Remove</button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -459,34 +828,111 @@ export default function NewExpensePage() {
         </div>
       </div>
 
-      {/* M6 — Document attachment hint (docs available after saving draft) */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-6 text-sm text-blue-700">
-        <span className="font-medium">Attaching receipts or documents?</span> Save as draft first, then open the edit page to attach files to each line.
-      </div>
+      {/* Hidden file input */}
+      <input ref={fileInputRef} type="file" className="hidden"
+        accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc"
+        onChange={handleFileSelected} />
+
+      {/* M6 — Per-line attachments */}
+      {hasBackendLines && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Line Attachments</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Attach receipts or invoices to individual expense lines. Accepted: PDF, JPG, PNG, Excel, Word (max 10 MB).
+          </p>
+          {uploadError && (
+            <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-center justify-between">
+              <span>{uploadError}</span>
+              <button onClick={() => setUploadError(null)} className="ml-2 text-red-400 hover:text-red-600 font-bold">×</button>
+            </div>
+          )}
+          <div className="space-y-4">
+            {lines.filter((l) => l.backendId).map((line, idx) => {
+              const lineDocs = documents.filter((d) => d.line_id === line.backendId);
+              const isUploading = uploadingFor === line.backendId;
+              return (
+                <div key={line.localId} className="border border-gray-100 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">
+                    Line {idx + 1} — {line.description || line.gl_account || "(new line)"}
+                  </p>
+                  {lineDocs.length > 0 && (
+                    <ul className="mb-2 space-y-1">
+                      {lineDocs.map((doc) => (
+                        <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
+                          <FileTypeIcon mimeType={doc.mime_type} />
+                          <span className="flex-1 truncate">{doc.file_name}</span>
+                          <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
+                          {doc.signed_url && (
+                            <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
+                          )}
+                          <button type="button" onClick={() => handleDeleteDocument(doc.id)}
+                            className="text-red-400 hover:text-red-600 shrink-0 font-medium">Remove</button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <button type="button" disabled={isUploading || !line.backendId}
+                    onClick={() => line.backendId && triggerUpload(line.backendId)}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
+                    {isUploading ? "Uploading…" : "+ Attach Document"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* M6 — Report-level documents */}
+      {savedReportId && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Report Documents</h2>
+          <p className="text-xs text-gray-400 mb-4">Documents that apply to the report as a whole, not a specific line.</p>
+          {(() => {
+            const reportDocs = documents.filter((d) => d.line_id === null);
+            const isUploading = uploadingFor === "report";
+            return (
+              <>
+                {reportDocs.length > 0 && (
+                  <ul className="mb-3 space-y-1">
+                    {reportDocs.map((doc) => (
+                      <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
+                        <FileTypeIcon mimeType={doc.mime_type} />
+                        <span className="flex-1 truncate">{doc.file_name}</span>
+                        <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
+                        {doc.signed_url && (
+                          <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
+                        )}
+                        <button type="button" onClick={() => handleDeleteDocument(doc.id)}
+                          className="text-red-400 hover:text-red-600 shrink-0 font-medium">Remove</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <button type="button" disabled={isUploading} onClick={() => triggerUpload("report")}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
+                  {isUploading ? "Uploading…" : "+ Attach Document"}
+                </button>
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Action buttons */}
       <div className="flex items-center gap-3 justify-end">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-        >
+        <button type="button" onClick={() => router.back()}
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
           Cancel
         </button>
-        <button
-          type="button"
-          onClick={handleSaveDraft}
-          disabled={isSubmitting || !!error}
-          className="px-4 py-2 text-sm font-medium text-gray-800 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 disabled:opacity-60"
-        >
+        <button type="button" onClick={handleSaveDraft} disabled={isSubmitting || !!error}
+          className="px-4 py-2 text-sm font-medium text-gray-800 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 disabled:opacity-60">
           {isSubmitting ? "Saving…" : "Save Draft"}
         </button>
-        <button
-          type="button"
-          onClick={handleOpenApproverModal}
-          disabled={isSubmitting || !!error}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-        >
+        <button type="button" onClick={handleOpenApproverModal} disabled={isSubmitting || !!error}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
           {isSubmitting ? "Preparing…" : "Submit for Approval"}
         </button>
       </div>
