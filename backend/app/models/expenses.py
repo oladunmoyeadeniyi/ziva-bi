@@ -1,12 +1,12 @@
 """
-ZivaBI — expense management ORM models (Milestones 3–7).
+ZivaBI — expense management ORM models (Milestones 3–8).
 
 Tables:
     expense_reports          parent-level expense retirement submission per employee
     expense_lines            individual expense entries within a report
     expense_report_snapshots immutable submission snapshots (M5)
-    tenant_expense_config    per-tenant GL coding mode and form flags (M7)
-    expense_categories       tenant-scoped category/subcategory tree with optional GL mapping (M7)
+    tenant_expense_config    per-tenant coding level and form flags (M7–M8)
+    expense_categories       tenant-scoped category/subcategory tree (M7–M8)
 
 Business-tier only. All tables require tenant_id.
 report_number is auto-generated on creation as EXP-{YEAR}-{SEQUENCE:04d}.
@@ -160,17 +160,20 @@ class ExpenseLine(Base):
 
 class TenantExpenseConfig(Base):
     """
-    Per-tenant configuration for the expense submission form (M7).
+    Per-tenant configuration for the expense submission form (M7–M8).
 
-    Stores the GL coding mode and category-related flags for a tenant.
     At most one row per tenant (enforced by UNIQUE on tenant_id).
     If no row exists, all endpoints return hard-coded defaults so existing
-    tenants continue to behave exactly as before M7 (employee mode, no categories).
+    tenants continue to behave exactly as before M7 (coding_level=0, no categories).
 
-    gl_coding_mode values:
-        'employee'        — employee enters GL account themselves (pre-M7 behaviour)
-        'finance'         — GL fields hidden; Finance team codes GL during review
-        'category_mapped' — employee picks a category; system suggests GL from mapping
+    coding_level (M8):
+        0 — Finance codes everything (no GL fields visible to employee)
+        1 — Category only (employee picks category/subcategory; GL auto-assigned)
+        2 — Category + GL confirmation (employee can see and flag the suggested GL)
+        3 — Guided GL selection (employee picks GL from a filtered shortlist)
+        4 — Full GL coding (employee types or searches GL directly)
+
+    show_location / require_location (M8): control the location field on expense lines.
     """
 
     __tablename__ = "tenant_expense_config"
@@ -185,14 +188,14 @@ class TenantExpenseConfig(Base):
         unique=True,
         index=True,
     )
-    gl_coding_mode: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="employee"
-    )
+    coding_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     require_category: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     require_subcategory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     allow_free_text_description: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True
     )
+    show_location: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    require_location: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -206,13 +209,14 @@ class TenantExpenseConfig(Base):
 
 class ExpenseCategory(Base):
     """
-    Tenant-scoped expense category (or subcategory) with optional GL account suggestion (M7).
+    Tenant-scoped expense category (or subcategory), M7–M8.
 
     Tree structure: parent_id = NULL means top-level category; parent_id set means subcategory.
-    Only one level of nesting is currently supported (subcategory cannot have its own subcategory).
+    Only one level of nesting is supported.
 
-    gl_account_suggestion is used in category_mapped mode: when the employee selects this
-    category, the form pre-fills the GL Account field with this value (editable by the employee).
+    M8: GL account mappings moved from gl_account_suggestion (string) to the
+    category_gl_mappings table (one-to-many, with is_default flag).
+    code is now VARCHAR(100) and required (NOT NULL after M8 migration).
 
     Deactivation is soft (is_active = false) and cascades to subcategories in the router.
     """
@@ -229,14 +233,13 @@ class ExpenseCategory(Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("expense_categories.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-    gl_account_suggestion: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(

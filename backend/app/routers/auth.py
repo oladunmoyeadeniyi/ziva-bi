@@ -256,6 +256,30 @@ async def signup(
         if role:
             db.add(UserRole(user_tenant_id=user_tenant.id, role_id=role.id))
 
+        # Seed default top-level expense categories for new tenants (M8).
+        from app.models.expenses import ExpenseCategory
+        import re as _re
+
+        def _cat_code(name: str) -> str:
+            return _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+        default_categories = [
+            "Travel Cost",
+            "Entertainment",
+            "Staff Cost",
+            "Car Cost",
+            "Insurance",
+            "Consulting",
+            "Other Indirect Costs",
+        ]
+        for cat_name in default_categories:
+            db.add(ExpenseCategory(
+                tenant_id=tenant.id,
+                name=cat_name,
+                code=_cat_code(cat_name),
+                sort_order=default_categories.index(cat_name),
+            ))
+
     # ── 6. Session + tokens ───────────────────────────────────────────────────
     session, raw_token, _ = await _create_session_and_tokens(user_tenant, db, request)
     # Business signups always create a tenant_admin — no DB query needed here.

@@ -1,44 +1,74 @@
 """
-ZivaBI — Pydantic schemas for M7 expense configuration and categories.
+ZivaBI — Pydantic schemas for M7/M8 expense configuration and categories.
 
 Used by the expense_config router to validate request bodies and shape API responses.
 All category endpoints return ExpenseCategoryResponse which embeds subcategories so
 the frontend receives a single hierarchical payload instead of making multiple calls.
+
+M8 changes:
+  - gl_coding_mode replaced by coding_level (int 0–4) in TenantExpenseConfig
+  - FormConfigResponse derives gl_coding_mode from coding_level for backward compat
+  - New fields: show_location, require_location
 """
 
 import uuid
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
 
 # ── Expense Config ────────────────────────────────────────────────────────────
 
-GL_CODING_MODES = Literal["employee", "finance", "category_mapped"]
-
-
-class TenantExpenseConfigCreate(BaseModel):
+def _coding_level_to_gl_mode(level: int) -> str:
     """
-    Payload to create or update the tenant's expense form configuration.
+    Derive a backward-compatible gl_coding_mode string from the M8 coding_level integer.
 
-    All fields are optional so callers can PATCH individual settings without
+    Used by the form-config endpoint so the M7 expense form continues working
+    until M9 updates the form to consume coding_level directly.
+    """
+    if level == 0:
+        return "finance"
+    elif level <= 3:
+        return "category_mapped"
+    return "employee"
+
+
+class TenantExpenseConfigUpdate(BaseModel):
+    """
+    Payload to update the tenant's expense form configuration (PATCH semantics).
+
+    All fields are optional so callers can update individual settings without
     resending the full object.
     """
 
-    gl_coding_mode: GL_CODING_MODES | None = None
+    coding_level: int | None = None  # 0–4
     require_category: bool | None = None
     require_subcategory: bool | None = None
     allow_free_text_description: bool | None = None
+    show_location: bool | None = None
+    require_location: bool | None = None
+
+    @field_validator("coding_level")
+    @classmethod
+    def validate_coding_level(cls, v: int | None) -> int | None:
+        if v is not None and v not in range(5):
+            raise ValueError("coding_level must be 0–4.")
+        return v
+
+
+# Keep old name as alias for backward compat with expense_config router import
+TenantExpenseConfigCreate = TenantExpenseConfigUpdate
 
 
 class TenantExpenseConfigResponse(BaseModel):
     """Current expense config for a tenant, or the system defaults if none exists."""
 
-    gl_coding_mode: str
+    coding_level: int
     require_category: bool
     require_subcategory: bool
     allow_free_text_description: bool
+    show_location: bool
+    require_location: bool
 
     model_config = {"from_attributes": True}
 
@@ -56,7 +86,6 @@ class ExpenseCategoryCreate(BaseModel):
     name: str
     code: str | None = None
     parent_id: uuid.UUID | None = None
-    gl_account_suggestion: str | None = None
     sort_order: int = 0
 
     @field_validator("name")
@@ -73,7 +102,6 @@ class ExpenseCategoryUpdate(BaseModel):
 
     name: str | None = None
     code: str | None = None
-    gl_account_suggestion: str | None = None
     sort_order: int | None = None
 
     @field_validator("name")
@@ -99,7 +127,6 @@ class ExpenseCategoryResponse(BaseModel):
     name: str
     code: str | None
     parent_id: str | None
-    gl_account_suggestion: str | None
     is_active: bool
     sort_order: int
     created_at: datetime
@@ -118,7 +145,6 @@ class ExpenseCategoryResponse(BaseModel):
             name=c.name,
             code=c.code,
             parent_id=str(c.parent_id) if c.parent_id else None,
-            gl_account_suggestion=c.gl_account_suggestion,
             is_active=c.is_active,
             sort_order=c.sort_order,
             created_at=c.created_at,
@@ -136,15 +162,17 @@ class FormConfigResponse(BaseModel):
     """
     Combined payload that the expense submission form fetches on page load.
 
-    Contains all config flags plus the full active category tree so the form
-    can render category/subcategory dropdowns and apply GL coding mode rules
-    without making multiple API calls.
+    gl_coding_mode is derived from coding_level for backward compat with the M7
+    expense form. M9 will update the form to use coding_level directly.
     """
 
-    gl_coding_mode: str
+    gl_coding_mode: str  # derived from coding_level; remove in M9
+    coding_level: int
     require_category: bool
     require_subcategory: bool
     allow_free_text_description: bool
+    show_location: bool
+    require_location: bool
     categories: list[ExpenseCategoryResponse]
 
 

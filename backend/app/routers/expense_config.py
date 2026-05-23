@@ -42,16 +42,20 @@ from app.schemas.expense_config import (
     FormConfigResponse,
     TenantExpenseConfigCreate,
     TenantExpenseConfigResponse,
+    TenantExpenseConfigUpdate,
+    _coding_level_to_gl_mode,
 )
 
 router = APIRouter(prefix="/api/expense-config", tags=["expense-config"])
 
 # ── Default config returned when no row exists for the tenant ─────────────────
 _DEFAULTS = TenantExpenseConfigResponse(
-    gl_coding_mode="employee",
+    coding_level=0,
     require_category=False,
     require_subcategory=False,
     allow_free_text_description=True,
+    show_location=True,
+    require_location=False,
 )
 
 
@@ -143,48 +147,75 @@ async def get_expense_config(
     return TenantExpenseConfigResponse.model_validate(config)
 
 
-@router.post("", response_model=TenantExpenseConfigResponse)
-async def upsert_expense_config(
-    data: TenantExpenseConfigCreate,
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> TenantExpenseConfigResponse:
-    """
-    Create or update the tenant's expense configuration (upsert).
-
-    Only Tenant Admins may call this. Unset fields in the request body are
-    left unchanged (PATCH semantics) so callers can update a single flag
-    without resending the whole config.
-    """
-    tenant_id = _require_tenant(current_user)
-    _require_admin(current_user)
-
+async def _upsert_config(
+    data: TenantExpenseConfigUpdate,
+    tenant_id: "uuid.UUID",
+    db: AsyncSession,
+) -> TenantExpenseConfig:
+    """Shared upsert logic used by both POST and PATCH endpoints."""
     config = await _get_config(tenant_id, db)
     if config is None:
-        # First-time save — start from defaults
         config = TenantExpenseConfig(
             tenant_id=tenant_id,
-            gl_coding_mode="employee",
+            coding_level=0,
             require_category=False,
             require_subcategory=False,
             allow_free_text_description=True,
+            show_location=True,
+            require_location=False,
         )
         db.add(config)
 
-    if data.gl_coding_mode is not None:
-        config.gl_coding_mode = data.gl_coding_mode
+    if data.coding_level is not None:
+        config.coding_level = data.coding_level
     if data.require_category is not None:
         config.require_category = data.require_category
-        # If categories become not required, subcategory requirement is also lifted
         if not data.require_category:
             config.require_subcategory = False
     if data.require_subcategory is not None:
         config.require_subcategory = data.require_subcategory
     if data.allow_free_text_description is not None:
         config.allow_free_text_description = data.allow_free_text_description
+    if data.show_location is not None:
+        config.show_location = data.show_location
+        if not data.show_location:
+            config.require_location = False
+    if data.require_location is not None:
+        config.require_location = data.require_location
 
     await db.flush()
     await db.refresh(config)
+    return config
+
+
+@router.post("", response_model=TenantExpenseConfigResponse)
+async def upsert_expense_config_post(
+    data: TenantExpenseConfigUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> TenantExpenseConfigResponse:
+    """Create or update the tenant's expense configuration (POST, kept for backward compat)."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    config = await _upsert_config(data, tenant_id, db)
+    return TenantExpenseConfigResponse.model_validate(config)
+
+
+@router.patch("", response_model=TenantExpenseConfigResponse)
+async def upsert_expense_config(
+    data: TenantExpenseConfigUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> TenantExpenseConfigResponse:
+    """
+    Update the tenant's expense configuration (PATCH semantics).
+
+    All fields optional — only provided fields are updated.
+    Only Tenant Admins may call this.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    config = await _upsert_config(data, tenant_id, db)
     return TenantExpenseConfigResponse.model_validate(config)
 
 
@@ -247,7 +278,6 @@ async def create_category(
         name=data.name,
         code=data.code,
         parent_id=data.parent_id,
-        gl_account_suggestion=data.gl_account_suggestion,
         sort_order=data.sort_order,
     )
     db.add(cat)
@@ -340,24 +370,31 @@ async def get_form_config(
 
     config = await _get_config(tenant_id, db)
     if config is None:
-        gl_mode = "employee"
+        lvl = 0
         req_cat = False
         req_sub = False
         allow_free = True
+        show_loc = True
+        req_loc = False
     else:
-        gl_mode = config.gl_coding_mode
+        lvl = config.coding_level
         req_cat = config.require_category
         req_sub = config.require_subcategory
         allow_free = config.allow_free_text_description
+        show_loc = config.show_location
+        req_loc = config.require_location
 
     top_level = await _get_active_categories(tenant_id, db)
     categories = [ExpenseCategoryResponse.from_orm(c, c.subcategories) for c in top_level]
 
     return FormConfigResponse(
-        gl_coding_mode=gl_mode,
+        gl_coding_mode=_coding_level_to_gl_mode(lvl),
+        coding_level=lvl,
         require_category=req_cat,
         require_subcategory=req_sub,
         allow_free_text_description=allow_free,
+        show_location=show_loc,
+        require_location=req_loc,
         categories=categories,
     )
 
