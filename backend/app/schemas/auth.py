@@ -111,6 +111,7 @@ class UserResponse(BaseModel):
     tenant_id: str | None
     is_super_admin: bool
     is_tenant_admin: bool = False
+    has_non_admin_role: bool = False
     # Extended profile fields (null until the user fills them in)
     employee_code: str | None = None
     department: str | None = None
@@ -126,6 +127,7 @@ class UserResponse(BaseModel):
         tenant_id: uuid.UUID | None,
         *,
         is_tenant_admin: bool = False,
+        has_non_admin_role: bool = False,
     ) -> "UserResponse":
         """Build response from a User ORM object + optional tenant_id and role flags."""
         return cls(
@@ -136,6 +138,7 @@ class UserResponse(BaseModel):
             tenant_id=str(tenant_id) if tenant_id else None,
             is_super_admin=user.is_super_admin,  # type: ignore[attr-defined]
             is_tenant_admin=is_tenant_admin,
+            has_non_admin_role=has_non_admin_role,
             employee_code=getattr(user, "employee_code", None),
             department=getattr(user, "department", None),
             job_title=getattr(user, "job_title", None),

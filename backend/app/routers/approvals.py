@@ -395,6 +395,11 @@ async def submit_with_approvers(
     Sends an email notification to the first active approver.
     """
     tenant_id = _require_tenant(current_user)
+    if current_user.is_tenant_admin and not current_user.has_non_admin_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant administrators cannot submit expense reports.",
+        )
     report = await _get_report_or_404(report_id, tenant_id, db)
 
     if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):

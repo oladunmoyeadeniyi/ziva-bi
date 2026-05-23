@@ -35,6 +35,7 @@ export interface AuthUser {
   tenant_id: string | null;
   is_super_admin: boolean;
   is_tenant_admin: boolean;
+  has_non_admin_role: boolean;
   employee_code?: string | null;
   department?: string | null;
   job_title?: string | null;

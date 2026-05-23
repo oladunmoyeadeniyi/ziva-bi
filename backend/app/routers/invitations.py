@@ -191,6 +191,8 @@ async def accept_invitation(
     ))
 
     is_admin = inv.role == "tenant_admin"
+    # Invited users have a single role at accept time; only tenant_admin invites are config-only
+    has_non_admin = not is_admin
     access_token = create_access_token({
         "sub": str(user.id),
         "user_tenant_id": str(user_tenant.id),
@@ -199,10 +201,15 @@ async def accept_invitation(
         "session_id": str(session.id),
         "is_super_admin": user.is_super_admin,
         "is_tenant_admin": is_admin,
+        "has_non_admin_role": has_non_admin,
     })
 
     return AuthResponse(
         access_token=access_token,
         refresh_token=raw_token,
-        user=UserResponse.from_orm_pair(user, inv.tenant_id, is_tenant_admin=is_admin),
+        user=UserResponse.from_orm_pair(
+            user, inv.tenant_id,
+            is_tenant_admin=is_admin,
+            has_non_admin_role=has_non_admin,
+        ),
     )

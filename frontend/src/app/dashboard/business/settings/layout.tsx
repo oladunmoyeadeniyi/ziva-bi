@@ -22,7 +22,6 @@ const SETTINGS_NAV = [
   { href: "/dashboard/business/settings/approval-matrix", label: "Approval Matrix" },
   { href: "/dashboard/business/settings/expense-config",  label: "Expense Config"  },
   { href: null,                                            label: "Master Data"     }, // M8 placeholder
-  { href: "/dashboard/business/admin/users",              label: "Team"            },
 ];
 
 export default function SettingsLayout({

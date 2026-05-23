@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import hash_password, verify_password
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
-from app.models.auth import User, UserTenant
+from app.models.auth import Role, User, UserRole, UserTenant
 from app.schemas.auth import UserResponse
 from app.schemas.approvals import TenantUserResponse
 from app.schemas.users import PasswordChangeRequest, ProfileUpdateRequest
@@ -47,6 +47,7 @@ async def get_me(
         user,
         current_user.tenant_id,
         is_tenant_admin=current_user.is_tenant_admin,
+        has_non_admin_role=current_user.has_non_admin_role,
     )
 
 
@@ -83,6 +84,7 @@ async def update_me(
         user,
         current_user.tenant_id,
         is_tenant_admin=current_user.is_tenant_admin,
+        has_non_admin_role=current_user.has_non_admin_role,
     )
 
 
@@ -125,16 +127,35 @@ async def list_tenant_users(
     db: AsyncSession = Depends(get_db),
 ) -> list[TenantUserResponse]:
     """
-    List all active users in the current user's tenant.
+    List active users in the current tenant who can act as approvers.
 
-    Used to populate approver dropdowns during expense submission.
-    Returns id, full_name, email for each active tenant member.
+    Exclusively-tenant-admin users (those with only the tenant_admin role and no
+    operational roles) are excluded because they cannot participate in approval chains.
     """
     if not current_user.tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This endpoint is only available to business accounts.",
         )
+
+    # Subquery: user_tenant IDs that hold at least one non-admin role
+    has_non_admin = (
+        select(UserRole.user_tenant_id)
+        .join(Role, UserRole.role_id == Role.id)
+        .where(Role.name != "tenant_admin")
+        .scalar_subquery()
+    )
+
+    # Subquery: user_tenant IDs that are exclusively tenant_admin (admin role + no other role)
+    exclusively_admin_ut_ids = (
+        select(UserRole.user_tenant_id)
+        .join(Role, UserRole.role_id == Role.id)
+        .where(
+            Role.name == "tenant_admin",
+            UserRole.user_tenant_id.not_in(has_non_admin),
+        )
+        .scalar_subquery()
+    )
 
     result = await db.execute(
         select(User)
@@ -143,6 +164,7 @@ async def list_tenant_users(
             UserTenant.tenant_id == current_user.tenant_id,
             UserTenant.is_active.is_(True),
             User.is_active.is_(True),
+            UserTenant.id.not_in(exclusively_admin_ut_ids),
         )
         .order_by(User.full_name)
     )

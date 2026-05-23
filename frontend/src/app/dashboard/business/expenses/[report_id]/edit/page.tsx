@@ -783,12 +783,12 @@ export default function EditExpensePage() {
                   </th>
                 )}
                 {mode !== "finance" && (
-                  <>
-                    <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
-                      GL Account{mode === "employee" && <span className="text-red-500"> *</span>}
-                    </th>
-                    <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
-                  </>
+                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                    GL Account{mode === "employee" && <span className="text-red-500"> *</span>}
+                  </th>
+                )}
+                {mode === "employee" && (
+                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
                 )}
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">IO / Dimension</th>
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Cost Center</th>
@@ -840,22 +840,22 @@ export default function EditExpensePage() {
                     )}
 
                     {mode !== "finance" && (
-                      <>
-                        <td className="py-2 pr-3">
-                          <input type="text" value={line.gl_account}
-                            onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)}
-                            onBlur={scheduleAutoSave}
-                            placeholder="e.g. 733060"
-                            className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                        </td>
-                        <td className="py-2 pr-3">
-                          <input type="text" value={line.pl_group}
-                            onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)}
-                            onBlur={scheduleAutoSave}
-                            placeholder="e.g. PL4"
-                            className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                        </td>
-                      </>
+                      <td className="py-2 pr-3">
+                        <input type="text" value={line.gl_account}
+                          onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)}
+                          onBlur={scheduleAutoSave}
+                          placeholder="e.g. 733060"
+                          className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </td>
+                    )}
+                    {mode === "employee" && (
+                      <td className="py-2 pr-3">
+                        <input type="text" value={line.pl_group}
+                          onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)}
+                          onBlur={scheduleAutoSave}
+                          placeholder="e.g. PL4"
+                          className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </td>
                     )}
 
                     <td className="py-2 pr-3"><input type="text" value={line.io_dimension} onChange={(e) => updateLine(line.localId, "io_dimension", e.target.value)} onBlur={scheduleAutoSave} placeholder="IO" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>

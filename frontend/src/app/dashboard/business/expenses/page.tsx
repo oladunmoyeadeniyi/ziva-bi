@@ -67,7 +67,8 @@ const TAB_STATUSES: Record<TabFilter, string[]> = {
 };
 
 export default function ExpensesListPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role;
   const [reports, setReports] = useState<ExpenseReport[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -176,13 +177,15 @@ export default function ExpensesListPage() {
           <h1 className="text-xl font-bold text-gray-900">Expense Reports</h1>
           <p className="mt-0.5 text-sm text-gray-500">Manage and submit business expense retirements</p>
         </div>
-        <Link
-          href="/dashboard/business/expenses/new"
-          className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <span>+</span>
-          New Expense Retirement
-        </Link>
+        {!isExclusivelyAdmin && (
+          <Link
+            href="/dashboard/business/expenses/new"
+            className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <span>+</span>
+            New Expense Retirement
+          </Link>
+        )}
       </div>
 
       {/* Filter tabs */}
@@ -235,7 +238,7 @@ export default function ExpensesListPage() {
           <p className="mt-1 text-xs text-gray-500">
             {activeTab === "ALL" ? "Create your first expense retirement to get started." : "Switch to All to see all reports."}
           </p>
-          {activeTab === "ALL" && (
+          {activeTab === "ALL" && !isExclusivelyAdmin && (
             <Link
               href="/dashboard/business/expenses/new"
               className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"

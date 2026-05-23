@@ -139,6 +139,11 @@ async def create_report(
     Returns the created report with an empty lines array.
     """
     tenant_id = _require_tenant(current_user)
+    if current_user.is_tenant_admin and not current_user.has_non_admin_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant administrators cannot submit expense reports.",
+        )
 
     report_number = await _generate_report_number(tenant_id, db)
 

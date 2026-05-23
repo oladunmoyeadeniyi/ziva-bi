@@ -53,15 +53,22 @@ export default function BusinessLayout({
     router.push("/");
   };
 
+  // Exclusively-admin users (tenant_admin with no operational role) see only config modules.
+  const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role;
+
   const NAV_ITEMS = [
-    { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null, adminOnly: false },
-    { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false, badge: null, adminOnly: false },
-    { href: "/dashboard/business/approvals", label: "Approvals", icon: "✅", exact: false, badge: pendingCount > 0 ? pendingCount : null, adminOnly: false },
-    { href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null, adminOnly: true },
-    { href: "/dashboard/business/admin/users", label: "Team", icon: "👥", exact: false, badge: null, adminOnly: true },
+    { href: "/dashboard/business", label: "Overview", icon: "🏠", exact: true, badge: null, adminOnly: false, configOnly: false },
+    { href: "/dashboard/business/expenses", label: "Expenses", icon: "🧾", exact: false, badge: null, adminOnly: false, configOnly: false },
+    { href: "/dashboard/business/approvals", label: "Approvals", icon: "✅", exact: false, badge: pendingCount > 0 ? pendingCount : null, adminOnly: false, configOnly: false },
+    { href: "/dashboard/business/settings/approval-matrix", label: "Settings", icon: "⚙️", exact: false, badge: null, adminOnly: true, configOnly: true },
+    { href: "/dashboard/business/admin/users", label: "Team", icon: "👥", exact: false, badge: null, adminOnly: true, configOnly: true },
   ];
 
-  const visibleNav = NAV_ITEMS.filter((item) => !item.adminOnly || user?.is_tenant_admin);
+  const visibleNav = NAV_ITEMS.filter((item) => {
+    if (isExclusivelyAdmin) return item.configOnly;
+    if (item.adminOnly) return user?.is_tenant_admin;
+    return true;
+  });
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">

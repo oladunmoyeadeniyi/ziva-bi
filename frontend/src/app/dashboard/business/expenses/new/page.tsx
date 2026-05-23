@@ -197,6 +197,7 @@ export default function NewExpensePage() {
   const isSavingRef = useRef(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveCallbackRef = useRef<() => Promise<void>>(async () => {});
+  const currentSavePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const linesRef = useRef(lines);
   const formConfigRef = useRef(formConfig);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -326,7 +327,9 @@ export default function NewExpensePage() {
 
   const scheduleAutoSave = useCallback(() => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => autoSaveCallbackRef.current(), 800);
+    autoSaveTimerRef.current = setTimeout(() => {
+      currentSavePromiseRef.current = autoSaveCallbackRef.current();
+    }, 800);
   }, []);
 
   // ── Line management ───────────────────────────────────────────────────────
@@ -488,11 +491,19 @@ export default function NewExpensePage() {
   const handleSaveDraft = async () => {
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+    await currentSavePromiseRef.current;
+    const isNewReport = !savedReportIdRef.current;
     setIsSubmitting(true);
     setError(null);
     try {
-      await saveReportAndLines();
-      router.push("/dashboard/business/expenses");
+      const reportId = await saveReportAndLines();
+      if (isNewReport) {
+        router.push(`/dashboard/business/expenses/${reportId}/edit`);
+      } else {
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus((s) => (s === "saved" ? "idle" : s)), 3000);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to save report.";
       setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
@@ -504,6 +515,8 @@ export default function NewExpensePage() {
   const handleOpenApproverModal = async () => {
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+    await currentSavePromiseRef.current;
     setError(null);
     setIsSubmitting(true);
     try {
@@ -722,14 +735,13 @@ export default function NewExpensePage() {
                     Subcategory<span className="text-red-500"> *</span>
                   </th>
                 )}
-                {/* GL columns: hidden in finance mode */}
                 {mode !== "finance" && (
-                  <>
-                    <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
-                      GL Account{mode === "employee" && <span className="text-red-500"> *</span>}
-                    </th>
-                    <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
-                  </>
+                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
+                    GL Account{mode === "employee" && <span className="text-red-500"> *</span>}
+                  </th>
+                )}
+                {mode === "employee" && (
+                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
                 )}
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">IO / Dimension</th>
                 <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Cost Center</th>
@@ -782,24 +794,23 @@ export default function NewExpensePage() {
                       </td>
                     )}
 
-                    {/* GL fields: hidden in finance mode */}
                     {mode !== "finance" && (
-                      <>
-                        <td className="py-2 pr-3">
-                          <input type="text" value={line.gl_account}
-                            onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)}
-                            onBlur={scheduleAutoSave}
-                            placeholder="e.g. 733060"
-                            className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                        </td>
-                        <td className="py-2 pr-3">
-                          <input type="text" value={line.pl_group}
-                            onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)}
-                            onBlur={scheduleAutoSave}
-                            placeholder="e.g. PL4"
-                            className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                        </td>
-                      </>
+                      <td className="py-2 pr-3">
+                        <input type="text" value={line.gl_account}
+                          onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)}
+                          onBlur={scheduleAutoSave}
+                          placeholder="e.g. 733060"
+                          className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </td>
+                    )}
+                    {mode === "employee" && (
+                      <td className="py-2 pr-3">
+                        <input type="text" value={line.pl_group}
+                          onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)}
+                          onBlur={scheduleAutoSave}
+                          placeholder="e.g. PL4"
+                          className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </td>
                     )}
 
                     <td className="py-2 pr-3"><input type="text" value={line.io_dimension} onChange={(e) => updateLine(line.localId, "io_dimension", e.target.value)} onBlur={scheduleAutoSave} placeholder="IO" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>

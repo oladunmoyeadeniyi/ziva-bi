@@ -34,6 +34,8 @@ class CurrentUser:
 
     Fields mirror the JWT payload structure defined in app/core/security.py.
     is_tenant_admin is True when the user has the tenant_admin role within their tenant.
+    has_non_admin_role is True when the user also holds at least one non-tenant_admin role,
+    meaning the tenant_admin restrictions (config-only mode) do not apply to them.
     """
 
     user_id: uuid.UUID
@@ -43,6 +45,7 @@ class CurrentUser:
     session_id: uuid.UUID
     is_super_admin: bool = False
     is_tenant_admin: bool = False
+    has_non_admin_role: bool = False
 
 
 async def require_auth(
@@ -71,4 +74,5 @@ async def require_auth(
         session_id=uuid.UUID(payload["session_id"]),
         is_super_admin=payload.get("is_super_admin", False),
         is_tenant_admin=payload.get("is_tenant_admin", False),
+        has_non_admin_role=payload.get("has_non_admin_role", False),
     )
