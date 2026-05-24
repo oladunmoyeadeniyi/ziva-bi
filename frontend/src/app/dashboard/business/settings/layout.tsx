@@ -20,6 +20,8 @@ const MASTER_DATA_LINKS = [
   { href: "/dashboard/business/settings/dimensions",        label: "Dimensions" },
   { href: "/dashboard/business/settings/chart-of-accounts", label: "Chart of Accounts" },
   { href: "/dashboard/business/settings/expense-categories", label: "Expense Categories" },
+  { href: "/dashboard/business/settings/employees",          label: "Employees" },
+  { href: "/dashboard/business/settings/cost-centers",       label: "Cost Centers" },
 ];
 
 export default function SettingsLayout({
@@ -42,6 +44,7 @@ export default function SettingsLayout({
   const TOP_LINKS = [
     { href: "/dashboard/business/settings/approval-matrix", label: "Approval Matrix" },
     { href: "/dashboard/business/settings/expense-config",  label: "Expense Config"  },
+    { href: "/dashboard/business/settings/finance-review",  label: "Finance Review"  },
   ];
 
   return (

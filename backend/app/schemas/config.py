@@ -7,7 +7,8 @@ GL dimension requirements, category GL mappings, and expense form config.
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -26,6 +27,7 @@ class DimensionCreate(BaseModel):
     name: str
     code: str | None = None  # auto-generated from name if not provided
     is_required: bool = False
+    accepted_value_types: str | None = None  # comma-separated type tags
 
     @field_validator("name")
     @classmethod
@@ -54,6 +56,7 @@ class DimensionUpdate(BaseModel):
     is_required: bool | None = None
     is_active: bool | None = None
     sort_order: int | None = None
+    accepted_value_types: str | None = None
 
     @field_validator("code")
     @classmethod
@@ -83,6 +86,7 @@ class DimensionResponse(BaseModel):
     is_active: bool
     sort_order: int
     created_at: datetime
+    accepted_value_types: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -99,6 +103,7 @@ class DimensionResponse(BaseModel):
             is_active=dim.is_active,
             sort_order=dim.sort_order,
             created_at=dim.created_at,
+            accepted_value_types=dim.accepted_value_types,
         )
 
 
@@ -110,6 +115,11 @@ class DimensionValueCreate(BaseModel):
     code: str
     name: str
     sort_order: int = 0
+    value_type: str | None = None
+    cascade_dimension_id: uuid.UUID | None = None
+    cascade_value_id: uuid.UUID | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
 
     @field_validator("code", "name")
     @classmethod
@@ -127,6 +137,11 @@ class DimensionValueUpdate(BaseModel):
     name: str | None = None
     sort_order: int | None = None
     is_active: bool | None = None
+    value_type: str | None = None
+    cascade_dimension_id: uuid.UUID | None = None
+    cascade_value_id: uuid.UUID | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 class DimensionValueResponse(BaseModel):
@@ -140,6 +155,11 @@ class DimensionValueResponse(BaseModel):
     is_active: bool
     sort_order: int
     created_at: datetime
+    value_type: str | None = None
+    cascade_dimension_id: str | None = None
+    cascade_value_id: str | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
 
     model_config = {"from_attributes": True}
 
@@ -156,6 +176,11 @@ class DimensionValueResponse(BaseModel):
             is_active=dv.is_active,
             sort_order=dv.sort_order,
             created_at=dv.created_at,
+            value_type=dv.value_type,
+            cascade_dimension_id=str(dv.cascade_dimension_id) if dv.cascade_dimension_id else None,
+            cascade_value_id=str(dv.cascade_value_id) if dv.cascade_value_id else None,
+            valid_from=dv.valid_from,
+            valid_to=dv.valid_to,
         )
 
 
@@ -175,7 +200,15 @@ class CoACreate(BaseModel):
 
     gl_number: str
     gl_name: str
-    account_type: str  # 'PL' or 'BS'
+    account_type: str  # 'SOCI' or 'SOFP' (also accepts legacy 'PL'/'BS')
+    gl_group: str | None = None
+    gl_subgroup: str | None = None
+    gl_sub_subgroup: str | None = None
+    fs_head: str | None = None
+    fs_note: str | None = None
+    tb_mapping: str | None = None
+    group_account_number: str | None = None
+    group_account_name: str | None = None
 
     @field_validator("gl_number")
     @classmethod
@@ -199,8 +232,11 @@ class CoACreate(BaseModel):
     @classmethod
     def validate_account_type(cls, v: str) -> str:
         v = v.strip().upper()
-        if v not in ("PL", "BS"):
-            raise ValueError("Account Type must be 'PL' or 'BS'.")
+        # Accept both new (SOCI/SOFP) and legacy (PL/BS) labels
+        mapping = {"PL": "SOCI", "BS": "SOFP"}
+        v = mapping.get(v, v)
+        if v not in ("SOCI", "SOFP"):
+            raise ValueError("Account Type must be 'SOCI' or 'SOFP'.")
         return v
 
 
@@ -211,14 +247,24 @@ class CoAUpdate(BaseModel):
     gl_name: str | None = None
     account_type: str | None = None
     is_active: bool | None = None
+    gl_group: str | None = None
+    gl_subgroup: str | None = None
+    gl_sub_subgroup: str | None = None
+    fs_head: str | None = None
+    fs_note: str | None = None
+    tb_mapping: str | None = None
+    group_account_number: str | None = None
+    group_account_name: str | None = None
 
     @field_validator("account_type")
     @classmethod
     def validate_account_type(cls, v: str | None) -> str | None:
         if v is not None:
             v = v.strip().upper()
-            if v not in ("PL", "BS"):
-                raise ValueError("Account Type must be 'PL' or 'BS'.")
+            mapping = {"PL": "SOCI", "BS": "SOFP"}
+            v = mapping.get(v, v)
+            if v not in ("SOCI", "SOFP"):
+                raise ValueError("Account Type must be 'SOCI' or 'SOFP'.")
         return v
 
 
@@ -255,6 +301,14 @@ class CoAResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     dimension_requirements: list[dict] = []  # [{dimension_id, dimension_name, requirement}]
+    gl_group: str | None = None
+    gl_subgroup: str | None = None
+    gl_sub_subgroup: str | None = None
+    fs_head: str | None = None
+    fs_note: str | None = None
+    tb_mapping: str | None = None
+    group_account_number: str | None = None
+    group_account_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -279,6 +333,14 @@ class CoAResponse(BaseModel):
             created_at=g.created_at,
             updated_at=g.updated_at,
             dimension_requirements=reqs,
+            gl_group=g.gl_group,
+            gl_subgroup=g.gl_subgroup,
+            gl_sub_subgroup=g.gl_sub_subgroup,
+            fs_head=g.fs_head,
+            fs_note=g.fs_note,
+            tb_mapping=g.tb_mapping,
+            group_account_number=g.group_account_number,
+            group_account_name=g.group_account_name,
         )
 
 
@@ -290,6 +352,8 @@ class CoAListItem(BaseModel):
     gl_name: str
     account_type: str
     is_active: bool
+    gl_group: str | None = None
+    gl_subgroup: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -303,6 +367,8 @@ class CoAListItem(BaseModel):
             gl_name=g.gl_name,
             account_type=g.account_type,
             is_active=g.is_active,
+            gl_group=g.gl_group,
+            gl_subgroup=g.gl_subgroup,
         )
 
 
@@ -438,3 +504,36 @@ class GLSearchResult(BaseModel):
                 for req in (g.dimension_requirements or [])
             ],
         )
+
+
+# ── M8.1: Bulk Actions ────────────────────────────────────────────────────────
+
+class BulkActionRequest(BaseModel):
+    """Payload for bulk activate / deactivate / delete on master data tables."""
+
+    ids: list[uuid.UUID]
+    action: str  # 'activate', 'deactivate', 'delete'
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in ("activate", "deactivate", "delete"):
+            raise ValueError("Action must be 'activate', 'deactivate', or 'delete'.")
+        return v
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, v: list) -> list:
+        if not v:
+            raise ValueError("At least one ID is required.")
+        return v
+
+
+class BulkActionResult(BaseModel):
+    """Result returned by bulk action endpoints."""
+
+    action: str
+    affected: int
+    skipped: int = 0
+    errors: list[dict] = []

@@ -20,7 +20,8 @@ M9 changes:
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -172,12 +173,22 @@ class DimensionValueForForm(BaseModel):
 
     Sent to the form on page load so the dimension dropdowns can be rendered
     without an additional API call after GL selection.
+
+    M8.1 additions:
+      - value_type: for filtering by type when GL is selected
+      - cascade_dimension_id/cascade_value_id: for auto-fill on selection
+      - valid_from/valid_to: for period-based activation filtering
     """
 
     id: str
     code: str
     name: str
     sort_order: int
+    value_type: str | None = None
+    cascade_dimension_id: str | None = None
+    cascade_value_id: str | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 class DimensionForForm(BaseModel):
@@ -187,6 +198,9 @@ class DimensionForForm(BaseModel):
     The form renders one dropdown per dimension that is 'required' or 'optional'
     for the selected GL.  is_required here is the default (tenant-wide); the
     per-GL override is in GLDimReqForForm.
+
+    M8.1 addition: accepted_value_types — comma-separated list of value_type strings
+    that this dimension accepts. Empty = accepts all.
     """
 
     id: str
@@ -195,6 +209,7 @@ class DimensionForForm(BaseModel):
     is_required: bool
     sort_order: int
     values: list[DimensionValueForForm]
+    accepted_value_types: str | None = None
 
 
 class GLDimReqForForm(BaseModel):

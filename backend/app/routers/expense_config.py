@@ -403,6 +403,9 @@ async def get_form_config(
         req_loc = config.require_location
 
     # ── 2. Dimensions with values ──────────────────────────────────────────────
+    from datetime import date as _date_today
+    today = _date_today.today()
+
     dims_result = await db.execute(
         select(TenantDimension)
         .where(TenantDimension.tenant_id == tenant_id, TenantDimension.is_active.is_(True))
@@ -417,10 +420,23 @@ async def get_form_config(
             code=d.code,
             is_required=d.is_required,
             sort_order=d.sort_order,
+            accepted_value_types=d.accepted_value_types,
             values=[
-                DimensionValueForForm(id=str(v.id), code=v.code, name=v.name, sort_order=v.sort_order)
+                DimensionValueForForm(
+                    id=str(v.id),
+                    code=v.code,
+                    name=v.name,
+                    sort_order=v.sort_order,
+                    value_type=v.value_type,
+                    cascade_dimension_id=str(v.cascade_dimension_id) if v.cascade_dimension_id else None,
+                    cascade_value_id=str(v.cascade_value_id) if v.cascade_value_id else None,
+                    valid_from=v.valid_from,
+                    valid_to=v.valid_to,
+                )
                 for v in d.values
                 if v.is_active
+                and (v.valid_from is None or v.valid_from <= today)
+                and (v.valid_to is None or v.valid_to >= today)
             ],
         )
         for d in dimensions_orm

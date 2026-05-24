@@ -55,6 +55,12 @@ export default function ExpenseCategoriesPage() {
 
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
 
+  // Bulk selection
+  const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"activate" | "deactivate" | "delete" | null>(null);
+  const [bulkConfirmText, setBulkConfirmText] = useState("");
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
   // Add category
   const [showAddCat, setShowAddCat] = useState(false);
   const [newCatName, setNewCatName] = useState("");
@@ -84,6 +90,7 @@ export default function ExpenseCategoriesPage() {
       ]);
       setCategories(cats);
       setGLAccounts(gls);
+      setSelectedBulkIds(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load categories.");
     } finally {
@@ -198,6 +205,27 @@ export default function ExpenseCategoriesPage() {
     }
   };
 
+  const handleBulkCategoryAction = async () => {
+    if (!accessToken || !bulkAction || selectedBulkIds.size === 0) return;
+    if (bulkAction === "delete" && bulkConfirmText !== "DELETE") return;
+    setBulkProcessing(true);
+    try {
+      await apiFetch("/api/config/categories/bulk-action", {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({ ids: Array.from(selectedBulkIds), action: bulkAction }),
+      });
+      setBulkAction(null);
+      setBulkConfirmText("");
+      if (selectedCatId && selectedBulkIds.has(selectedCatId)) setSelectedCatId(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk action failed.");
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
   const handleToggleDefault = async (subId: string, glId: string) => {
     if (!accessToken) return;
     try {
@@ -266,6 +294,42 @@ export default function ExpenseCategoriesPage() {
         </div>
       )}
 
+      {/* Bulk action toolbar */}
+      {selectedBulkIds.size > 0 && (
+        <div className="mb-3 flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+          <span className="text-sm font-medium text-blue-700">{selectedBulkIds.size} categories selected</span>
+          <button type="button" onClick={() => setBulkAction("deactivate")}
+            className="text-xs px-2.5 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium">Deactivate</button>
+          <button type="button" onClick={() => setBulkAction("delete")}
+            className="text-xs px-2.5 py-1 bg-red-600 text-white rounded hover:bg-red-700 font-medium">Delete</button>
+          <button type="button" onClick={() => setSelectedBulkIds(new Set())} className="ml-auto text-xs text-blue-500 hover:text-blue-700">Clear</button>
+        </div>
+      )}
+
+      {bulkAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
+            <h2 className="text-base font-semibold text-gray-900 mb-3 capitalize">{bulkAction} {selectedBulkIds.size} categories?</h2>
+            {bulkAction === "delete" && (
+              <>
+                <p className="text-sm text-red-700 mb-3">This cannot be undone. Type DELETE to confirm.</p>
+                <input type="text" value={bulkConfirmText} onChange={(e) => setBulkConfirmText(e.target.value)}
+                  placeholder="Type DELETE" className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-red-500 mb-3" />
+              </>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button type="button" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={handleBulkCategoryAction}
+                disabled={bulkProcessing || (bulkAction === "delete" && bulkConfirmText !== "DELETE")}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                {bulkProcessing ? "Processing…" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Two-panel layout */}
       <div className="flex gap-4 h-[calc(100vh-280px)] min-h-96">
         {/* Left panel: categories */}
@@ -282,12 +346,28 @@ export default function ExpenseCategoriesPage() {
               {categories.map((cat) => (
                 <div
                   key={cat.id}
-                  className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                  className={`group flex items-center gap-2 px-2 py-2 rounded-lg transition-colors ${
                     selectedCatId === cat.id ? "bg-blue-50 border border-blue-200" : "hover:bg-gray-50"
-                  }`}
-                  onClick={() => setSelectedCatId(cat.id)}
+                  } ${selectedBulkIds.has(cat.id) ? "bg-blue-50" : ""}`}
                 >
-                  <span className="flex-1 text-sm font-medium text-gray-800 truncate">{cat.name}</span>
+                  <input
+                    type="checkbox"
+                    checked={selectedBulkIds.has(cat.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelectedBulkIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(cat.id)) next.delete(cat.id); else next.add(cat.id);
+                        return next;
+                      });
+                    }}
+                    className="rounded border-gray-300 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <span
+                    className="flex-1 text-sm font-medium text-gray-800 truncate cursor-pointer"
+                    onClick={() => setSelectedCatId(cat.id)}
+                  >{cat.name}</span>
                   <span className="text-xs text-gray-400 opacity-0 group-hover:opacity-100">
                     {cat.subcategories.length}
                   </span>

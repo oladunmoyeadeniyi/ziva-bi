@@ -1143,15 +1143,27 @@ export default function NewExpensePage() {
                         </div>
                       )}
 
-                      {/* Fix 1: Dimension dropdowns — hidden when splits exist */}
+                      {/* Dimension dropdowns — hidden when splits exist */}
                       {!hasSplits && activeDims.length > 0 && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                           {activeDims.map((req) => {
                             const dim = cfg.dimensions.find((d) => d.id === req.dimension_id);
                             if (!dim) return null;
                             const sugg = lineSugg?.dimensions[req.dimension_id];
+                            const today = new Date().toISOString().slice(0, 10);
+                            // Filter by validity period
+                            const activeValues = dim.values.filter((v) =>
+                              (!v.valid_from || v.valid_from <= today) &&
+                              (!v.valid_to || v.valid_to >= today)
+                            );
+                            // Filter by accepted_value_types if set
+                            const filteredValues = dim.accepted_value_types
+                              ? activeValues.filter((v) =>
+                                  !v.value_type || dim.accepted_value_types!.split(",").map((t) => t.trim()).includes(v.value_type)
+                                )
+                              : activeValues;
                             const showPill = sugg && sugg.confidence >= 0.40 && sugg.confidence < 0.80 && !line.dimension_values[req.dimension_id];
-                            const pillLabel = dim.values.find((v) => v.id === sugg?.value_id)?.code;
+                            const pillLabel = filteredValues.find((v) => v.id === sugg?.value_id)?.code;
                             const missingRequired = isIncomplete && req.requirement === "required" && !line.dimension_values[req.dimension_id];
                             return (
                               <div key={req.dimension_id}>
@@ -1161,12 +1173,21 @@ export default function NewExpensePage() {
                                 <select
                                   value={line.dimension_values[req.dimension_id] ?? ""}
                                   onChange={(e) => {
-                                    updateLine(line.localId, { dimension_values: { ...line.dimension_values, [req.dimension_id]: e.target.value } });
+                                    const selectedValueId = e.target.value;
+                                    const newDimValues = { ...line.dimension_values, [req.dimension_id]: selectedValueId };
+                                    // Auto-fill cascade target if the selected value has cascade info
+                                    if (selectedValueId) {
+                                      const selectedVal = dim.values.find((v) => v.id === selectedValueId);
+                                      if (selectedVal?.cascade_dimension_id && selectedVal?.cascade_value_id) {
+                                        newDimValues[selectedVal.cascade_dimension_id] = selectedVal.cascade_value_id;
+                                      }
+                                    }
+                                    updateLine(line.localId, { dimension_values: newDimValues });
                                     scheduleAutoSave();
                                   }}
                                   className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${missingRequired ? "border-red-400" : "border-gray-300"}`}>
                                   <option value="">Select…</option>
-                                  {dim.values.map((v) => (
+                                  {filteredValues.map((v) => (
                                     <option key={v.id} value={v.id}>{v.code} — {v.name}</option>
                                   ))}
                                 </select>

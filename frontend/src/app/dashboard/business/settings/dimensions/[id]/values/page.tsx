@@ -3,8 +3,10 @@
 /**
  * Dimension Values — /dashboard/business/settings/dimensions/[id]/values
  *
- * Lists master data values for a given dimension and allows manual add,
- * bulk upload (xlsx/csv), edit, and soft-delete.
+ * M8.1 enhancements:
+ *   - value_type, valid_from, valid_to, cascade_dimension_id/cascade_value_id fields
+ *   - Bulk actions (activate / deactivate / delete)
+ *   - Upload now handles M8.1 columns
  */
 
 import { useEffect, useState, useRef } from "react";
@@ -19,12 +21,18 @@ interface DimensionValue {
   name: string;
   is_active: boolean;
   sort_order: number;
+  value_type?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  cascade_dimension_id?: string | null;
+  cascade_value_id?: string | null;
 }
 
 interface Dimension {
   id: string;
   name: string;
   code: string;
+  accepted_value_types?: string | null;
 }
 
 interface UploadResult {
@@ -45,11 +53,20 @@ export default function DimensionValuesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"activate" | "deactivate" | "delete" | null>(null);
+  const [bulkConfirmText, setBulkConfirmText] = useState("");
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
   // Add form
   const [showAdd, setShowAdd] = useState(false);
   const [addCode, setAddCode] = useState("");
   const [addName, setAddName] = useState("");
   const [addOrder, setAddOrder] = useState("0");
+  const [addValueType, setAddValueType] = useState("");
+  const [addValidFrom, setAddValidFrom] = useState("");
+  const [addValidTo, setAddValidTo] = useState("");
   const [addingVal, setAddingVal] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
@@ -57,6 +74,9 @@ export default function DimensionValuesPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editCode, setEditCode] = useState("");
   const [editName, setEditName] = useState("");
+  const [editValueType, setEditValueType] = useState("");
+  const [editValidFrom, setEditValidFrom] = useState("");
+  const [editValidTo, setEditValidTo] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Upload
@@ -84,6 +104,7 @@ export default function DimensionValuesPage() {
         { token: accessToken }
       );
       setValues(data);
+      setSelectedIds(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load values.");
     } finally {
@@ -104,9 +125,16 @@ export default function DimensionValuesPage() {
       await apiFetch(`/api/config/dimensions/${dimensionId}/values`, {
         method: "POST",
         token: accessToken,
-        body: JSON.stringify({ code: addCode.trim(), name: addName.trim(), sort_order: parseInt(addOrder) || 0 }),
+        body: JSON.stringify({
+          code: addCode.trim(),
+          name: addName.trim(),
+          sort_order: parseInt(addOrder) || 0,
+          value_type: addValueType.trim() || null,
+          valid_from: addValidFrom || null,
+          valid_to: addValidTo || null,
+        }),
       });
-      setAddCode(""); setAddName(""); setAddOrder("0"); setShowAdd(false);
+      setAddCode(""); setAddName(""); setAddOrder("0"); setAddValueType(""); setAddValidFrom(""); setAddValidTo(""); setShowAdd(false);
       await loadValues();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to add value.");
@@ -122,7 +150,13 @@ export default function DimensionValuesPage() {
       await apiFetch(`/api/config/dimensions/${dimensionId}/values/${id}`, {
         method: "PATCH",
         token: accessToken,
-        body: JSON.stringify({ code: editCode.trim(), name: editName.trim() }),
+        body: JSON.stringify({
+          code: editCode.trim(),
+          name: editName.trim(),
+          value_type: editValueType.trim() || null,
+          valid_from: editValidFrom || null,
+          valid_to: editValidTo || null,
+        }),
       });
       setEditId(null);
       await loadValues();
@@ -168,6 +202,45 @@ export default function DimensionValuesPage() {
     }
   };
 
+  // ── Bulk actions ────────────────────────────────────────────────────────────
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visible = values.filter((v) => v.is_active);
+    if (selectedIds.size === visible.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visible.map((v) => v.id)));
+    }
+  };
+
+  const handleBulkAction = async () => {
+    if (!accessToken || !bulkAction || selectedIds.size === 0) return;
+    if (bulkAction === "delete" && bulkConfirmText !== "DELETE") return;
+    setBulkProcessing(true);
+    try {
+      await apiFetch(`/api/config/dimensions/${dimensionId}/values/bulk-action`, {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({ ids: Array.from(selectedIds), action: bulkAction }),
+      });
+      setBulkAction(null);
+      setBulkConfirmText("");
+      await loadValues();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk action failed.");
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
   const activeValues = values.filter((v) => v.is_active);
 
   if (isLoading) {
@@ -180,7 +253,7 @@ export default function DimensionValuesPage() {
   }
 
   return (
-    <div className="px-6 py-8 max-w-3xl">
+    <div className="px-6 py-8 max-w-4xl">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
         <Link href="/dashboard/business/settings/dimensions" className="hover:text-blue-600">
@@ -220,9 +293,12 @@ export default function DimensionValuesPage() {
         </div>
       </div>
       <p className="text-sm text-gray-500 mb-6">
-        Upload expected columns: <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">code</code>,{" "}
+        Upload columns: <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">code</code>,{" "}
         <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">name</code>,{" "}
-        <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">sort_order</code> (optional)
+        <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">value type</code>,{" "}
+        <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">valid from</code>,{" "}
+        <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">valid to</code>{" "}
+        (all optional except code + name)
       </p>
 
       {error && (
@@ -236,7 +312,7 @@ export default function DimensionValuesPage() {
         <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm">
           <p className="font-medium text-green-800 mb-1">Upload complete</p>
           <p className="text-green-700">
-            {uploadResult.imported} imported · {uploadResult.skipped} skipped · {uploadResult.errors.length} errors
+            {uploadResult.imported} imported · {uploadResult.updated ?? 0} updated · {uploadResult.skipped} skipped · {uploadResult.errors.length} errors
           </p>
           {uploadResult.errors.length > 0 && (
             <ul className="mt-2 text-xs text-red-700 space-y-0.5">
@@ -253,53 +329,98 @@ export default function DimensionValuesPage() {
         <div className="mb-5 p-4 border border-blue-200 bg-blue-50 rounded-xl">
           <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-3">New Value</p>
           {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Code <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                value={addCode}
-                onChange={(e) => setAddCode(e.target.value)}
-                placeholder="e.g. NG_FI"
-                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <input type="text" value={addCode} onChange={(e) => setAddCode(e.target.value)} placeholder="e.g. NG_FI"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Name <span className="text-red-500">*</span></label>
-              <input
-                type="text"
-                value={addName}
-                onChange={(e) => setAddName(e.target.value)}
-                placeholder="e.g. Nigeria Finance"
-                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <input type="text" value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="e.g. Nigeria Finance"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Sort Order</label>
-              <input
-                type="number"
-                value={addOrder}
-                onChange={(e) => setAddOrder(e.target.value)}
-                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <input type="number" value={addOrder} onChange={(e) => setAddOrder(e.target.value)}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Value Type</label>
+              <input type="text" value={addValueType} onChange={(e) => setAddValueType(e.target.value)} placeholder="e.g. cost_center"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Valid From</label>
+              <input type="date" value={addValidFrom} onChange={(e) => setAddValidFrom(e.target.value)}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Valid To</label>
+              <input type="date" value={addValidTo} onChange={(e) => setAddValidTo(e.target.value)}
+                className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleAdd}
-              disabled={addingVal || !addCode.trim() || !addName.trim()}
-              className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60"
-            >
+            <button type="button" onClick={handleAdd} disabled={addingVal || !addCode.trim() || !addName.trim()}
+              className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60">
               {addingVal ? "Adding…" : "Add"}
             </button>
-            <button
-              type="button"
-              onClick={() => { setShowAdd(false); setAddCode(""); setAddName(""); setAddError(null); }}
-              className="px-4 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
-            >
+            <button type="button" onClick={() => { setShowAdd(false); setAddCode(""); setAddName(""); setAddError(null); }}
+              className="px-4 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200">
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk action toolbar */}
+      {selectedIds.size > 0 && (
+        <div className="mb-3 flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+          <span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span>
+          <button type="button" onClick={() => setBulkAction("activate")}
+            className="text-xs px-2.5 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-medium">
+            Activate
+          </button>
+          <button type="button" onClick={() => setBulkAction("deactivate")}
+            className="text-xs px-2.5 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium">
+            Deactivate
+          </button>
+          <button type="button" onClick={() => setBulkAction("delete")}
+            className="text-xs px-2.5 py-1 bg-red-600 text-white rounded hover:bg-red-700 font-medium">
+            Delete
+          </button>
+          <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-blue-500 hover:text-blue-700">
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Bulk confirm modal */}
+      {bulkAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
+            <h2 className="text-base font-semibold text-gray-900 mb-3 capitalize">{bulkAction} {selectedIds.size} values?</h2>
+            {bulkAction === "delete" && (
+              <>
+                <p className="text-sm text-red-700 mb-3">This cannot be undone. Type DELETE to confirm.</p>
+                <input type="text" value={bulkConfirmText} onChange={(e) => setBulkConfirmText(e.target.value)}
+                  placeholder="Type DELETE" className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-red-500 mb-3" />
+              </>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button type="button" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+                Cancel
+              </button>
+              <button type="button" onClick={handleBulkAction}
+                disabled={bulkProcessing || (bulkAction === "delete" && bulkConfirmText !== "DELETE")}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                {bulkProcessing ? "Processing…" : "Confirm"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -310,43 +431,52 @@ export default function DimensionValuesPage() {
           <p className="text-xs text-gray-400">Add values manually or upload a .xlsx/.csv file.</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-100">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-3 py-3 w-8">
+                  <input type="checkbox" checked={selectedIds.size === activeValues.length && activeValues.length > 0}
+                    onChange={toggleSelectAll} className="rounded border-gray-300" />
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Code</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">Type</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Valid</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {activeValues.map((val) => (
-                <tr key={val.id} className="hover:bg-gray-50">
+                <tr key={val.id} className={`hover:bg-gray-50 ${selectedIds.has(val.id) ? "bg-blue-50" : ""}`}>
                   {editId === val.id ? (
                     <>
+                      <td className="px-3 py-2" />
                       <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          value={editCode}
-                          onChange={(e) => setEditCode(e.target.value)}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
+                        <input type="text" value={editCode} onChange={(e) => setEditCode(e.target.value)}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
                       </td>
                       <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
+                        <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </td>
+                      <td className="px-4 py-2 hidden sm:table-cell">
+                        <input type="text" value={editValueType} onChange={(e) => setEditValueType(e.target.value)} placeholder="e.g. cost_center"
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </td>
+                      <td className="px-4 py-2 hidden md:table-cell">
+                        <div className="flex gap-1">
+                          <input type="date" value={editValidFrom} onChange={(e) => setEditValidFrom(e.target.value)}
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none" />
+                          <span className="text-xs text-gray-400 self-center">→</span>
+                          <input type="date" value={editValidTo} onChange={(e) => setEditValidTo(e.target.value)}
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none" />
+                        </div>
                       </td>
                       <td className="px-4 py-2 text-right">
                         <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={() => handleEdit(val.id)}
-                            disabled={savingEdit}
-                            className="text-xs text-white bg-blue-600 px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60"
-                          >
+                          <button onClick={() => handleEdit(val.id)} disabled={savingEdit}
+                            className="text-xs text-white bg-blue-600 px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60">
                             {savingEdit ? "…" : "Save"}
                           </button>
                           <button onClick={() => setEditId(null)} className="text-xs text-gray-700 bg-gray-100 px-2 py-1 rounded hover:bg-gray-200">Cancel</button>
@@ -355,24 +485,43 @@ export default function DimensionValuesPage() {
                     </>
                   ) : (
                     <>
+                      <td className="px-3 py-3 w-8">
+                        <input type="checkbox" checked={selectedIds.has(val.id)} onChange={() => toggleSelect(val.id)}
+                          className="rounded border-gray-300" />
+                      </td>
                       <td className="px-4 py-3">
                         <span className="text-sm font-mono text-gray-800">{val.code}</span>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">{val.name}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        {val.value_type ? (
+                          <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-mono">{val.value_type}</span>
+                        ) : <span className="text-xs text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        {val.valid_from || val.valid_to ? (
+                          <span className="text-xs text-gray-500">
+                            {val.valid_from ?? "∞"} → {val.valid_to ?? "∞"}
+                          </span>
+                        ) : <span className="text-xs text-gray-300">Always active</span>}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex gap-2 justify-end">
-                          <button
-                            type="button"
-                            onClick={() => { setEditId(val.id); setEditCode(val.code); setEditName(val.name); setShowAdd(false); }}
-                            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                          >
+                          <button type="button"
+                            onClick={() => {
+                              setEditId(val.id);
+                              setEditCode(val.code);
+                              setEditName(val.name);
+                              setEditValueType(val.value_type ?? "");
+                              setEditValidFrom(val.valid_from ?? "");
+                              setEditValidTo(val.valid_to ?? "");
+                              setShowAdd(false);
+                            }}
+                            className="text-xs text-blue-600 hover:text-blue-800 font-medium">
                             Edit
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(val.id, val.code)}
-                            className="text-xs text-red-500 hover:text-red-700 font-medium"
-                          >
+                          <button type="button" onClick={() => handleDelete(val.id, val.code)}
+                            className="text-xs text-red-500 hover:text-red-700 font-medium">
                             Remove
                           </button>
                         </div>

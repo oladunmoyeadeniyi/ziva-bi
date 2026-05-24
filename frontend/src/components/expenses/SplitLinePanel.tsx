@@ -35,13 +35,26 @@ export interface SplitLineState {
   dimension_requirements: Array<{ dimension_id: string; requirement: string }>;
 }
 
+export interface DimensionValueForForm {
+  id: string;
+  code: string;
+  name: string;
+  sort_order: number;
+  value_type: string | null;
+  cascade_dimension_id: string | null;
+  cascade_value_id: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+}
+
 export interface DimensionForForm {
   id: string;
   name: string;
   code: string;
   is_required: boolean;
   sort_order: number;
-  values: Array<{ id: string; code: string; name: string; sort_order: number }>;
+  accepted_value_types: string | null;
+  values: DimensionValueForForm[];
 }
 
 interface Props {
