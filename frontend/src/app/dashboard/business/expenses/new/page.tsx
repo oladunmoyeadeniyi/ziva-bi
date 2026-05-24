@@ -254,6 +254,7 @@ export default function NewExpensePage() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragOverFor, setDragOverFor] = useState<string | null>(null);
 
   // Approver modal
   const [createdReportId, setCreatedReportId] = useState<string | null>(null);
@@ -569,24 +570,39 @@ export default function NewExpensePage() {
     fileInputRef.current?.click();
   };
 
+  const uploadFiles = async (files: File[], target: string) => {
+    if (!files.length || !accessToken || !savedReportIdRef.current) return;
+    const lineId = target !== "report" ? target : null;
+    setUploadingFor(target);
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (lineId) fd.append("line_id", lineId);
+      try {
+        const doc = await apiFetch<DocumentRecord>(
+          `/api/documents/reports/${savedReportIdRef.current}/upload`,
+          { method: "POST", token: accessToken, body: fd, isFormData: true }
+        );
+        setDocuments((prev) => [...prev, doc]);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Upload failed.");
+      }
+    }
+    setUploadingFor(null);
+  };
+
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !uploadTargetRef.current || !accessToken || !savedReportIdRef.current) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length || !uploadTargetRef.current) return;
     e.target.value = "";
-    setUploadingFor(uploadTargetRef.current);
-    const fd = new FormData();
-    fd.append("file", file);
-    const target = uploadTargetRef.current;
-    if (target !== "report") fd.append("line_id", target);
-    try {
-      const doc = await apiFetch<DocumentRecord>(
-        `/api/documents/reports/${savedReportIdRef.current}/upload`,
-        { method: "POST", token: accessToken, body: fd, isFormData: true }
-      );
-      setDocuments((prev) => [...prev, doc]);
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.");
-    } finally { setUploadingFor(null); }
+    await uploadFiles(files, uploadTargetRef.current);
+  };
+
+  const handleFileDrop = async (e: React.DragEvent, lineId: string | null) => {
+    e.preventDefault();
+    setDragOverFor(null);
+    const files = Array.from(e.dataTransfer.files);
+    await uploadFiles(files, lineId || "report");
   };
 
   const handleDeleteDocument = async (docId: string) => {
@@ -980,7 +996,7 @@ export default function NewExpensePage() {
                       </div>
                     ) : (
                       <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
-                        className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-colors ${isIncomplete ? "border-red-400 text-red-600 hover:bg-red-50" : "border-blue-400 text-blue-600 hover:bg-blue-50"}`}>
+                        className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-blue-400 text-blue-600 hover:bg-blue-50 transition-colors">
                         🔍 {cfg.coding_level === 1 ? "Select Expense Type" : "Select GL Account"}
                       </button>
                     )}
@@ -1154,10 +1170,10 @@ export default function NewExpensePage() {
 
                       {/* Line footer: document attach + remove button */}
                       <div className="flex items-start justify-between pt-1.5 border-t border-gray-100 gap-3">
-                        {/* Document attachment */}
-                        <div className="flex-1">
-                          {lineDocs.length > 0 ? (
-                            <div className="space-y-0.5">
+                        {/* Drag-drop upload zone */}
+                        <div className="flex-1 min-w-0">
+                          {lineDocs.length > 0 && (
+                            <div className="space-y-0.5 mb-1.5">
                               {lineDocs.map((doc) => (
                                 <div key={doc.id} className="flex items-center gap-2 text-xs text-gray-600">
                                   <span className="text-gray-400">📎</span>
@@ -1171,20 +1187,26 @@ export default function NewExpensePage() {
                                     className="text-red-400 hover:text-red-600 shrink-0">×</button>
                                 </div>
                               ))}
-                              <button type="button" disabled={isUploading || !line.backendId}
-                                onClick={() => line.backendId && triggerUpload(line.backendId)}
-                                className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300 mt-0.5">
-                                {isUploading ? "Uploading…" : "📎 Add document"}
-                              </button>
                             </div>
-                          ) : (
-                            <button type="button" disabled={isUploading || !line.backendId}
-                              onClick={() => line.backendId && triggerUpload(line.backendId)}
-                              title={!line.backendId ? "Save the report first to attach documents" : undefined}
-                              className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
-                              {isUploading ? "Uploading…" : "📎 Attach Document"}
-                            </button>
                           )}
+                          <div
+                            onDragOver={(e) => { e.preventDefault(); setDragOverFor(`line-${line.localId}`); }}
+                            onDragLeave={() => setDragOverFor(null)}
+                            onDrop={(e) => handleFileDrop(e, line.backendId)}
+                            onClick={() => line.backendId && triggerUpload(line.backendId)}
+                            title={!line.backendId ? "Save the report first to attach documents" : undefined}
+                            className={`flex flex-col items-center justify-center gap-0.5 border-2 border-dashed rounded-lg transition-colors h-12 select-none
+                              ${!line.backendId ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}
+                              ${dragOverFor === `line-${line.localId}` ? "border-blue-400 bg-blue-50" : "border-gray-200 hover:border-blue-300 hover:bg-gray-50"}`}>
+                            {isUploading ? (
+                              <span className="text-[10px] text-gray-400">Uploading…</span>
+                            ) : (
+                              <>
+                                <span className="text-sm leading-none">📎</span>
+                                <span className="text-[10px] text-gray-400 text-center">Drop file or click to upload</span>
+                              </>
+                            )}
+                          </div>
                         </div>
 
                         {/* Remove line */}
@@ -1213,7 +1235,7 @@ export default function NewExpensePage() {
       </div>
 
       {/* Hidden file input */}
-      <input ref={fileInputRef} type="file" className="hidden"
+      <input ref={fileInputRef} type="file" multiple className="hidden"
         accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc"
         onChange={handleFileSelected} />
 
@@ -1235,15 +1257,27 @@ export default function NewExpensePage() {
                         <span className="flex-1 truncate">{doc.file_name}</span>
                         <span className="text-gray-400 shrink-0">{fmtBytes(doc.file_size)}</span>
                         {doc.signed_url && <a href={doc.signed_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 shrink-0">View</a>}
-                        <button type="button" onClick={() => handleDeleteDocument(doc.id)} className="text-red-400 hover:text-red-600 shrink-0">Remove</button>
+                        <button type="button" onClick={() => handleDeleteDocument(doc.id)} className="text-red-400 hover:text-red-600 shrink-0">×</button>
                       </li>
                     ))}
                   </ul>
                 )}
-                <button type="button" disabled={isUp} onClick={() => triggerUpload("report")}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
-                  {isUp ? "Uploading…" : "+ Attach Document"}
-                </button>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOverFor("report"); }}
+                  onDragLeave={() => setDragOverFor(null)}
+                  onDrop={(e) => handleFileDrop(e, null)}
+                  onClick={() => triggerUpload("report")}
+                  className={`flex flex-col items-center justify-center gap-1 border-2 border-dashed rounded-lg cursor-pointer transition-colors p-4 text-center
+                    ${dragOverFor === "report" ? "border-blue-400 bg-blue-50" : "border-gray-300 hover:border-blue-300 hover:bg-gray-50"}`}>
+                  {isUp ? (
+                    <span className="text-xs text-gray-400">Uploading…</span>
+                  ) : (
+                    <>
+                      <span className="text-base">📎</span>
+                      <span className="text-xs text-gray-500">Drop files or click to upload — applies to the whole report</span>
+                    </>
+                  )}
+                </div>
               </>
             );
           })()}

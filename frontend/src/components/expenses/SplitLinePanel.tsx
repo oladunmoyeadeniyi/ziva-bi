@@ -8,7 +8,21 @@
  * The parent component disables submission when split totals don't equal the parent amount.
  *
  * Summary bar turns green when fully allocated, amber when under, red when over.
+ * parentAmount is the TOTAL invoice amount (fixed). Splits subdivide it; their sum
+ * should equal parentAmount. The parent amount field never changes when splits are added.
  */
+
+function fmtCommaInput(val: string): string {
+  if (!val) return "";
+  const clean = val.replace(/[^0-9.]/g, "");
+  const [intPart, decPart] = clean.split(".");
+  const formatted = (intPart || "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decPart !== undefined ? `${formatted}.${decPart}` : formatted;
+}
+
+function stripCommas(v: string): string {
+  return v.replace(/,/g, "");
+}
 
 export interface SplitLineState {
   localId: string;
@@ -91,8 +105,11 @@ export default function SplitLinePanel({ parentAmount, splitLines, onAddSplit, o
                 </button>
 
                 {/* Amount */}
-                <input type="number" min="0.01" step="0.01" value={split.amount}
-                  onChange={(e) => onUpdateSplit(split.localId, { amount: e.target.value })}
+                <input type="text" inputMode="decimal" value={fmtCommaInput(split.amount)}
+                  onChange={(e) => {
+                    const raw = stripCommas(e.target.value.replace(/[^0-9.,]/g, ""));
+                    onUpdateSplit(split.localId, { amount: raw });
+                  }}
                   placeholder="0.00"
                   className="w-28 px-2 py-1 border border-gray-300 rounded text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" />
 
