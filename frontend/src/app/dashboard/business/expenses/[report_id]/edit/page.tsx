@@ -998,62 +998,62 @@ export default function EditExpensePage() {
             const activeDims = line.dimension_requirements.filter((r) => r.requirement !== "na");
             const lineSugg = suggestions[line.localId];
             const chipSelected = cfg.coding_level === 1 ? !!line.subcategory_id : !!line.gl_id;
+            const hasSplits = line.split_lines.length > 0;
             const lineDocs = documents.filter((d) => d.line_id === line.backendId);
             const hasLineDocs = lineDocs.length > 0;
-            const isUploading = uploadingFor === line.backendId;
+            // Fix 2: guard against null === null being true before report is saved
+            const isUploading = !!line.backendId && uploadingFor === line.backendId;
             const isIncomplete = submitAttempted && !complete;
 
             return (
               <div key={line.localId} id={`line-card-${line.localId}`}
                 className={`rounded-xl border border-gray-200 overflow-hidden ${complete ? "border-l-4 border-l-green-400" : "border-l-4 border-l-amber-400"}`}>
 
-                {/* Card header — click to expand/collapse */}
+                {/* Card header — compact info row, click to expand/collapse */}
                 <div className="flex items-center gap-2 px-3 py-2 bg-white cursor-pointer"
                   onClick={() => toggleExpand(line.localId)}>
                   <span className="text-xs font-bold text-gray-400 shrink-0 w-5">#{idx + 1}</span>
 
-                  {/* GL chip / prominent button */}
-                  <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                  {/* Fix 3: GL display (informational only — picker lives in expanded body) */}
+                  <div className="flex-1 min-w-0 truncate">
                     {cfg.coding_level === 0 ? (
                       <span className="text-xs text-gray-400 italic">Finance assigns GL</span>
+                    ) : hasSplits ? (
+                      <span className="text-[10px] font-medium text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                        ⑂ Split ({line.split_lines.length})
+                      </span>
                     ) : chipSelected ? (
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <button type="button"
-                          onClick={() => canEdit && setPickerFor({ lineLocalId: line.localId })}
-                          disabled={!canEdit}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors truncate flex-1 min-w-0 disabled:opacity-70 disabled:cursor-default">
-                          <span className="truncate">{glChip(line, cfg.coding_level)}</span>
-                          {line.flag_incorrect && <span className="shrink-0 text-yellow-300" title="Flagged as incorrect">⚑</span>}
-                        </button>
-                        {canEdit && (
-                          <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
-                            className="text-xs text-blue-500 hover:text-blue-700 shrink-0">
-                            change
-                          </button>
-                        )}
-                      </div>
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-800 truncate max-w-full">
+                        <span className="font-mono shrink-0">{line.gl_number}</span>
+                        {line.gl_name && <span className="text-blue-500 truncate">— {line.gl_name}</span>}
+                        {line.flag_incorrect && <span className="shrink-0 text-amber-500">⚑</span>}
+                      </span>
                     ) : (
-                      <button type="button"
-                        onClick={() => canEdit && setPickerFor({ lineLocalId: line.localId })}
-                        disabled={!canEdit}
-                        className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-blue-400 text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-70 disabled:cursor-default">
-                        🔍 {cfg.coding_level === 1 ? "Select Expense Type" : "Select GL Account"}
-                      </button>
+                      <span className="text-xs text-gray-400 italic">No GL selected</span>
                     )}
                   </div>
 
-                  {/* Amount preview */}
+                  {/* Amount */}
                   <span className="text-sm font-semibold text-gray-700 shrink-0">
                     {line.amount ? `₦${(parseFloat(line.amount) || 0).toLocaleString("en-NG", { minimumFractionDigits: 2 })}` : "—"}
                   </span>
 
-                  {/* Split button — shown in header after GL selected + amount entered */}
-                  {canEdit && chipSelected && line.split_lines.length === 0 && (parseFloat(line.amount) || 0) > 0 && (
-                    <button type="button"
-                      onClick={(e) => { e.stopPropagation(); addSplitLine(line.localId); }}
-                      className="text-xs font-medium text-gray-500 hover:text-blue-600 border border-gray-200 hover:border-blue-300 rounded px-1.5 py-0.5 shrink-0">
-                      ⑂ Split
-                    </button>
+                  {/* Fix 3: Dimension value pills (hidden on mobile to keep row compact) */}
+                  {!hasSplits && activeDims.some((r) => line.dimension_values[r.dimension_id]) && (
+                    <div className="hidden sm:flex items-center gap-1 shrink-0 overflow-hidden max-w-28">
+                      {activeDims
+                        .filter((r) => line.dimension_values[r.dimension_id])
+                        .slice(0, 2)
+                        .map((r) => {
+                          const dim = cfg.dimensions.find((d) => d.id === r.dimension_id);
+                          const val = dim?.values.find((v) => v.id === line.dimension_values[r.dimension_id]);
+                          return val ? (
+                            <span key={r.dimension_id} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                              {val.code}
+                            </span>
+                          ) : null;
+                        })}
+                    </div>
                   )}
 
                   {/* Paperclip indicator */}
@@ -1069,11 +1069,10 @@ export default function EditExpensePage() {
                   </button>
                 </div>
 
-                {/* Collapsed summary */}
-                {!line.is_expanded && (line.description || line.category_name) && (
+                {/* Collapsed summary — description only */}
+                {!line.is_expanded && line.description && (
                   <div className="px-9 pb-1.5 text-xs text-gray-500 truncate">
-                    {[line.category_name, line.subcategory_name].filter(Boolean).join(" / ")}
-                    {line.description && <span className="text-gray-400"> — {line.description.slice(0, 60)}</span>}
+                    {line.description.slice(0, 80)}
                   </div>
                 )}
 
@@ -1082,7 +1081,39 @@ export default function EditExpensePage() {
                   <div className="px-3 pb-3 pt-0 border-t border-gray-100">
                     <div className="space-y-2.5 mt-2.5">
 
-                      {/* Row 1: Amount / Invoice Date / Invoice No */}
+                      {/* Fix 1 + Fix 4: GL picker in body — hidden when splits exist */}
+                      {cfg.coding_level > 0 && !hasSplits && (
+                        <div onClick={(e) => e.stopPropagation()}>
+                          {chipSelected ? (
+                            <div className="flex items-center gap-2">
+                              <button type="button"
+                                onClick={() => canEdit && setPickerFor({ lineLocalId: line.localId })}
+                                disabled={!canEdit}
+                                className="flex items-center gap-1.5 px-2.5 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors truncate flex-1 min-w-0 disabled:opacity-70 disabled:cursor-default"
+                                style={{ height: "28px" }}>
+                                <span className="truncate">{glChip(line, cfg.coding_level)}</span>
+                                {line.flag_incorrect && <span className="shrink-0 text-yellow-300">⚑</span>}
+                              </button>
+                              {canEdit && (
+                                <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
+                                  className="text-xs text-blue-500 hover:text-blue-700 shrink-0">
+                                  change
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <button type="button"
+                              onClick={() => canEdit && setPickerFor({ lineLocalId: line.localId })}
+                              disabled={!canEdit}
+                              style={{ height: "36px" }}
+                              className={`w-full flex items-center gap-2 px-3 rounded-lg text-[13px] border transition-colors disabled:opacity-70 disabled:cursor-default ${isIncomplete ? "border-red-400 text-red-600 hover:bg-red-50" : "border-blue-400 text-blue-600 hover:bg-blue-50"}`}>
+                              🔍 {cfg.coding_level === 1 ? "Select Expense Type" : "Select GL Account"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Amount / Invoice Date / Invoice No */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                         <div>
                           <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && (!line.amount || parseFloat(line.amount) <= 0) ? "text-red-600" : "text-gray-600"}`}>
@@ -1118,7 +1149,7 @@ export default function EditExpensePage() {
                         </div>
                       </div>
 
-                      {/* Row 2: Description */}
+                      {/* Description */}
                       <div>
                         <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && !line.description.trim() ? "text-red-600" : "text-gray-600"}`}>
                           Description <span className="text-red-500">*</span>
@@ -1153,8 +1184,8 @@ export default function EditExpensePage() {
                         </div>
                       )}
 
-                      {/* Row 3: Dimension dropdowns (2 per row) */}
-                      {activeDims.length > 0 && (
+                      {/* Fix 1: Dimension dropdowns — hidden when splits exist */}
+                      {!hasSplits && activeDims.length > 0 && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                           {activeDims.map((req) => {
                             const dim = cfg.dimensions.find((d) => d.id === req.dimension_id);
@@ -1197,7 +1228,7 @@ export default function EditExpensePage() {
                       )}
 
                       {/* Split lines panel */}
-                      {line.split_lines.length > 0 && (
+                      {hasSplits && (
                         <SplitLinePanel
                           parentAmount={parseFloat(line.amount) || 0}
                           splitLines={line.split_lines}
@@ -1209,8 +1240,8 @@ export default function EditExpensePage() {
                         />
                       )}
 
-                      {/* Line footer: document attach + remove button */}
-                      <div className="flex items-start justify-between pt-1.5 border-t border-gray-100 gap-3">
+                      {/* Footer: upload zone + split button + remove */}
+                      <div className="flex items-start gap-3 pt-1.5 border-t border-gray-100">
                         {/* Drag-drop upload zone */}
                         <div className="flex-1 min-w-0">
                           {lineDocs.length > 0 && (
@@ -1257,14 +1288,23 @@ export default function EditExpensePage() {
                           )}
                         </div>
 
-                        {/* Remove line */}
+                        {/* Split + Remove buttons */}
                         {canEdit && (
-                          <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1}
-                            className="text-xs text-red-400 hover:text-red-600 disabled:text-gray-300 font-medium shrink-0">
-                            Remove Line
-                          </button>
+                          <div className="flex flex-col items-end gap-1.5 shrink-0 pt-0.5">
+                            {!hasSplits && chipSelected && (parseFloat(line.amount) || 0) > 0 && (
+                              <button type="button" onClick={() => addSplitLine(line.localId)}
+                                className="text-xs font-medium text-gray-500 hover:text-blue-600 border border-gray-200 hover:border-blue-300 rounded px-1.5 py-0.5 whitespace-nowrap">
+                                ⑂ Split
+                              </button>
+                            )}
+                            <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1}
+                              className="text-xs text-red-400 hover:text-red-600 disabled:text-gray-300 font-medium whitespace-nowrap">
+                              Remove Line
+                            </button>
+                          </div>
                         )}
                       </div>
+
                     </div>
                   </div>
                 )}

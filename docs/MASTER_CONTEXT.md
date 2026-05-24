@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (M9 Bug Fixes Round 2 — GL selector revert, split comma formatting, drag-drop upload zones)
+> Last updated: May 2026 (M9 Bug Fixes Round 3 — split dimension logic, upload state fix, collapsed summary, GL button sizing)
 
 ---
 
@@ -395,6 +395,15 @@ Five issues fixed following second round of testing:
 - **Fix 4:** Line document upload redesigned — drag-and-drop zone (dashed border, 48px, "📎 Drop file or click to upload") replaces the button. Supports drag-and-drop + click-to-browse + multiple files. Attached files listed above zone with remove (×).
 - **Fix 5:** Report Documents section same drag-and-drop treatment — "📎 Drop files or click to upload — applies to the whole report". File list + remove (×) per file.
 
+### ✅ Completed — M9 Bug Fixes Round 3 (May 2026)
+Four issues fixed following third round of testing:
+- **Fix 1:** When a line has splits, GL selector and dimension fields are hidden on the parent — they live exclusively on split rows. Parent reverts to showing GL + dims when all splits removed. Applied to both new/page.tsx and edit/page.tsx.
+- **Fix 2:** `isUploading` null bug fixed — `uploadingFor === line.backendId` evaluated `null === null = true` for unsaved lines, showing "Uploading…" when idle. Fixed to `!!line.backendId && uploadingFor === line.backendId`.
+- **Fix 3:** Collapsed line header now shows a compact summary: line number, GL chip (or "No GL selected"), amount, dimension value pills (hidden on mobile), and paperclip indicator (green = docs attached). GL picker moved from header to expanded body.
+- **Fix 4:** GL picker button in body redesigned — unselected: slim 36px outlined `border-blue-400` button full-width; selected: 28px blue filled chip + "change" link. Feels like part of the form, not a CTA.
+
+Both new/page.tsx and edit/page.tsx updated.
+
 ### ⏳ Next milestone TBD
 Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts Payable module, or OCR receipt scanning.
 
@@ -406,4 +415,4 @@ Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts
 
 ---
 
-*End of Master Context. Last updated: May 2026 (M9 Bug Fixes Round 2 — GL selector revert, split comma formatting, drag-drop upload zones).*
+*End of Master Context. Last updated: May 2026 (M9 Bug Fixes Round 3 — split dimension logic, upload state fix, collapsed summary, GL button sizing).*
