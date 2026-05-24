@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (M9 Bug Fixes — compact line cards, split progress text, document attach inline, comma formatting, GL prominence, dimension upload fix)
+> Last updated: May 2026 (M9 Bug Fixes Round 2 — GL selector revert, split comma formatting, drag-drop upload zones)
 
 ---
 
@@ -387,6 +387,14 @@ Six bugs fixed following M9 testing:
 - **Fix 6:** GL selector is now a prominent blue outlined button when unselected; blue filled chip with "change" link when selected. Submit attempt sets `submitAttempted` state — highlights unfilled required fields in red, shows incomplete lines summary with line numbers, scrolls to first incomplete line.
 Both new/page.tsx and edit/page.tsx updated.
 
+### ✅ Completed — M9 Bug Fixes Round 2 (May 2026)
+Five issues fixed following second round of testing:
+- **Fix 1:** GL unselected button reverted — plain `border border-blue-400` (no `border-2`, no red `isIncomplete` variant). Selected state unchanged (blue filled chip + "change" link).
+- **Fix 2:** Split allocation logic verified correct — `allocated` = sum of split amounts, compared to `parentAmount` (parent total never changes). Progress shows "₦X of ₦Y allocated".
+- **Fix 3:** Split amount inputs now comma-formatted — `fmtCommaInput`/`stripCommas` helpers added to `SplitLinePanel.tsx`; inputs changed to `type="text" inputMode="decimal"`.
+- **Fix 4:** Line document upload redesigned — drag-and-drop zone (dashed border, 48px, "📎 Drop file or click to upload") replaces the button. Supports drag-and-drop + click-to-browse + multiple files. Attached files listed above zone with remove (×).
+- **Fix 5:** Report Documents section same drag-and-drop treatment — "📎 Drop files or click to upload — applies to the whole report". File list + remove (×) per file.
+
 ### ⏳ Next milestone TBD
 Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts Payable module, or OCR receipt scanning.
 
@@ -398,4 +406,4 @@ Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts
 
 ---
 
-*End of Master Context. Last updated: May 2026 (M9 Bug Fixes complete — compact cards, split text, inline docs, comma formatting, GL prominence, dimension upload fix).*
+*End of Master Context. Last updated: May 2026 (M9 Bug Fixes Round 2 — GL selector revert, split comma formatting, drag-drop upload zones).*
