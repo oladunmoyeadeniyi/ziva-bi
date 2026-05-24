@@ -112,6 +112,7 @@ ruff check app/
 | M6 | Supporting Documents (file upload per expense line, Supabase Storage) | ✅ Done |
 | M7 | Expense Categories & GL Coding Mode Config | ✅ Done |
 | M8 | Intelligent Expense Form Foundation (dimensions, CoA, coding levels 0–4) | ✅ Done |
+| M9 | Intelligent Expense Form (GL picker, dimensions, split lines, AI suggestions) | ✅ Done |
 
 ## Module PRDs
 

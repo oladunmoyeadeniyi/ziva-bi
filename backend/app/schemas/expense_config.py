@@ -1,5 +1,5 @@
 """
-ZivaBI — Pydantic schemas for M7/M8 expense configuration and categories.
+ZivaBI — Pydantic schemas for M7/M8/M9 expense configuration and categories.
 
 Used by the expense_config router to validate request bodies and shape API responses.
 All category endpoints return ExpenseCategoryResponse which embeds subcategories so
@@ -9,6 +9,14 @@ M8 changes:
   - gl_coding_mode replaced by coding_level (int 0–4) in TenantExpenseConfig
   - FormConfigResponse derives gl_coding_mode from coding_level for backward compat
   - New fields: show_location, require_location
+
+M9 changes:
+  - FormConfigResponse.categories now returns CategoryForForm (includes GL mappings
+    with dimension requirements per GL) instead of the simpler ExpenseCategoryResponse
+  - FormConfigResponse gains a `dimensions` field with the tenant's active dimensions
+    and all their active values — loaded in a single round-trip on form page load
+  - New types: DimensionValueForForm, DimensionForForm, GLDimReqForForm,
+    GLMappingForForm, SubcategoryForForm, CategoryForForm
 """
 
 import uuid
@@ -156,24 +164,108 @@ class ExpenseCategoryResponse(BaseModel):
         )
 
 
+# ── M9: Enhanced form config types ───────────────────────────────────────────
+
+class DimensionValueForForm(BaseModel):
+    """
+    A single master data value for a dimension, as used in the expense form dropdown.
+
+    Sent to the form on page load so the dimension dropdowns can be rendered
+    without an additional API call after GL selection.
+    """
+
+    id: str
+    code: str
+    name: str
+    sort_order: int
+
+
+class DimensionForForm(BaseModel):
+    """
+    A tenant dimension with all its active values, as used in the expense form.
+
+    The form renders one dropdown per dimension that is 'required' or 'optional'
+    for the selected GL.  is_required here is the default (tenant-wide); the
+    per-GL override is in GLDimReqForForm.
+    """
+
+    id: str
+    name: str
+    code: str
+    is_required: bool
+    sort_order: int
+    values: list[DimensionValueForForm]
+
+
+class GLDimReqForForm(BaseModel):
+    """
+    Per-GL, per-dimension requirement — used in expense form rendering and in
+    the GL search endpoint response.
+
+    requirement: 'required' | 'optional' | 'na'
+    The form renders 'required' and 'optional' dims; hides 'na' dims entirely.
+    """
+
+    dimension_id: str
+    requirement: str  # 'required' | 'optional' | 'na'
+
+
+class GLMappingForForm(BaseModel):
+    """
+    A GL account mapped to a subcategory, with its dimension requirements.
+
+    Used in the GL picker popup so the form can immediately render the
+    correct dimension fields once the employee selects a GL.
+    """
+
+    gl_id: str
+    gl_number: str
+    gl_name: str
+    is_default: bool
+    dimension_requirements: list[GLDimReqForForm]
+
+
+class SubcategoryForForm(BaseModel):
+    """A subcategory with its GL mappings — one popup step in the GL picker."""
+
+    id: str
+    name: str
+    code: str | None
+    gl_mappings: list[GLMappingForForm]
+
+
+class CategoryForForm(BaseModel):
+    """A top-level expense category with its subcategories — first popup step."""
+
+    id: str
+    name: str
+    code: str | None
+    subcategories: list[SubcategoryForForm]
+
+
 # ── Form Config (used by expense form on page load) ───────────────────────────
 
 class FormConfigResponse(BaseModel):
     """
     Combined payload that the expense submission form fetches on page load.
 
-    gl_coding_mode is derived from coding_level for backward compat with the M7
-    expense form. M9 will update the form to use coding_level directly.
+    M9: categories now returns CategoryForForm (includes GL mappings with
+    dimension requirements) instead of the simpler ExpenseCategoryResponse.
+    dimensions is new in M9 — the tenant's active financial dimensions with
+    all their active values, so the form can render dropdowns without extra calls.
+
+    gl_coding_mode is kept for backward compat; the M9 form uses coding_level.
     """
 
-    gl_coding_mode: str  # derived from coding_level; remove in M9
+    gl_coding_mode: str  # derived from coding_level for legacy compat
     coding_level: int
     require_category: bool
     require_subcategory: bool
     allow_free_text_description: bool
     show_location: bool
     require_location: bool
-    categories: list[ExpenseCategoryResponse]
+    categories: list[CategoryForForm]  # M9: enhanced with GL mappings + dim requirements
+    dimensions: list[DimensionForForm]  # M9: tenant dimensions with active values
 
 
 # ── Finance GL Coding (batch update by Finance role during approval) ──────────

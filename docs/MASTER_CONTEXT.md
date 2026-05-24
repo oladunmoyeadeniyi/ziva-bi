@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (M8 — Intelligent Expense Form Foundation: dimensions, CoA, expense categories overhaul, coding levels 0–4)
+> Last updated: May 2026 (M9 — Intelligent Expense Form: GL picker, dimensions, split lines, AI suggestions, card-based form)
 
 ---
 
@@ -355,8 +355,30 @@ All four bugs identified during M7 testing fixed and tested:
 - API: 24 new routes under `/api/config/` prefix
 - Frontend: 4 new admin pages — Dimensions, Dimension Values, Chart of Accounts, Expense Categories
 
+### ✅ Completed — Milestone 9: Intelligent Expense Form (May 2026)
+M9 connects the M8 configuration (coding levels 0–4, CoA, dimensions, category/GL hierarchy) to the live expense submission UX.
+
+**Backend additions:**
+- `GET /api/expenses/suggestions?gl_id={uuid}` — AI suggestions from last 10 approved lines for this employee + GL; confidence ≥ 0.80 auto-fills, 0.40–0.79 returns as suggestion pills
+- `GET /api/config/gl/search?q=...&limit=20` — GL search endpoint with dimension requirements for Level 4 coding
+- `FormConfigResponse` extended with `dimensions: list[DimensionForForm]` and enriched `categories: list[CategoryForForm]` (each subcategory carries its GL mappings + dimension requirements)
+- New `ExpenseLine` fields: `gl_id`, `dimension_values` (JSONB), `is_split_parent`, `split_parent_id`, `flag_incorrect`, `flag_comment`
+- Alembic migration: `i9j0k1l2m3n4` — `m9_intelligent_expense_form`
+
+**Frontend components:**
+- `ExpenseItemPicker` — multi-step GL selection popup; Level 1: auto-assigns default GL; Level 2: read-only GL + "Flag as incorrect" toggle; Level 3: selectable GL list from subcategory mappings; Level 4: debounced full GL search
+- `SplitLinePanel` — inline split allocation panel; progress bar (amber/green/red); each split has its own GL chip, amount input, dimension dropdowns; split total must equal parent amount
+
+**Expense forms (new + edit) fully rewritten:**
+- Card-based layout — each line is a collapsible card; amber left border = incomplete, green = complete
+- Dimension dropdowns rendered dynamically per GL's `dimension_requirements` (required/optional/N/A)
+- AI suggestion pills shown below dimension fields (0.40–0.79 confidence); ≥0.80 confidence auto-fills silently
+- "Split this line" button opens SplitLinePanel inline; split GL chips open picker for the split context
+- Submit blocked when any line is incomplete; button shows `"Submit (N incomplete)"` when blocked
+- Edit page: loads existing lines (with split nesting), disables all inputs unless status allows editing (`DRAFT | REJECTED | REFERRED_TO_REQUESTOR`)
+
 ### ⏳ Next milestone TBD
-Suggested candidates: M9 (expense form integration with dimensions/CoA/coding level), Personal Expense Tracking (individual dashboard), or Accounts Payable module.
+Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts Payable module, or OCR receipt scanning.
 
 ### Module PRDs still to rewrite (do each just before building that module)
 - Accounts Payable (PDF exists — rewrite to markdown before building AP)
@@ -366,4 +388,4 @@ Suggested candidates: M9 (expense form integration with dimensions/CoA/coding le
 
 ---
 
-*End of Master Context. Last updated: May 2026 (M8 complete — intelligent form foundation: dimensions, CoA, expense categories, coding levels 0–4).*
+*End of Master Context. Last updated: May 2026 (M9 complete — intelligent expense form: GL picker popup, dimension fields, split lines, AI suggestions, card-based UX).*

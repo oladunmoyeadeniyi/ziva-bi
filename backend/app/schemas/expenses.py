@@ -1,13 +1,20 @@
 """
 ZivaBI — expense management Pydantic schemas.
 
-Request/response shapes for the expenses router (Milestones 3–7).
+Request/response shapes for the expenses router (Milestones 3–9).
 All monetary amounts are Decimal to avoid floating-point drift.
 
 M7 changes:
   - gl_account is now optional (null in Finance-mode submissions)
   - ExpenseLineCreate/Update accept category_id and subcategory_id
   - ExpenseLineResponse surfaces category_id and subcategory_id
+
+M9 changes:
+  - gl_id (UUID): structured CoA reference; sent alongside gl_account
+  - dimension_values (dict): {dimension_id_str: value_id_str}
+  - is_split_parent, split_parent_id: split-line tracking
+  - flag_incorrect, flag_comment: Level-2 GL flagging by employee
+  - SuggestionResponse: AI suggestion response for dimension/description pre-fill
 """
 
 import uuid
@@ -28,6 +35,14 @@ class ExpenseLineCreate(BaseModel):
     Finance fills it in during the approval step.  Employee-mode tenants should
     always provide it (enforced by the frontend; the backend stores whatever
     it receives).
+
+    M9 additions:
+      gl_id           — UUID FK to chart_of_accounts (preferred over free-text gl_account)
+      dimension_values — {dimension_id_str: value_id_str} from the form's dimension dropdowns
+      is_split_parent  — marks this as the parent of split sub-lines
+      split_parent_id  — set on split sub-lines; UUID of the parent line
+      flag_incorrect   — Level-2: employee flags the auto-assigned GL as wrong
+      flag_comment     — employee explanation for the flag
     """
 
     gl_account: str | None = None
@@ -42,6 +57,13 @@ class ExpenseLineCreate(BaseModel):
     # M7 category fields
     category_id: uuid.UUID | None = None
     subcategory_id: uuid.UUID | None = None
+    # M9 fields
+    gl_id: uuid.UUID | None = None
+    dimension_values: dict | None = None
+    is_split_parent: bool = False
+    split_parent_id: uuid.UUID | None = None
+    flag_incorrect: bool = False
+    flag_comment: str | None = None
 
     @field_validator("gl_account")
     @classmethod
@@ -84,6 +106,13 @@ class ExpenseLineResponse(BaseModel):
     amount: Decimal
     category_id: str | None
     subcategory_id: str | None
+    # M9 fields
+    gl_id: str | None
+    dimension_values: dict | None
+    is_split_parent: bool
+    split_parent_id: str | None
+    flag_incorrect: bool
+    flag_comment: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -106,6 +135,12 @@ class ExpenseLineResponse(BaseModel):
             amount=line.amount,
             category_id=str(line.category_id) if line.category_id else None,
             subcategory_id=str(line.subcategory_id) if line.subcategory_id else None,
+            gl_id=str(line.gl_id) if line.gl_id else None,
+            dimension_values=line.dimension_values,
+            is_split_parent=line.is_split_parent,
+            split_parent_id=str(line.split_parent_id) if line.split_parent_id else None,
+            flag_incorrect=line.flag_incorrect,
+            flag_comment=line.flag_comment,
             created_at=line.created_at,
         )
 
@@ -118,6 +153,9 @@ class ExpenseLineUpdate(BaseModel):
 
     M7: category_id and subcategory_id are patchable. gl_account accepts None
     to clear the value (Finance-mode tenants may leave it blank).
+
+    M9: adds gl_id, dimension_values, is_split_parent, split_parent_id,
+    flag_incorrect, flag_comment as patchable fields.
     """
 
     gl_account: str | None = None
@@ -131,6 +169,13 @@ class ExpenseLineUpdate(BaseModel):
     amount: Decimal | None = None
     category_id: uuid.UUID | None = None
     subcategory_id: uuid.UUID | None = None
+    # M9 fields
+    gl_id: uuid.UUID | None = None
+    dimension_values: dict | None = None
+    is_split_parent: bool | None = None
+    split_parent_id: uuid.UUID | None = None
+    flag_incorrect: bool | None = None
+    flag_comment: str | None = None
 
     @field_validator("gl_account")
     @classmethod
@@ -230,3 +275,32 @@ class ExpenseReportResponse(BaseModel):
             lines=lines,
             line_count=len(report.lines) if report.lines is not None else 0,
         )
+
+
+# ── M9: AI suggestion response ────────────────────────────────────────────────
+
+class DimensionSuggestion(BaseModel):
+    """
+    A single dimension value suggestion for a specific dimension.
+
+    confidence is 0.0–1.0.  Frontend uses:
+      ≥ 0.80 → auto-fill the field
+      0.40–0.79 → show as suggestion pill ("Last used: NG_FI")
+      < 0.40 → no suggestion shown
+    """
+
+    value_id: str
+    confidence: float
+
+
+class SuggestionResponse(BaseModel):
+    """
+    Pre-fill suggestions returned after an employee selects a GL account.
+
+    Based on the last 10 approved expense lines for this employee + GL.
+    description: most recently used description for this GL (or None).
+    dimensions: keyed by dimension_id_str; empty dict if no history.
+    """
+
+    description: str | None
+    dimensions: dict[str, DimensionSuggestion]  # dimension_id → suggestion

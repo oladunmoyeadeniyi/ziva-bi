@@ -17,6 +17,7 @@ Endpoints:
 """
 
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -36,6 +37,8 @@ from app.schemas.expenses import (
     ExpenseReportCreate,
     ExpenseReportResponse,
     ExpenseReportUpdate,
+    SuggestionResponse,
+    DimensionSuggestion,
 )
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
@@ -275,6 +278,13 @@ async def add_line(
         amount=data.amount,
         category_id=data.category_id,
         subcategory_id=data.subcategory_id,
+        # M9 fields
+        gl_id=data.gl_id,
+        dimension_values=data.dimension_values,
+        is_split_parent=data.is_split_parent,
+        split_parent_id=data.split_parent_id,
+        flag_incorrect=data.flag_incorrect,
+        flag_comment=data.flag_comment,
     )
     db.add(line)
     await db.flush()
@@ -472,3 +482,74 @@ async def submit_report(
     await db.flush()
 
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
+
+
+# ── M9: AI Suggestions ────────────────────────────────────────────────────────
+
+@router.get("/suggestions", response_model=SuggestionResponse)
+async def get_expense_suggestions(
+    gl_id: uuid.UUID = Query(..., description="GL account UUID to fetch suggestions for"),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> SuggestionResponse:
+    """
+    Return pre-fill suggestions for a given GL account based on this employee's
+    past approved expense lines.
+
+    Looks up the last 10 approved (status APPROVED or POSTED) expense lines
+    submitted by the current user that used the same gl_id.  Returns:
+      - description: most recently used description for this GL
+      - dimensions: per dimension_id, the most common value_id with a confidence score
+
+    Confidence thresholds (used by the frontend):
+      ≥ 0.80  — auto-fill the field silently
+      0.40–0.79 — show as a suggestion pill ("Last used: NG_FI")
+      < 0.40  — omit (not returned)
+
+    Responds in < 200ms because expense_lines is indexed on gl_id and
+    expense_reports is indexed on employee_id.
+    """
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(ExpenseLine)
+        .join(ExpenseReport, ExpenseLine.report_id == ExpenseReport.id)
+        .where(
+            ExpenseReport.tenant_id == tenant_id,
+            ExpenseReport.employee_id == current_user.user_id,
+            ExpenseLine.gl_id == gl_id,
+            ExpenseReport.status.in_(["APPROVED", "POSTED"]),
+        )
+        .order_by(ExpenseLine.created_at.desc())
+        .limit(10)
+    )
+    past_lines = list(result.scalars().all())
+
+    if not past_lines:
+        return SuggestionResponse(description=None, dimensions={})
+
+    # Most recent description for this GL by this employee
+    description = past_lines[0].description
+
+    # Frequency analysis of dimension values across the sampled lines
+    dim_counters: dict[str, Counter] = {}
+    for line in past_lines:
+        if not line.dimension_values:
+            continue
+        for dim_id, val_id in line.dimension_values.items():
+            if dim_id not in dim_counters:
+                dim_counters[dim_id] = Counter()
+            dim_counters[dim_id][str(val_id)] += 1
+
+    total = len(past_lines)
+    dimensions: dict[str, DimensionSuggestion] = {}
+    for dim_id, counter in dim_counters.items():
+        most_common_val, count = counter.most_common(1)[0]
+        confidence = count / total
+        if confidence >= 0.4:
+            dimensions[dim_id] = DimensionSuggestion(
+                value_id=most_common_val,
+                confidence=round(confidence, 2),
+            )
+
+    return SuggestionResponse(description=description, dimensions=dimensions)

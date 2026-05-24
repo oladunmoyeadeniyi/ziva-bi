@@ -1,5 +1,5 @@
 """
-ZivaBI — expense management ORM models (Milestones 3–8).
+ZivaBI — expense management ORM models (Milestones 3–9).
 
 Tables:
     expense_reports          parent-level expense retirement submission per employee
@@ -29,6 +29,14 @@ M7 additions to expense_lines:
     category_id    — FK → expense_categories (nullable); set when require_category is ON
     subcategory_id — FK → expense_categories (nullable); set when require_subcategory is ON
     gl_account     — now nullable; Finance-mode tenants omit GL at submission time
+
+M9 additions to expense_lines:
+    gl_id            — FK → chart_of_accounts; structured CoA reference (nullable)
+    dimension_values — JSONB {dimension_id_str: value_id_str}; per-line dim selections
+    is_split_parent  — true once this line has been split into sub-lines
+    split_parent_id  — FK → expense_lines; set on split sub-lines to point to parent
+    flag_incorrect   — Level-2 coding: employee flags the auto-assigned GL as wrong
+    flag_comment     — employee explanation for the flag
 """
 
 import uuid
@@ -38,6 +46,9 @@ from decimal import Decimal
 from sqlalchemy import DATE, NUMERIC, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+# M9: chart_of_accounts is imported lazily to avoid circular imports at module load.
+# The FK is declared as a string; SQLAlchemy resolves it at mapping time.
 
 from app.database import Base
 
@@ -151,6 +162,30 @@ class ExpenseLine(Base):
         ForeignKey("expense_categories.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # M9: structured GL reference from the M8 Chart of Accounts
+    gl_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chart_of_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # M9: JSONB map {dimension_id_str: value_id_str} for dynamic dimension fields
+    dimension_values: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # M9: split-line tracking — parent/child relationship for split expense items
+    is_split_parent: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    split_parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # M9: Level-2 coding — employee can flag auto-assigned GL as incorrect
+    flag_incorrect: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    flag_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

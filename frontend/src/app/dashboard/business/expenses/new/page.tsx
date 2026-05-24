@@ -1,42 +1,84 @@
 "use client";
 
 /**
- * New expense retirement form — /dashboard/business/expenses/new
+ * New expense retirement form — M9 rewrite.
  *
- * M7: Fetches /api/expense-config/form-config on load and adapts the
- * expense line table based on gl_coding_mode:
+ * Adapts to coding_level 0–4 from the tenant's form config:
+ *   0 — Finance codes GL (no GL fields shown to employee)
+ *   1 — Category picker → GL auto-assigned from default mapping
+ *   2 — Category picker → GL shown read-only; employee can flag as incorrect
+ *   3 — Category picker → employee picks GL from subcategory's mapped list
+ *   4 — Employee searches GL directly
  *
- *   'employee'        — show GL Account, P/L Group (existing behaviour)
- *   'finance'         — hide GL/PL fields; show category/subcategory dropdowns;
- *                       note "GL coding will be assigned by Finance"
- *   'category_mapped' — show Category first, then Subcategory, then GL Account
- *                       (pre-filled from category suggestion, editable), then P/L Group
+ * Lines displayed as cards with amber (incomplete) / green (complete) left border.
+ * GL selection opens the ExpenseItemPicker popup for levels 1–4.
+ * After GL selection, AI suggestions are fetched and auto-applied (≥80% confidence)
+ * or shown as suggestion pills (40–79% confidence).
+ * Split lines allowed at all levels; split total must equal parent amount.
  *
- * Auto-saves in the background once the user fills in a report date and at
- * least one line with description + amount. The first auto-save creates the
- * DRAFT report and obtains line IDs; subsequent saves PATCH in-place so
- * that document attachments (keyed on line_id) are never orphaned.
+ * Auto-save runs 800ms after any change once the first valid line exists.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import ExpenseItemPicker, {
+  type CategoryForForm,
+  type GLSearchResult,
+  type PickerResult,
+} from "@/components/expenses/ExpenseItemPicker";
+import SplitLinePanel, {
+  type DimensionForForm,
+  type SplitLineState,
+} from "@/components/expenses/SplitLinePanel";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface DimReq {
+  dimension_id: string;
+  requirement: string;
+}
 
 interface LineState {
   localId: string;
   backendId: string | null;
-  gl_account: string;
-  pl_group: string;
-  io_dimension: string;
-  cost_center: string;
-  location: string;
+  gl_id: string | null;
+  gl_number: string;
+  gl_name: string;
+  category_id: string | null;
+  category_name: string;
+  subcategory_id: string | null;
+  subcategory_name: string;
+  dimension_requirements: DimReq[];
+  dimension_values: Record<string, string>;
+  amount: string;
   invoice_date: string;
   invoice_number: string;
   description: string;
-  amount: string;
-  category_id: string;
-  subcategory_id: string;
+  location: string;
+  flag_incorrect: boolean;
+  flag_comment: string;
+  split_lines: SplitLineState[];
+  is_expanded: boolean;
+}
+
+interface FormConfig {
+  coding_level: number;
+  gl_coding_mode: string;
+  require_category: boolean;
+  require_subcategory: boolean;
+  allow_free_text_description: boolean;
+  show_location: boolean;
+  require_location: boolean;
+  categories: CategoryForForm[];
+  dimensions: DimensionForForm[];
+}
+
+interface DimSuggestion { value_id: string; confidence: number; }
+interface SuggestionResponse {
+  description: string | null;
+  dimensions: Record<string, DimSuggestion>;
 }
 
 interface ApprovalMatrix {
@@ -48,140 +90,157 @@ interface ApprovalMatrix {
   amount_threshold_l3: string | null;
 }
 
-interface TenantUser {
-  id: string;
-  full_name: string;
-  email: string;
-}
+interface TenantUser { id: string; full_name: string; email: string; }
 
 interface DocumentRecord {
-  id: string;
-  report_id: string;
-  line_id: string | null;
-  file_name: string;
-  file_size: number;
-  mime_type: string;
-  storage_path: string;
-  signed_url: string | null;
-  created_at: string;
+  id: string; report_id: string; line_id: string | null; file_name: string;
+  file_size: number; mime_type: string; storage_path: string;
+  signed_url: string | null; created_at: string;
 }
 
-interface ApiLine {
-  id: string;
-  line_number: number;
-}
+interface ApiLine { id: string; line_number: number; }
+interface ApiReport { id: string; lines: ApiLine[]; }
 
-interface ApiReport {
-  id: string;
-  lines: ApiLine[];
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-interface FormCategory {
-  id: string;
-  name: string;
-  code: string | null;
-  gl_account_suggestion: string | null;
-  subcategories: { id: string; name: string }[];
-}
-
-interface FormConfig {
-  gl_coding_mode: string;
-  require_category: boolean;
-  require_subcategory: boolean;
-  allow_free_text_description: boolean;
-  categories: FormCategory[];
-}
-
-function newLine(): LineState {
+function makeLine(): LineState {
   return {
     localId: Math.random().toString(36).slice(2),
-    backendId: null,
-    gl_account: "",
-    pl_group: "",
-    io_dimension: "",
-    cost_center: "",
-    location: "",
-    invoice_date: "",
-    invoice_number: "",
-    description: "",
-    amount: "",
-    category_id: "",
-    subcategory_id: "",
+    backendId: null, gl_id: null, gl_number: "", gl_name: "",
+    category_id: null, category_name: "", subcategory_id: null, subcategory_name: "",
+    dimension_requirements: [], dimension_values: {},
+    amount: "", invoice_date: "", invoice_number: "", description: "",
+    location: "", flag_incorrect: false, flag_comment: "",
+    split_lines: [], is_expanded: true,
   };
 }
 
-function calcTotal(lines: LineState[]): number {
-  return lines.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0);
-}
-
-function formatTotal(lines: LineState[]): string {
-  const total = calcTotal(lines);
-  return "₦" + total.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function FileTypeIcon({ mimeType }: { mimeType: string }) {
-  if (mimeType === "application/pdf") return <span className="text-red-500 font-bold text-xs">PDF</span>;
-  if (mimeType.startsWith("image/")) return <span className="text-blue-500 font-bold text-xs">IMG</span>;
-  if (mimeType.includes("spreadsheet") || mimeType.includes("excel")) return <span className="text-green-600 font-bold text-xs">XLS</span>;
-  if (mimeType.includes("word") || mimeType.includes("document")) return <span className="text-blue-700 font-bold text-xs">DOC</span>;
-  return <span className="text-gray-500 font-bold text-xs">FILE</span>;
-}
-
-function linePayload(l: LineState, mode: string) {
+function makeSplit(): SplitLineState {
   return {
-    gl_account: mode === "finance" ? null : (l.gl_account.trim() || null),
-    pl_group: l.pl_group.trim() || null,
-    io_dimension: l.io_dimension.trim() || null,
-    cost_center: l.cost_center.trim() || null,
+    localId: Math.random().toString(36).slice(2),
+    backendId: null, gl_id: null, gl_number: "", gl_name: "",
+    amount: "", dimension_values: {}, dimension_requirements: [],
+  };
+}
+
+function isComplete(l: LineState, cfg: FormConfig): boolean {
+  if (!l.amount || parseFloat(l.amount) <= 0) return false;
+  if (!l.invoice_date) return false;
+  if (!l.invoice_number.trim()) return false;
+  if (!l.description.trim()) return false;
+  if (cfg.coding_level === 1 && !l.subcategory_id) return false;
+  if (cfg.coding_level >= 2 && !l.gl_id) return false;
+  if (cfg.show_location && cfg.require_location && !l.location.trim()) return false;
+  for (const r of l.dimension_requirements) {
+    if (r.requirement === "required" && !l.dimension_values[r.dimension_id]) return false;
+  }
+  if (l.split_lines.length > 0) {
+    const tot = l.split_lines.reduce((s, sl) => s + (parseFloat(sl.amount) || 0), 0);
+    if (Math.abs(parseFloat(l.amount) - tot) >= 0.005) return false;
+  }
+  return true;
+}
+
+function glChip(l: LineState, level: number): string {
+  if (level === 1) {
+    if (l.subcategory_name) return `${l.category_name} / ${l.subcategory_name}`;
+    if (l.category_name) return l.category_name;
+    return "Select Category…";
+  }
+  if (l.gl_number) return `${l.gl_number}${l.gl_name ? ` — ${l.gl_name}` : ""}`;
+  if (l.category_name) return `${l.category_name}${l.subcategory_name ? ` / ${l.subcategory_name}` : ""}`;
+  return "Select GL…";
+}
+
+function mainPayload(l: LineState) {
+  return {
+    gl_account: l.gl_number || null,
+    gl_id: l.gl_id || null,
+    pl_group: null, io_dimension: null, cost_center: null,
     location: l.location.trim() || null,
     invoice_date: l.invoice_date || null,
     invoice_number: l.invoice_number.trim() || null,
-    description: l.description.trim(),
+    description: l.description.trim() || "Expense",
     amount: parseFloat(l.amount),
     category_id: l.category_id || null,
     subcategory_id: l.subcategory_id || null,
+    dimension_values: Object.keys(l.dimension_values).length ? l.dimension_values : null,
+    flag_incorrect: l.flag_incorrect,
+    flag_comment: l.flag_comment.trim() || null,
+    is_split_parent: l.split_lines.length > 0,
   };
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+function splitPayload(s: SplitLineState, parentId: string, desc: string) {
+  return {
+    gl_account: s.gl_number || null,
+    gl_id: s.gl_id || null,
+    description: desc || "Split allocation",
+    amount: parseFloat(s.amount) || 0,
+    split_parent_id: parentId,
+    dimension_values: Object.keys(s.dimension_values).length ? s.dimension_values : null,
+  };
+}
 
-const DEFAULT_FORM_CONFIG: FormConfig = {
-  gl_coding_mode: "employee",
-  require_category: false,
-  require_subcategory: false,
-  allow_free_text_description: true,
-  categories: [],
+function calcTotal(lines: LineState[]) {
+  return lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+}
+
+function fmtTotal(lines: LineState[]) {
+  return "₦" + calcTotal(lines).toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtBytes(b: number) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileIcon({ mime }: { mime: string }) {
+  if (mime === "application/pdf") return <span className="text-red-500 font-bold text-xs">PDF</span>;
+  if (mime.startsWith("image/")) return <span className="text-blue-500 font-bold text-xs">IMG</span>;
+  return <span className="text-gray-500 font-bold text-xs">FILE</span>;
+}
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+const DEFAULT_CFG: FormConfig = {
+  coding_level: 0, gl_coding_mode: "finance",
+  require_category: false, require_subcategory: false,
+  allow_free_text_description: true, show_location: true, require_location: false,
+  categories: [], dimensions: [],
 };
+
+// ── Page component ────────────────────────────────────────────────────────────
 
 export default function NewExpensePage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
 
-  const [reportDate, setReportDate] = useState<string>(today());
-  const [employeeFunction, setEmployeeFunction] = useState<string>("");
-  const [lines, setLines] = useState<LineState[]>([newLine()]);
+  // Form state
+  const [reportDate, setReportDate] = useState(todayStr());
+  const [employeeFunction, setEmployeeFunction] = useState("");
+  const [lines, setLines] = useState<LineState[]>([makeLine()]);
+  const [formConfig, setFormConfig] = useState<FormConfig>(DEFAULT_CFG);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // M7 form config
-  const [formConfig, setFormConfig] = useState<FormConfig>(DEFAULT_FORM_CONFIG);
 
   // Auto-save state
   const [savedReportId, setSavedReportId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
-  // M6 — document attachments
+  // GL picker
+  const [pickerFor, setPickerFor] = useState<{ lineLocalId: string; splitLocalId?: string } | null>(null);
+
+  // AI suggestions per line
+  const [suggestions, setSuggestions] = useState<Record<string, SuggestionResponse>>({});
+
+  // Document attachments
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Approver modal state
+  // Approver modal
   const [createdReportId, setCreatedReportId] = useState<string | null>(null);
   const [showApproverModal, setShowApproverModal] = useState(false);
   const [matrix, setMatrix] = useState<ApprovalMatrix | null>(null);
@@ -191,7 +250,7 @@ export default function NewExpensePage() {
   const [l3Approver, setL3Approver] = useState("");
   const [approverError, setApproverError] = useState<string | null>(null);
 
-  // Refs for async auto-save callbacks
+  // Refs
   const savedReportIdRef = useRef<string | null>(null);
   const pendingDeleteIdsRef = useRef<Set<string>>(new Set());
   const isSavingRef = useRef(false);
@@ -206,121 +265,151 @@ export default function NewExpensePage() {
   useEffect(() => { linesRef.current = lines; }, [lines]);
   useEffect(() => { formConfigRef.current = formConfig; }, [formConfig]);
 
-  // Load form config (M7)
+  // Load M9 form config
   useEffect(() => {
     if (!accessToken) return;
     apiFetch<FormConfig>("/api/expense-config/form-config", { token: accessToken })
       .then((cfg) => setFormConfig(cfg))
-      .catch(() => {}); // fall back to defaults on error
+      .catch(() => {});
   }, [accessToken]);
 
-  // ── Auto-save implementation ──────────────────────────────────────────────
+  // ── GL search for Level 4 ─────────────────────────────────────────────────
+
+  const doSearchGL = useCallback(async (q: string): Promise<GLSearchResult[]> => {
+    if (!accessToken) return [];
+    try {
+      return await apiFetch<GLSearchResult[]>(
+        `/api/config/gl/search?q=${encodeURIComponent(q)}&limit=20`,
+        { token: accessToken }
+      );
+    } catch { return []; }
+  }, [accessToken]);
+
+  // ── Auto-save ─────────────────────────────────────────────────────────────
 
   const runAutoSave = async () => {
-    if (!accessToken) return;
-    if (!reportDate) return;
-
+    if (!accessToken || !reportDate) return;
     const currentLines = linesRef.current;
-    const mode = formConfigRef.current.gl_coding_mode;
-    const hasValidLine = currentLines.some(
-      (l) => l.description.trim().length > 0 && parseFloat(l.amount) > 0
-    );
-    if (!hasValidLine) return;
-    if (isSavingRef.current) return;
+    const hasValid = currentLines.some((l) => l.description.trim() && parseFloat(l.amount) > 0);
+    if (!hasValid || isSavingRef.current) return;
 
     isSavingRef.current = true;
     setSaveStatus("saving");
 
     try {
       if (!savedReportIdRef.current) {
+        // ── First save: create report + lines ──
         const report = await apiFetch<ApiReport>("/api/expenses/reports", {
-          method: "POST",
-          token: accessToken,
+          method: "POST", token: accessToken,
           body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
         });
-        const newReportId = report.id;
-
-        const updatedLines = [...currentLines];
+        const rid = report.id;
         const knownIds = new Set<string>();
+        const updatedLines = currentLines.map((l) => ({ ...l, split_lines: [...l.split_lines] }));
 
         for (let i = 0; i < updatedLines.length; i++) {
           const l = updatedLines[i];
           if (!l.description.trim() || !(parseFloat(l.amount) > 0)) continue;
-          if (mode !== "finance" && !l.gl_account.trim()) continue;
+          try {
+            const resp = await apiFetch<ApiReport>(`/api/expenses/reports/${rid}/lines`, {
+              method: "POST", token: accessToken, body: JSON.stringify(mainPayload(l)),
+            });
+            const nl = resp.lines.find((rl) => !knownIds.has(rl.id));
+            if (nl) { updatedLines[i] = { ...updatedLines[i], backendId: nl.id }; knownIds.add(nl.id); }
 
-          const resp = await apiFetch<ApiReport>(
-            `/api/expenses/reports/${newReportId}/lines`,
-            { method: "POST", token: accessToken, body: JSON.stringify(linePayload(l, mode)) }
-          );
-          const nl = resp.lines.find((rl) => !knownIds.has(rl.id));
-          if (nl) {
-            updatedLines[i] = { ...updatedLines[i], backendId: nl.id };
-            knownIds.add(nl.id);
-          }
+            // Save splits for this line
+            const parentId = updatedLines[i].backendId;
+            if (parentId) {
+              for (let j = 0; j < updatedLines[i].split_lines.length; j++) {
+                const sp = updatedLines[i].split_lines[j];
+                if (sp.backendId || !(parseFloat(sp.amount) > 0)) continue;
+                try {
+                  const sr = await apiFetch<ApiReport>(`/api/expenses/reports/${rid}/lines`, {
+                    method: "POST", token: accessToken,
+                    body: JSON.stringify(splitPayload(sp, parentId, l.description)),
+                  });
+                  const ns = sr.lines.find((rl) => !knownIds.has(rl.id));
+                  if (ns) { updatedLines[i].split_lines[j] = { ...sp, backendId: ns.id }; knownIds.add(ns.id); }
+                } catch { /* non-fatal */ }
+              }
+            }
+          } catch { /* non-fatal */ }
         }
 
-        savedReportIdRef.current = newReportId;
-        setSavedReportId(newReportId);
+        savedReportIdRef.current = rid;
+        setSavedReportId(rid);
         setLines(updatedLines);
       } else {
-        const reportId = savedReportIdRef.current;
-
-        await apiFetch(`/api/expenses/reports/${reportId}`, {
-          method: "PATCH",
-          token: accessToken,
+        // ── Subsequent saves ──
+        const rid = savedReportIdRef.current;
+        await apiFetch(`/api/expenses/reports/${rid}`, {
+          method: "PATCH", token: accessToken,
           body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
         });
 
         for (const bid of pendingDeleteIdsRef.current) {
           try {
-            await apiFetch(`/api/expenses/reports/${reportId}/lines/${bid}`, {
-              method: "DELETE", token: accessToken,
-            });
+            await apiFetch(`/api/expenses/reports/${rid}/lines/${bid}`, { method: "DELETE", token: accessToken });
           } catch { /* non-fatal */ }
         }
         pendingDeleteIdsRef.current.clear();
 
-        const knownIds = new Set<string>(
-          currentLines.filter((l) => l.backendId).map((l) => l.backendId!)
-        );
-        const updatedLines = [...currentLines];
+        const knownIds = new Set<string>(currentLines.flatMap((l) => [l.backendId, ...l.split_lines.map((s) => s.backendId)]).filter(Boolean) as string[]);
+        const updatedLines = currentLines.map((l) => ({ ...l, split_lines: [...l.split_lines] }));
 
         for (let i = 0; i < updatedLines.length; i++) {
           const l = updatedLines[i];
           if (!l.description.trim() || !(parseFloat(l.amount) > 0)) continue;
-          if (mode !== "finance" && !l.gl_account.trim()) continue;
 
           if (l.backendId) {
             try {
-              await apiFetch(`/api/expenses/reports/${reportId}/lines/${l.backendId}`, {
-                method: "PATCH", token: accessToken, body: JSON.stringify(linePayload(l, mode)),
+              await apiFetch(`/api/expenses/reports/${rid}/lines/${l.backendId}`, {
+                method: "PATCH", token: accessToken, body: JSON.stringify(mainPayload(l)),
               });
             } catch { /* non-fatal */ }
           } else {
             try {
-              const resp = await apiFetch<ApiReport>(
-                `/api/expenses/reports/${reportId}/lines`,
-                { method: "POST", token: accessToken, body: JSON.stringify(linePayload(l, mode)) }
-              );
+              const resp = await apiFetch<ApiReport>(`/api/expenses/reports/${rid}/lines`, {
+                method: "POST", token: accessToken, body: JSON.stringify(mainPayload(l)),
+              });
               const nl = resp.lines.find((rl) => !knownIds.has(rl.id));
-              if (nl) {
-                updatedLines[i] = { ...updatedLines[i], backendId: nl.id };
-                knownIds.add(nl.id);
-              }
+              if (nl) { updatedLines[i] = { ...updatedLines[i], backendId: nl.id }; knownIds.add(nl.id); }
             } catch { /* non-fatal */ }
+          }
+
+          const parentId = updatedLines[i].backendId;
+          if (parentId) {
+            for (let j = 0; j < updatedLines[i].split_lines.length; j++) {
+              const sp = updatedLines[i].split_lines[j];
+              if (!(parseFloat(sp.amount) > 0)) continue;
+              if (sp.backendId) {
+                try {
+                  await apiFetch(`/api/expenses/reports/${rid}/lines/${sp.backendId}`, {
+                    method: "PATCH", token: accessToken,
+                    body: JSON.stringify({ ...splitPayload(sp, parentId, l.description), split_parent_id: parentId }),
+                  });
+                } catch { /* non-fatal */ }
+              } else {
+                try {
+                  const sr = await apiFetch<ApiReport>(`/api/expenses/reports/${rid}/lines`, {
+                    method: "POST", token: accessToken,
+                    body: JSON.stringify(splitPayload(sp, parentId, l.description)),
+                  });
+                  const ns = sr.lines.find((rl) => !knownIds.has(rl.id));
+                  if (ns) { updatedLines[i].split_lines[j] = { ...sp, backendId: ns.id }; knownIds.add(ns.id); }
+                } catch { /* non-fatal */ }
+              }
+            }
           }
         }
 
-        const hasUpdates = updatedLines.some((l, i) => l.backendId !== currentLines[i].backendId);
+        const hasUpdates = updatedLines.some((l, i) => l.backendId !== currentLines[i].backendId || l.split_lines.some((s, j) => s.backendId !== currentLines[i].split_lines[j]?.backendId));
         if (hasUpdates) setLines(updatedLines);
       }
 
       setSaveStatus("saved");
-    } catch {
-      setSaveStatus("error");
-    } finally {
-      isSavingRef.current = false;
-    }
+    } catch { setSaveStatus("error"); }
+    finally { isSavingRef.current = false; }
   };
 
   autoSaveCallbackRef.current = runAutoSave;
@@ -334,45 +423,125 @@ export default function NewExpensePage() {
 
   // ── Line management ───────────────────────────────────────────────────────
 
-  const updateLine = (localId: string, field: keyof LineState, value: string) => {
-    setLines((prev) => prev.map((l) => (l.localId === localId ? { ...l, [field]: value } : l)));
+  const updateLine = (localId: string, patch: Partial<LineState>) => {
+    setLines((prev) => prev.map((l) => l.localId === localId ? { ...l, ...patch } : l));
   };
 
-  // When category changes in category_mapped mode, auto-fill GL suggestion
-  const handleCategoryChange = (localId: string, categoryId: string) => {
-    const cat = formConfig.categories.find((c) => c.id === categoryId);
-    setLines((prev) =>
-      prev.map((l) =>
-        l.localId === localId
-          ? {
-              ...l,
-              category_id: categoryId,
-              subcategory_id: "",
-              gl_account: formConfig.gl_coding_mode === "category_mapped"
-                ? (cat?.gl_account_suggestion ?? l.gl_account)
-                : l.gl_account,
-            }
-          : l
-      )
-    );
-    scheduleAutoSave();
+  const toggleExpand = (localId: string) => {
+    setLines((prev) => prev.map((l) => l.localId === localId ? { ...l, is_expanded: !l.is_expanded } : l));
   };
 
   const removeLine = (localId: string) => {
     setLines((prev) => {
       const line = prev.find((l) => l.localId === localId);
       if (line?.backendId) pendingDeleteIdsRef.current.add(line.backendId);
+      line?.split_lines.forEach((s) => { if (s.backendId) pendingDeleteIdsRef.current.add(s.backendId); });
       return prev.filter((l) => l.localId !== localId);
     });
     scheduleAutoSave();
   };
 
   const addLine = () => {
-    setLines((prev) => [...prev, newLine()]);
+    setLines((prev) => [...prev, makeLine()]);
     scheduleAutoSave();
   };
 
-  // ── File upload handlers ──────────────────────────────────────────────────
+  const addSplitLine = (lineLocalId: string) => {
+    setLines((prev) => prev.map((l) =>
+      l.localId === lineLocalId ? { ...l, split_lines: [...l.split_lines, makeSplit()] } : l
+    ));
+    scheduleAutoSave();
+  };
+
+  const updateSplitLine = (lineLocalId: string, splitLocalId: string, updates: Partial<SplitLineState>) => {
+    setLines((prev) => prev.map((l) =>
+      l.localId !== lineLocalId ? l : {
+        ...l,
+        split_lines: l.split_lines.map((s) => s.localId === splitLocalId ? { ...s, ...updates } : s),
+      }
+    ));
+    scheduleAutoSave();
+  };
+
+  const removeSplitLine = (lineLocalId: string, splitLocalId: string) => {
+    setLines((prev) => prev.map((l) => {
+      if (l.localId !== lineLocalId) return l;
+      const sp = l.split_lines.find((s) => s.localId === splitLocalId);
+      if (sp?.backendId) pendingDeleteIdsRef.current.add(sp.backendId);
+      return { ...l, split_lines: l.split_lines.filter((s) => s.localId !== splitLocalId) };
+    }));
+    scheduleAutoSave();
+  };
+
+  // ── Picker selection ──────────────────────────────────────────────────────
+
+  const handlePickerSelect = async (result: PickerResult) => {
+    const ctx = pickerFor;
+    if (!ctx) return;
+    setPickerFor(null);
+
+    if (ctx.splitLocalId) {
+      // Update split line
+      setLines((prev) => prev.map((l) =>
+        l.localId !== ctx.lineLocalId ? l : {
+          ...l,
+          split_lines: l.split_lines.map((s) =>
+            s.localId !== ctx.splitLocalId ? s : {
+              ...s,
+              gl_id: result.gl_id,
+              gl_number: result.gl_number,
+              gl_name: result.gl_name,
+              dimension_requirements: result.dimension_requirements,
+            }
+          ),
+        }
+      ));
+      scheduleAutoSave();
+      return;
+    }
+
+    // Update main line — reset dimension_values when GL changes
+    setLines((prev) => prev.map((l) =>
+      l.localId !== ctx.lineLocalId ? l : {
+        ...l,
+        gl_id: result.gl_id,
+        gl_number: result.gl_number,
+        gl_name: result.gl_name,
+        category_id: result.category_id,
+        category_name: result.category_name,
+        subcategory_id: result.subcategory_id,
+        subcategory_name: result.subcategory_name,
+        dimension_requirements: result.dimension_requirements,
+        flag_incorrect: result.flag_incorrect,
+        dimension_values: {},
+      }
+    ));
+
+    // Fetch AI suggestions
+    if (result.gl_id && accessToken) {
+      try {
+        const sugg = await apiFetch<SuggestionResponse>(
+          `/api/expenses/suggestions?gl_id=${result.gl_id}`,
+          { token: accessToken }
+        );
+        setSuggestions((prev) => ({ ...prev, [ctx.lineLocalId]: sugg }));
+        // Auto-apply high-confidence suggestions
+        setLines((prev) => prev.map((l) => {
+          if (l.localId !== ctx.lineLocalId) return l;
+          const dimVals = { ...l.dimension_values };
+          for (const [dimId, s] of Object.entries(sugg.dimensions)) {
+            if (s.confidence >= 0.80 && !dimVals[dimId]) dimVals[dimId] = s.value_id;
+          }
+          const desc = !l.description.trim() && sugg.description ? sugg.description : l.description;
+          return { ...l, description: desc, dimension_values: dimVals };
+        }));
+      } catch { /* non-fatal */ }
+    }
+
+    scheduleAutoSave();
+  };
+
+  // ── File uploads ──────────────────────────────────────────────────────────
 
   const triggerUpload = (target: string) => {
     uploadTargetRef.current = target;
@@ -384,26 +553,20 @@ export default function NewExpensePage() {
     const file = e.target.files?.[0];
     if (!file || !uploadTargetRef.current || !accessToken || !savedReportIdRef.current) return;
     e.target.value = "";
-
     setUploadingFor(uploadTargetRef.current);
-    setUploadError(null);
-
-    const formData = new FormData();
-    formData.append("file", file);
+    const fd = new FormData();
+    fd.append("file", file);
     const target = uploadTargetRef.current;
-    if (target !== "report") formData.append("line_id", target);
-
+    if (target !== "report") fd.append("line_id", target);
     try {
       const doc = await apiFetch<DocumentRecord>(
         `/api/documents/reports/${savedReportIdRef.current}/upload`,
-        { method: "POST", token: accessToken, body: formData, isFormData: true }
+        { method: "POST", token: accessToken, body: fd, isFormData: true }
       );
       setDocuments((prev) => [...prev, doc]);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed.");
-    } finally {
-      setUploadingFor(null);
-    }
+    } finally { setUploadingFor(null); }
   };
 
   const handleDeleteDocument = async (docId: string) => {
@@ -411,76 +574,95 @@ export default function NewExpensePage() {
     try {
       await apiFetch(`/api/documents/${docId}`, { method: "DELETE", token: accessToken });
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Delete failed.");
-    }
+    } catch (err) { setUploadError(err instanceof Error ? err.message : "Delete failed."); }
   };
 
   // ── Validation ────────────────────────────────────────────────────────────
 
   const validate = (): string | null => {
-    const mode = formConfig.gl_coding_mode;
     if (!reportDate) return "Report date is required.";
     if (lines.length === 0) return "At least one expense line is required.";
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      if (mode === "employee" && !l.gl_account.trim())
-        return `Line ${i + 1}: GL Account is required.`;
-      if (formConfig.require_category && !l.category_id)
-        return `Line ${i + 1}: Category is required.`;
-      if (formConfig.require_subcategory && formConfig.require_category && !l.subcategory_id)
-        return `Line ${i + 1}: Subcategory is required.`;
       if (!l.description.trim()) return `Line ${i + 1}: Description is required.`;
-      const amount = parseFloat(l.amount);
-      if (!l.amount || isNaN(amount) || amount <= 0)
-        return `Line ${i + 1}: Amount must be a positive number.`;
+      if (!l.amount || parseFloat(l.amount) <= 0) return `Line ${i + 1}: Amount must be greater than zero.`;
+      if (!l.invoice_date) return `Line ${i + 1}: Invoice date is required.`;
+      if (!l.invoice_number.trim()) return `Line ${i + 1}: Invoice number is required.`;
+      if (formConfig.coding_level === 1 && !l.subcategory_id) return `Line ${i + 1}: Category and subcategory are required.`;
+      if (formConfig.coding_level >= 2 && !l.gl_id) return `Line ${i + 1}: GL account is required.`;
+      if (formConfig.show_location && formConfig.require_location && !l.location.trim()) return `Line ${i + 1}: Location is required.`;
+      if (l.split_lines.length > 0) {
+        const tot = l.split_lines.reduce((s, sl) => s + (parseFloat(sl.amount) || 0), 0);
+        if (Math.abs(parseFloat(l.amount) - tot) >= 0.005) return `Line ${i + 1}: Split amounts must equal the line total.`;
+      }
     }
     return null;
   };
 
-  // ── Save helper ───────────────────────────────────────────────────────────
+  // ── Final save helper (used by submit flow) ───────────────────────────────
 
-  const saveReportAndLines = async (): Promise<string> => {
-    const mode = formConfig.gl_coding_mode;
+  const saveAll = async (): Promise<string> => {
     const existingId = savedReportIdRef.current;
 
     if (!existingId) {
       const report = await apiFetch<{ id: string }>("/api/expenses/reports", {
-        method: "POST",
-        token: accessToken!,
+        method: "POST", token: accessToken!,
         body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
       });
+      const rid = report.id;
       for (const l of lines) {
-        await apiFetch(`/api/expenses/reports/${report.id}/lines`, {
-          method: "POST", token: accessToken!, body: JSON.stringify(linePayload(l, mode)),
+        const resp = await apiFetch<ApiReport>(`/api/expenses/reports/${rid}/lines`, {
+          method: "POST", token: accessToken!, body: JSON.stringify(mainPayload(l)),
         });
+        const saved = resp.lines[resp.lines.length - 1];
+        for (const sp of l.split_lines) {
+          if (!(parseFloat(sp.amount) > 0)) continue;
+          await apiFetch(`/api/expenses/reports/${rid}/lines`, {
+            method: "POST", token: accessToken!, body: JSON.stringify(splitPayload(sp, saved.id, l.description)),
+          });
+        }
       }
-      savedReportIdRef.current = report.id;
-      return report.id;
+      savedReportIdRef.current = rid;
+      return rid;
     }
 
     await apiFetch(`/api/expenses/reports/${existingId}`, {
-      method: "PATCH",
-      token: accessToken!,
+      method: "PATCH", token: accessToken!,
       body: JSON.stringify({ report_date: reportDate, employee_function: employeeFunction || null }),
     });
     for (const bid of pendingDeleteIdsRef.current) {
-      try {
-        await apiFetch(`/api/expenses/reports/${existingId}/lines/${bid}`, {
-          method: "DELETE", token: accessToken!,
-        });
-      } catch { /* ignore */ }
+      try { await apiFetch(`/api/expenses/reports/${existingId}/lines/${bid}`, { method: "DELETE", token: accessToken! }); } catch { /* ignore */ }
     }
     pendingDeleteIdsRef.current.clear();
     for (const l of lines) {
       if (l.backendId) {
         await apiFetch(`/api/expenses/reports/${existingId}/lines/${l.backendId}`, {
-          method: "PATCH", token: accessToken!, body: JSON.stringify(linePayload(l, mode)),
+          method: "PATCH", token: accessToken!, body: JSON.stringify(mainPayload(l)),
         });
+        for (const sp of l.split_lines) {
+          if (!(parseFloat(sp.amount) > 0)) continue;
+          if (sp.backendId) {
+            await apiFetch(`/api/expenses/reports/${existingId}/lines/${sp.backendId}`, {
+              method: "PATCH", token: accessToken!,
+              body: JSON.stringify({ ...splitPayload(sp, l.backendId, l.description), split_parent_id: l.backendId }),
+            });
+          } else {
+            await apiFetch(`/api/expenses/reports/${existingId}/lines`, {
+              method: "POST", token: accessToken!, body: JSON.stringify(splitPayload(sp, l.backendId, l.description)),
+            });
+          }
+        }
       } else {
-        await apiFetch(`/api/expenses/reports/${existingId}/lines`, {
-          method: "POST", token: accessToken!, body: JSON.stringify(linePayload(l, mode)),
+        const resp = await apiFetch<ApiReport>(`/api/expenses/reports/${existingId}/lines`, {
+          method: "POST", token: accessToken!, body: JSON.stringify(mainPayload(l)),
         });
+        const saved = resp.lines[resp.lines.length - 1];
+        for (const sp of l.split_lines) {
+          if (!(parseFloat(sp.amount) > 0)) continue;
+          await apiFetch(`/api/expenses/reports/${existingId}/lines`, {
+            method: "POST", token: accessToken!, body: JSON.stringify(splitPayload(sp, saved.id, l.description)),
+          });
+        }
       }
     }
     return existingId;
@@ -489,51 +671,46 @@ export default function NewExpensePage() {
   // ── Button handlers ───────────────────────────────────────────────────────
 
   const handleSaveDraft = async () => {
-    const validationError = validate();
-    if (validationError) { setError(validationError); return; }
+    const ve = validate();
+    if (ve) { setError(ve); return; }
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     await currentSavePromiseRef.current;
-    const isNewReport = !savedReportIdRef.current;
+    const isNew = !savedReportIdRef.current;
     setIsSubmitting(true);
     setError(null);
     try {
-      const reportId = await saveReportAndLines();
-      if (isNewReport) {
-        router.push(`/dashboard/business/expenses/${reportId}/edit`);
+      const rid = await saveAll();
+      if (isNew) {
+        router.push(`/dashboard/business/expenses/${rid}/edit`);
       } else {
         setSaveStatus("saved");
-        setTimeout(() => setSaveStatus((s) => (s === "saved" ? "idle" : s)), 3000);
+        setTimeout(() => setSaveStatus((s) => s === "saved" ? "idle" : s), 3000);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to save report.";
-      setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
-    } finally {
-      setIsSubmitting(false);
-    }
+      const msg = err instanceof Error ? err.message : "Failed to save.";
+      setError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
+    } finally { setIsSubmitting(false); }
   };
 
   const handleOpenApproverModal = async () => {
-    const validationError = validate();
-    if (validationError) { setError(validationError); return; }
+    const ve = validate();
+    if (ve) { setError(ve); return; }
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     await currentSavePromiseRef.current;
     setError(null);
     setIsSubmitting(true);
     try {
-      const reportId = await saveReportAndLines();
-      setCreatedReportId(reportId);
-
+      const rid = await saveAll();
+      setCreatedReportId(rid);
       const [matrixData, usersData] = await Promise.all([
         apiFetch<ApprovalMatrix | null>("/api/approvals/matrix", { token: accessToken! }),
         apiFetch<TenantUser[]>("/api/users/tenant", { token: accessToken! }),
       ]);
-
       if (!matrixData) {
         setCreatedReportId(null);
-        setError("Your company has not configured an approval matrix. Contact your administrator.");
+        setError("Approval matrix not configured. Contact your administrator.");
         return;
       }
-
       setMatrix(matrixData);
       setTenantUsers(usersData.filter((u) => u.id !== user?.id));
       setL1Approver(""); setL2Approver(""); setL3Approver("");
@@ -541,29 +718,23 @@ export default function NewExpensePage() {
       setShowApproverModal(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to prepare submission.";
-      setError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
-    } finally {
-      setIsSubmitting(false);
-    }
+      setError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
+    } finally { setIsSubmitting(false); }
   };
 
   const handleSubmitWithApprovers = async () => {
     if (!matrix || !createdReportId) return;
     setApproverError(null);
-
     const total = calcTotal(lines);
     const needsL2 = matrix.levels >= 2 && (matrix.amount_threshold_l2 === null || total > parseFloat(matrix.amount_threshold_l2));
     const needsL3 = matrix.levels >= 3 && (matrix.amount_threshold_l3 === null || total > parseFloat(matrix.amount_threshold_l3));
-
-    if (!l1Approver) { setApproverError("Please select a Level 1 approver."); return; }
-    if (needsL2 && !l2Approver) { setApproverError("Please select a Level 2 approver."); return; }
-    if (needsL3 && !l3Approver) { setApproverError("Please select a Level 3 approver."); return; }
-
+    if (!l1Approver) { setApproverError("Select a Level 1 approver."); return; }
+    if (needsL2 && !l2Approver) { setApproverError("Select a Level 2 approver."); return; }
+    if (needsL3 && !l3Approver) { setApproverError("Select a Level 3 approver."); return; }
     setIsSubmitting(true);
     try {
       await apiFetch(`/api/approvals/reports/${createdReportId}/submit`, {
-        method: "POST",
-        token: accessToken!,
+        method: "POST", token: accessToken!,
         body: JSON.stringify({
           level1_approver_id: l1Approver,
           level2_approver_id: needsL2 ? l2Approver : null,
@@ -572,22 +743,37 @@ export default function NewExpensePage() {
       });
       router.push("/dashboard/business/expenses");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to submit report.";
-      setApproverError(msg === "Failed to fetch" ? "Cannot reach the backend server." : msg);
-    } finally {
-      setIsSubmitting(false);
-    }
+      const msg = err instanceof Error ? err.message : "Failed to submit.";
+      setApproverError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
+    } finally { setIsSubmitting(false); }
   };
+
+  // ── Derived ───────────────────────────────────────────────────────────────
 
   const total = calcTotal(lines);
   const needsL2 = matrix ? matrix.levels >= 2 && (matrix.amount_threshold_l2 === null || total > parseFloat(matrix.amount_threshold_l2)) : false;
   const needsL3 = matrix ? matrix.levels >= 3 && (matrix.amount_threshold_l3 === null || total > parseFloat(matrix.amount_threshold_l3)) : false;
   const hasBackendLines = lines.some((l) => l.backendId);
-  const mode = formConfig.gl_coding_mode;
+  const incompleteCount = lines.filter((l) => !isComplete(l, formConfig)).length;
+  const cfg = formConfig;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="px-6 py-8 max-w-7xl mx-auto">
-      {/* Approver selection modal */}
+    <div className="px-6 py-8 max-w-5xl mx-auto">
+
+      {/* GL Picker */}
+      {pickerFor && cfg.coding_level > 0 && (
+        <ExpenseItemPicker
+          codingLevel={cfg.coding_level}
+          categories={cfg.categories}
+          onSelect={handlePickerSelect}
+          onClose={() => setPickerFor(null)}
+          searchGL={doSearchGL}
+        />
+      )}
+
+      {/* Approver modal */}
       {showApproverModal && matrix && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
@@ -595,9 +781,7 @@ export default function NewExpensePage() {
             <p className="text-sm text-gray-500 mb-4">Choose who should review this report at each level.</p>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  {matrix.level1_role} <span className="text-red-500">*</span>
-                </label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level1_role} <span className="text-red-500">*</span></label>
                 <select value={l1Approver} onChange={(e) => setL1Approver(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">Select approver…</option>
@@ -606,9 +790,7 @@ export default function NewExpensePage() {
               </div>
               {needsL2 && matrix.level2_role && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    {matrix.level2_role} <span className="text-red-500">*</span>
-                  </label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level2_role} <span className="text-red-500">*</span></label>
                   <select value={l2Approver} onChange={(e) => setL2Approver(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="">Select approver…</option>
@@ -618,9 +800,7 @@ export default function NewExpensePage() {
               )}
               {needsL3 && matrix.level3_role && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    {matrix.level3_role} <span className="text-red-500">*</span>
-                  </label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level3_role} <span className="text-red-500">*</span></label>
                   <select value={l3Approver} onChange={(e) => setL3Approver(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="">Select approver…</option>
@@ -632,8 +812,7 @@ export default function NewExpensePage() {
             {approverError && <p className="mt-3 text-xs text-red-600">{approverError}</p>}
             <div className="flex gap-3 justify-end mt-6">
               <button type="button" onClick={() => { setShowApproverModal(false); setApproverError(null); }}
-                disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+                disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                 Cancel
               </button>
               <button type="button" onClick={handleSubmitWithApprovers} disabled={isSubmitting}
@@ -648,195 +827,270 @@ export default function NewExpensePage() {
       {/* Page header */}
       <div className="mb-6 flex items-start justify-between">
         <div>
-          <button type="button" onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700 mb-2">
-            ← Back
-          </button>
+          <button type="button" onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700 mb-2">← Back</button>
           <h1 className="text-xl font-bold text-gray-900">New Expense Retirement</h1>
           <p className="mt-0.5 text-sm text-gray-500">Fill in all required fields, then save or submit.</p>
         </div>
-        <div className="mt-8 shrink-0">
+        <div className="mt-8 shrink-0 text-right">
           {saveStatus === "saving" && <span className="text-xs text-gray-400">Saving…</span>}
           {saveStatus === "saved" && <span className="text-xs text-green-600 font-medium">Saved ✓</span>}
-          {saveStatus === "error" && <span className="text-xs text-red-500">Not saved</span>}
+          {saveStatus === "error" && <span className="text-xs text-red-500">Save failed</span>}
         </div>
       </div>
 
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
           <span>{error}</span>
-          <button type="button" onClick={() => setError(null)}
-            className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
+          <button type="button" onClick={() => setError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
         </div>
       )}
 
-      {/* Finance mode banner */}
-      {mode === "finance" && (
+      {cfg.coding_level === 0 && (
         <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
-          GL coding will be assigned by Finance during review. You do not need to enter GL accounts.
+          GL coding will be assigned by Finance during the approval review.
         </div>
       )}
 
-      {/* Section 1 — Report Header */}
+      {/* Report header */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <h2 className="text-sm font-semibold text-gray-800 mb-4 uppercase tracking-wide">Report Header</h2>
+        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4">Report Details</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Employee Name</label>
             <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">{user?.full_name ?? "—"}</div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Employee Code</label>
-            <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-400 italic">Not set on profile</div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Employee Function <span className="text-gray-400">(optional)</span>
-            </label>
-            <input type="text" value={employeeFunction}
-              onChange={(e) => setEmployeeFunction(e.target.value)}
-              onBlur={scheduleAutoSave}
-              placeholder="e.g. Marketing, Finance, Operations"
+            <label className="block text-xs font-medium text-gray-600 mb-1">Employee Function <span className="text-gray-400">(optional)</span></label>
+            <input type="text" value={employeeFunction} onChange={(e) => setEmployeeFunction(e.target.value)} onBlur={scheduleAutoSave}
+              placeholder="e.g. Marketing, Finance"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Report Date <span className="text-red-500">*</span>
-            </label>
-            <input type="date" value={reportDate}
-              onChange={(e) => setReportDate(e.target.value)}
-              onBlur={scheduleAutoSave}
+            <label className="block text-xs font-medium text-gray-600 mb-1">Report Date <span className="text-red-500">*</span></label>
+            <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} onBlur={scheduleAutoSave}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
       </div>
 
-      {/* Section 2 — Expense Lines */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">Expense Lines</h2>
-          <button type="button" onClick={addLine} className="text-sm text-blue-600 hover:text-blue-800 font-medium">
-            + Add Line
-          </button>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">#</th>
-                {/* Category column: shown in finance and category_mapped modes */}
-                {(mode === "finance" || mode === "category_mapped") && formConfig.categories.length > 0 && (
-                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
-                    Category{formConfig.require_category && <span className="text-red-500"> *</span>}
-                  </th>
-                )}
-                {(mode === "finance" || mode === "category_mapped") && formConfig.require_subcategory && (
-                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
-                    Subcategory<span className="text-red-500"> *</span>
-                  </th>
-                )}
-                {mode !== "finance" && (
-                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">
-                    GL Account{mode === "employee" && <span className="text-red-500"> *</span>}
-                  </th>
-                )}
-                {mode === "employee" && (
-                  <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">P/L Group</th>
-                )}
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">IO / Dimension</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Cost Center</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Location</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Invoice Date</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Invoice No.</th>
-                <th className="pb-2 pr-3 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Description <span className="text-red-500">*</span></th>
-                <th className="pb-2 pr-3 text-right text-xs font-semibold text-gray-500 whitespace-nowrap">Amount (NGN) <span className="text-red-500">*</span></th>
-                <th className="pb-2 text-right text-xs font-semibold text-gray-500"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {lines.map((line, idx) => {
-                const selectedCat = formConfig.categories.find((c) => c.id === line.category_id);
-                const availableSubs = selectedCat?.subcategories ?? [];
-                return (
-                  <tr key={line.localId}>
-                    <td className="py-2 pr-3 text-gray-400">{idx + 1}</td>
-
-                    {/* Category dropdown */}
-                    {(mode === "finance" || mode === "category_mapped") && formConfig.categories.length > 0 && (
-                      <td className="py-2 pr-3">
-                        <select
-                          value={line.category_id}
-                          onChange={(e) => handleCategoryChange(line.localId, e.target.value)}
-                          className="w-36 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Select…</option>
-                          {formConfig.categories.map((c) => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
-                        </select>
-                      </td>
-                    )}
-
-                    {/* Subcategory dropdown */}
-                    {(mode === "finance" || mode === "category_mapped") && formConfig.require_subcategory && (
-                      <td className="py-2 pr-3">
-                        <select
-                          value={line.subcategory_id}
-                          onChange={(e) => { updateLine(line.localId, "subcategory_id", e.target.value); scheduleAutoSave(); }}
-                          disabled={availableSubs.length === 0}
-                          className="w-36 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
-                        >
-                          <option value="">{availableSubs.length === 0 ? "—" : "Select…"}</option>
-                          {availableSubs.map((s) => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-                      </td>
-                    )}
-
-                    {mode !== "finance" && (
-                      <td className="py-2 pr-3">
-                        <input type="text" value={line.gl_account}
-                          onChange={(e) => updateLine(line.localId, "gl_account", e.target.value)}
-                          onBlur={scheduleAutoSave}
-                          placeholder="e.g. 733060"
-                          className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                      </td>
-                    )}
-                    {mode === "employee" && (
-                      <td className="py-2 pr-3">
-                        <input type="text" value={line.pl_group}
-                          onChange={(e) => updateLine(line.localId, "pl_group", e.target.value)}
-                          onBlur={scheduleAutoSave}
-                          placeholder="e.g. PL4"
-                          className="w-20 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                      </td>
-                    )}
-
-                    <td className="py-2 pr-3"><input type="text" value={line.io_dimension} onChange={(e) => updateLine(line.localId, "io_dimension", e.target.value)} onBlur={scheduleAutoSave} placeholder="IO" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-3"><input type="text" value={line.cost_center} onChange={(e) => updateLine(line.localId, "cost_center", e.target.value)} onBlur={scheduleAutoSave} placeholder="CC" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-3"><input type="text" value={line.location} onChange={(e) => updateLine(line.localId, "location", e.target.value)} onBlur={scheduleAutoSave} placeholder="e.g. Lagos" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-3"><input type="date" value={line.invoice_date} onChange={(e) => updateLine(line.localId, "invoice_date", e.target.value)} onBlur={scheduleAutoSave} className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-3"><input type="text" value={line.invoice_number} onChange={(e) => updateLine(line.localId, "invoice_number", e.target.value)} onBlur={scheduleAutoSave} placeholder="Inv #" className="w-24 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-3"><input type="text" value={line.description} onChange={(e) => updateLine(line.localId, "description", e.target.value)} onBlur={scheduleAutoSave} placeholder="Description" className="w-48 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-3 text-right"><input type="number" min="0.01" step="0.01" value={line.amount} onChange={(e) => updateLine(line.localId, "amount", e.target.value)} onBlur={scheduleAutoSave} placeholder="0.00" className="w-28 px-2 py-1 border border-gray-300 rounded text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 text-right">
-                      <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1}
-                        className="text-xs text-red-500 hover:text-red-700 disabled:text-gray-300 font-medium">Remove</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-gray-200 flex justify-end">
-          <div className="text-right">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider mr-4">Grand Total</span>
-            <span className="text-lg font-bold text-gray-900">{formatTotal(lines)}</span>
+      {/* Expense lines */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Expense Lines</h2>
+            {incompleteCount > 0 && (
+              <p className="text-xs text-amber-600 mt-0.5">{incompleteCount} line{incompleteCount !== 1 ? "s" : ""} incomplete</p>
+            )}
           </div>
+          <button type="button" onClick={addLine} className="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Add Line</button>
         </div>
+
+        {/* Empty state */}
+        {lines.length === 0 && (
+          <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-xl">
+            <p className="text-sm text-gray-400 mb-3">No expense lines yet.</p>
+            <button type="button" onClick={addLine} className="text-sm font-medium text-blue-600 hover:text-blue-800">+ Add Expense Item</button>
+          </div>
+        )}
+
+        {/* Line cards */}
+        <div className="space-y-3">
+          {lines.map((line, idx) => {
+            const complete = isComplete(line, cfg);
+            const activeDims = line.dimension_requirements.filter((r) => r.requirement !== "na");
+            const lineSugg = suggestions[line.localId];
+            const chipSelected = cfg.coding_level === 1 ? !!line.subcategory_id : !!line.gl_id;
+
+            return (
+              <div key={line.localId}
+                className={`rounded-xl border border-gray-200 overflow-hidden ${complete ? "border-l-4 border-l-green-400" : "border-l-4 border-l-amber-400"}`}>
+
+                {/* Card header */}
+                <div className="flex items-center gap-3 px-4 py-3 bg-white">
+                  <span className="text-xs font-bold text-gray-400 shrink-0 w-5">#{idx + 1}</span>
+
+                  {/* GL chip */}
+                  <div className="flex-1 min-w-0">
+                    {cfg.coding_level === 0 ? (
+                      <span className="text-xs text-gray-400 italic">Finance assigns GL</span>
+                    ) : (
+                      <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors max-w-full truncate
+                          ${chipSelected ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100" : "bg-gray-50 border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500"}`}>
+                        <span className="truncate">{glChip(line, cfg.coding_level)}</span>
+                        {line.flag_incorrect && <span className="shrink-0 text-amber-500" title="Flagged as incorrect">⚑</span>}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Amount preview */}
+                  <span className="text-sm font-semibold text-gray-700 shrink-0">
+                    {line.amount ? `₦${(parseFloat(line.amount) || 0).toLocaleString("en-NG", { minimumFractionDigits: 2 })}` : "—"}
+                  </span>
+
+                  {/* Expand toggle */}
+                  <button type="button" onClick={() => toggleExpand(line.localId)}
+                    className="text-gray-400 hover:text-gray-600 text-xs shrink-0 w-5 text-center">
+                    {line.is_expanded ? "▲" : "▼"}
+                  </button>
+                </div>
+
+                {/* Collapsed summary */}
+                {!line.is_expanded && (line.description || line.category_name) && (
+                  <div className="px-10 pb-2 text-xs text-gray-500 truncate">
+                    {[line.category_name, line.subcategory_name].filter(Boolean).join(" / ")}
+                    {line.description && <span className="text-gray-400"> — {line.description.slice(0, 50)}</span>}
+                  </div>
+                )}
+
+                {/* Expanded body */}
+                {line.is_expanded && (
+                  <div className="px-4 pb-4 pt-0 border-t border-gray-100">
+                    <div className="space-y-3 mt-3">
+
+                      {/* Amount / Invoice Date / Invoice No */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Amount (NGN) <span className="text-red-500">*</span></label>
+                          <input type="number" min="0.01" step="0.01" value={line.amount}
+                            onChange={(e) => { updateLine(line.localId, { amount: e.target.value }); scheduleAutoSave(); }}
+                            placeholder="0.00"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Invoice Date <span className="text-red-500">*</span></label>
+                          <input type="date" value={line.invoice_date}
+                            onChange={(e) => { updateLine(line.localId, { invoice_date: e.target.value }); scheduleAutoSave(); }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Invoice No. <span className="text-red-500">*</span></label>
+                          <input type="text" value={line.invoice_number}
+                            onChange={(e) => { updateLine(line.localId, { invoice_number: e.target.value }); scheduleAutoSave(); }}
+                            placeholder="INV-001"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Description <span className="text-red-500">*</span></label>
+                        <input type="text" value={line.description}
+                          onChange={(e) => { updateLine(line.localId, { description: e.target.value }); scheduleAutoSave(); }}
+                          placeholder="What was this expense for?"
+                          disabled={!cfg.allow_free_text_description && !!line.description}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600" />
+                      </div>
+
+                      {/* Location */}
+                      {cfg.show_location && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Location{cfg.require_location && <span className="text-red-500"> *</span>}
+                          </label>
+                          <input type="text" value={line.location}
+                            onChange={(e) => { updateLine(line.localId, { location: e.target.value }); scheduleAutoSave(); }}
+                            placeholder="e.g. Lagos"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      )}
+
+                      {/* Level-2 flag comment */}
+                      {cfg.coding_level === 2 && line.flag_incorrect && (
+                        <div>
+                          <label className="block text-xs font-medium text-amber-700 mb-1">Why is the GL incorrect? <span className="text-red-500">*</span></label>
+                          <input type="text" value={line.flag_comment}
+                            onChange={(e) => { updateLine(line.localId, { flag_comment: e.target.value }); scheduleAutoSave(); }}
+                            placeholder="Briefly explain the issue"
+                            className="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                        </div>
+                      )}
+
+                      {/* Dimension dropdowns */}
+                      {activeDims.length > 0 && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {activeDims.map((req) => {
+                            const dim = cfg.dimensions.find((d) => d.id === req.dimension_id);
+                            if (!dim) return null;
+                            const sugg = lineSugg?.dimensions[req.dimension_id];
+                            const showPill = sugg && sugg.confidence >= 0.40 && sugg.confidence < 0.80 && !line.dimension_values[req.dimension_id];
+                            const pillLabel = dim.values.find((v) => v.id === sugg?.value_id)?.code;
+                            return (
+                              <div key={req.dimension_id}>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                  {dim.name}{req.requirement === "required" && <span className="text-red-500"> *</span>}
+                                </label>
+                                <select
+                                  value={line.dimension_values[req.dimension_id] ?? ""}
+                                  onChange={(e) => {
+                                    updateLine(line.localId, { dimension_values: { ...line.dimension_values, [req.dimension_id]: e.target.value } });
+                                    scheduleAutoSave();
+                                  }}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                  <option value="">Select…</option>
+                                  {dim.values.map((v) => (
+                                    <option key={v.id} value={v.id}>{v.code} — {v.name}</option>
+                                  ))}
+                                </select>
+                                {showPill && pillLabel && (
+                                  <button type="button"
+                                    onClick={() => {
+                                      updateLine(line.localId, { dimension_values: { ...line.dimension_values, [req.dimension_id]: sugg!.value_id } });
+                                      scheduleAutoSave();
+                                    }}
+                                    className="mt-1 text-xs text-gray-500 bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded-full transition-colors">
+                                    Last used: {pillLabel}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Split lines */}
+                      {line.split_lines.length > 0 && (
+                        <SplitLinePanel
+                          parentAmount={parseFloat(line.amount) || 0}
+                          splitLines={line.split_lines}
+                          onAddSplit={() => addSplitLine(line.localId)}
+                          onUpdateSplit={(splitId, updates) => updateSplitLine(line.localId, splitId, updates)}
+                          onRemoveSplit={(splitId) => removeSplitLine(line.localId, splitId)}
+                          dimensions={cfg.dimensions}
+                          onPickGL={(splitId) => setPickerFor({ lineLocalId: line.localId, splitLocalId: splitId })}
+                        />
+                      )}
+
+                      {/* Line actions */}
+                      <div className="flex items-center gap-4 pt-1">
+                        {line.split_lines.length === 0 && parseFloat(line.amount) > 0 && (
+                          <button type="button" onClick={() => addSplitLine(line.localId)}
+                            className="text-xs text-gray-500 hover:text-blue-600 font-medium">
+                            Split this line
+                          </button>
+                        )}
+                        <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1}
+                          className="text-xs text-red-400 hover:text-red-600 disabled:text-gray-300 font-medium ml-auto">
+                          Remove Line
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Grand total */}
+        {lines.length > 0 && (
+          <div className="mt-4 flex justify-end">
+            <div className="text-right">
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider mr-4">Grand Total</span>
+              <span className="text-lg font-bold text-gray-900">{fmtTotal(lines)}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Hidden file input */}
@@ -844,49 +1098,42 @@ export default function NewExpensePage() {
         accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc"
         onChange={handleFileSelected} />
 
-      {/* M6 — Per-line attachments */}
+      {/* Per-line attachments */}
       {hasBackendLines && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Line Attachments</h2>
-          <p className="text-xs text-gray-400 mb-4">
-            Attach receipts or invoices to individual expense lines. Accepted: PDF, JPG, PNG, Excel, Word (max 10 MB).
-          </p>
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Line Attachments</h2>
+          <p className="text-xs text-gray-400 mb-4">Receipts or invoices per expense line. PDF, JPG, PNG, Excel, Word (max 10 MB).</p>
           {uploadError && (
             <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-center justify-between">
               <span>{uploadError}</span>
               <button onClick={() => setUploadError(null)} className="ml-2 text-red-400 hover:text-red-600 font-bold">×</button>
             </div>
           )}
-          <div className="space-y-4">
+          <div className="space-y-3">
             {lines.filter((l) => l.backendId).map((line, idx) => {
               const lineDocs = documents.filter((d) => d.line_id === line.backendId);
-              const isUploading = uploadingFor === line.backendId;
+              const isUp = uploadingFor === line.backendId;
               return (
                 <div key={line.localId} className="border border-gray-100 rounded-lg p-3">
                   <p className="text-xs font-semibold text-gray-600 mb-2">
-                    Line {idx + 1} — {line.description || line.gl_account || "(new line)"}
+                    Line {idx + 1} — {line.description || line.gl_number || "(new)"}
                   </p>
                   {lineDocs.length > 0 && (
                     <ul className="mb-2 space-y-1">
                       {lineDocs.map((doc) => (
                         <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
-                          <FileTypeIcon mimeType={doc.mime_type} />
+                          <FileIcon mime={doc.mime_type} />
                           <span className="flex-1 truncate">{doc.file_name}</span>
-                          <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
-                          {doc.signed_url && (
-                            <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
-                          )}
-                          <button type="button" onClick={() => handleDeleteDocument(doc.id)}
-                            className="text-red-400 hover:text-red-600 shrink-0 font-medium">Remove</button>
+                          <span className="text-gray-400 shrink-0">{fmtBytes(doc.file_size)}</span>
+                          {doc.signed_url && <a href={doc.signed_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 shrink-0">View</a>}
+                          <button type="button" onClick={() => handleDeleteDocument(doc.id)} className="text-red-400 hover:text-red-600 shrink-0">Remove</button>
                         </li>
                       ))}
                     </ul>
                   )}
-                  <button type="button" disabled={isUploading || !line.backendId}
-                    onClick={() => line.backendId && triggerUpload(line.backendId)}
+                  <button type="button" disabled={isUp || !line.backendId} onClick={() => line.backendId && triggerUpload(line.backendId)}
                     className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
-                    {isUploading ? "Uploading…" : "+ Attach Document"}
+                    {isUp ? "Uploading…" : "+ Attach Document"}
                   </button>
                 </div>
               );
@@ -895,36 +1142,32 @@ export default function NewExpensePage() {
         </div>
       )}
 
-      {/* M6 — Report-level documents */}
+      {/* Report-level documents */}
       {savedReportId && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Report Documents</h2>
-          <p className="text-xs text-gray-400 mb-4">Documents that apply to the report as a whole, not a specific line.</p>
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Report Documents</h2>
+          <p className="text-xs text-gray-400 mb-4">Documents that apply to the whole report.</p>
           {(() => {
             const reportDocs = documents.filter((d) => d.line_id === null);
-            const isUploading = uploadingFor === "report";
+            const isUp = uploadingFor === "report";
             return (
               <>
                 {reportDocs.length > 0 && (
                   <ul className="mb-3 space-y-1">
                     {reportDocs.map((doc) => (
                       <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
-                        <FileTypeIcon mimeType={doc.mime_type} />
+                        <FileIcon mime={doc.mime_type} />
                         <span className="flex-1 truncate">{doc.file_name}</span>
-                        <span className="text-gray-400 shrink-0">{formatBytes(doc.file_size)}</span>
-                        {doc.signed_url && (
-                          <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
-                        )}
-                        <button type="button" onClick={() => handleDeleteDocument(doc.id)}
-                          className="text-red-400 hover:text-red-600 shrink-0 font-medium">Remove</button>
+                        <span className="text-gray-400 shrink-0">{fmtBytes(doc.file_size)}</span>
+                        {doc.signed_url && <a href={doc.signed_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 shrink-0">View</a>}
+                        <button type="button" onClick={() => handleDeleteDocument(doc.id)} className="text-red-400 hover:text-red-600 shrink-0">Remove</button>
                       </li>
                     ))}
                   </ul>
                 )}
-                <button type="button" disabled={isUploading} onClick={() => triggerUpload("report")}
+                <button type="button" disabled={isUp} onClick={() => triggerUpload("report")}
                   className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
-                  {isUploading ? "Uploading…" : "+ Attach Document"}
+                  {isUp ? "Uploading…" : "+ Attach Document"}
                 </button>
               </>
             );
@@ -942,9 +1185,11 @@ export default function NewExpensePage() {
           className="px-4 py-2 text-sm font-medium text-gray-800 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 disabled:opacity-60">
           {isSubmitting ? "Saving…" : "Save Draft"}
         </button>
-        <button type="button" onClick={handleOpenApproverModal} disabled={isSubmitting || !!error}
+        <button type="button" onClick={handleOpenApproverModal}
+          disabled={isSubmitting || incompleteCount > 0}
+          title={incompleteCount > 0 ? `${incompleteCount} line${incompleteCount !== 1 ? "s" : ""} still incomplete` : undefined}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
-          {isSubmitting ? "Preparing…" : "Submit for Approval"}
+          {isSubmitting ? "Preparing…" : incompleteCount > 0 ? `Submit (${incompleteCount} incomplete)` : "Submit for Approval"}
         </button>
       </div>
     </div>

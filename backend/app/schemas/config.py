@@ -405,3 +405,36 @@ class CategoryUpdate(BaseModel):
     name: str | None = None
     code: str | None = None
     sort_order: int | None = None
+
+
+# ── M9: GL search result (used by expense form Level 4 GL picker) ─────────────
+
+class GLSearchResult(BaseModel):
+    """
+    A single GL account as returned by the GL search endpoint.
+
+    Includes dimension requirements so the expense form can immediately render
+    the correct dimension dropdowns once the employee selects a GL.
+    """
+
+    gl_id: str
+    gl_number: str
+    gl_name: str
+    account_type: str
+    dimension_requirements: list[dict]  # [{dimension_id, requirement}]
+
+    @classmethod
+    def from_orm(cls, gl: object) -> "GLSearchResult":
+        """Build from a ChartOfAccount ORM instance with eagerly loaded dimension_requirements."""
+        from app.models.master_data import ChartOfAccount
+        g: ChartOfAccount = gl  # type: ignore[assignment]
+        return cls(
+            gl_id=str(g.id),
+            gl_number=g.gl_number,
+            gl_name=g.gl_name,
+            account_type=g.account_type,
+            dimension_requirements=[
+                {"dimension_id": str(req.dimension_id), "requirement": req.requirement}
+                for req in (g.dimension_requirements or [])
+            ],
+        )

@@ -1,5 +1,5 @@
 """
-ZivaBI — M7 expense configuration and category management router.
+ZivaBI — M7/M8/M9 expense configuration and category management router.
 
 Registered at prefix /api/expense-config.
 
@@ -10,12 +10,13 @@ Endpoints:
     POST   /api/expense-config/categories               Create category or subcategory (Tenant Admin only)
     PATCH  /api/expense-config/categories/{id}          Update category (Tenant Admin only)
     DELETE /api/expense-config/categories/{id}          Soft-delete category + subcategories (Admin only)
-    GET    /api/expense-config/form-config              Combined config + categories for expense form
+    GET    /api/expense-config/form-config              Combined config + categories + dimensions for form
     POST   /api/expense-config/reports/{report_id}/gl-codes  Finance GL coding batch update
 
 The form-config endpoint is what the expense submission form calls on page load.
-It returns everything the form needs in one round-trip: GL coding mode, category
-flags, and the full active category tree for dropdowns.
+M9: it now also returns tenant dimensions (with values) and an enhanced category tree
+(with GL mappings and their per-GL dimension requirements) so the form can render
+the GL picker popup and dynamic dimension fields without additional round-trips.
 """
 
 import uuid
@@ -34,12 +35,24 @@ from app.models.expenses import (
     ExpenseReport,
     TenantExpenseConfig,
 )
+from app.models.master_data import (
+    CategoryGLMapping,
+    ChartOfAccount,
+    GLDimensionRequirement,
+    TenantDimension,
+)
 from app.schemas.expense_config import (
+    CategoryForForm,
+    DimensionForForm,
+    DimensionValueForForm,
     ExpenseCategoryCreate,
     ExpenseCategoryResponse,
     ExpenseCategoryUpdate,
     FinanceGLCodesRequest,
     FormConfigResponse,
+    GLDimReqForForm,
+    GLMappingForForm,
+    SubcategoryForForm,
     TenantExpenseConfigCreate,
     TenantExpenseConfigResponse,
     TenantExpenseConfigUpdate,
@@ -358,24 +371,29 @@ async def get_form_config(
     db: AsyncSession = Depends(get_db),
 ) -> FormConfigResponse:
     """
-    Combined endpoint for the expense submission form.
+    Combined endpoint for the expense submission form (M9 enhanced).
 
-    Returns GL coding mode, category requirement flags, and the full active
-    category tree (with subcategories embedded) in one payload so the form
-    can render itself without additional round-trips.
+    Returns in a single round-trip everything the form needs on page load:
+      - coding_level and all form flags
+      - enhanced category tree (categories → subcategories → GL mappings →
+        per-GL dimension requirements) for the GL picker popup
+      - tenant dimensions with all active values for dimension dropdowns
 
-    Returns defaults when the tenant has no saved config.
+    Query strategy (avoids N+1):
+      1. Config row — 1 query
+      2. Active TenantDimensions with values — 1 query (selectinload)
+      3. All active ExpenseCategories flat — 1 query; split top/sub in Python
+      4. All CategoryGLMappings for subcategory IDs with GL + dim requirements — 1 query
+      5. Tree assembled in Python
+
+    Returns defaults when the tenant has no saved config row.
     """
     tenant_id = _require_tenant(current_user)
 
+    # ── 1. Config row ──────────────────────────────────────────────────────────
     config = await _get_config(tenant_id, db)
     if config is None:
-        lvl = 0
-        req_cat = False
-        req_sub = False
-        allow_free = True
-        show_loc = True
-        req_loc = False
+        lvl, req_cat, req_sub, allow_free, show_loc, req_loc = 0, False, False, True, True, False
     else:
         lvl = config.coding_level
         req_cat = config.require_category
@@ -384,8 +402,93 @@ async def get_form_config(
         show_loc = config.show_location
         req_loc = config.require_location
 
-    top_level = await _get_active_categories(tenant_id, db)
-    categories = [ExpenseCategoryResponse.from_orm(c, c.subcategories) for c in top_level]
+    # ── 2. Dimensions with values ──────────────────────────────────────────────
+    dims_result = await db.execute(
+        select(TenantDimension)
+        .where(TenantDimension.tenant_id == tenant_id, TenantDimension.is_active.is_(True))
+        .options(selectinload(TenantDimension.values))
+        .order_by(TenantDimension.sort_order, TenantDimension.name)
+    )
+    dimensions_orm = list(dims_result.scalars().all())
+    dimensions: list[DimensionForForm] = [
+        DimensionForForm(
+            id=str(d.id),
+            name=d.name,
+            code=d.code,
+            is_required=d.is_required,
+            sort_order=d.sort_order,
+            values=[
+                DimensionValueForForm(id=str(v.id), code=v.code, name=v.name, sort_order=v.sort_order)
+                for v in d.values
+                if v.is_active
+            ],
+        )
+        for d in dimensions_orm
+    ]
+
+    # ── 3. All active categories flat ──────────────────────────────────────────
+    cats_result = await db.execute(
+        select(ExpenseCategory)
+        .where(ExpenseCategory.tenant_id == tenant_id, ExpenseCategory.is_active.is_(True))
+        .order_by(ExpenseCategory.sort_order, ExpenseCategory.name)
+    )
+    all_cats = list(cats_result.scalars().all())
+    top_cats = [c for c in all_cats if c.parent_id is None]
+    sub_by_parent: dict[str, list[ExpenseCategory]] = {}
+    for c in all_cats:
+        if c.parent_id is not None:
+            key = str(c.parent_id)
+            sub_by_parent.setdefault(key, []).append(c)
+
+    # ── 4. GL mappings for all subcategories in one query ─────────────────────
+    subcat_ids = [c.id for c in all_cats if c.parent_id is not None]
+    if subcat_ids:
+        mappings_result = await db.execute(
+            select(CategoryGLMapping)
+            .where(CategoryGLMapping.category_id.in_(subcat_ids))
+            .options(
+                selectinload(CategoryGLMapping.gl_account)
+                .selectinload(ChartOfAccount.dimension_requirements)
+            )
+        )
+        all_mappings = list(mappings_result.scalars().all())
+    else:
+        all_mappings = []
+
+    mappings_by_cat: dict[str, list[CategoryGLMapping]] = {}
+    for m in all_mappings:
+        mappings_by_cat.setdefault(str(m.category_id), []).append(m)
+
+    # ── 5. Assemble CategoryForForm tree ──────────────────────────────────────
+    categories: list[CategoryForForm] = []
+    for cat in top_cats:
+        subs = sub_by_parent.get(str(cat.id), [])
+        enriched_subs: list[SubcategoryForForm] = []
+        for sub in subs:
+            sub_mappings = mappings_by_cat.get(str(sub.id), [])
+            gl_mappings: list[GLMappingForForm] = [
+                GLMappingForForm(
+                    gl_id=str(m.gl_id),
+                    gl_number=m.gl_account.gl_number,
+                    gl_name=m.gl_account.gl_name,
+                    is_default=m.is_default,
+                    dimension_requirements=[
+                        GLDimReqForForm(
+                            dimension_id=str(req.dimension_id),
+                            requirement=req.requirement,
+                        )
+                        for req in m.gl_account.dimension_requirements
+                    ],
+                )
+                for m in sub_mappings
+                if m.gl_account.is_active
+            ]
+            enriched_subs.append(
+                SubcategoryForForm(id=str(sub.id), name=sub.name, code=sub.code, gl_mappings=gl_mappings)
+            )
+        categories.append(
+            CategoryForForm(id=str(cat.id), name=cat.name, code=cat.code, subcategories=enriched_subs)
+        )
 
     return FormConfigResponse(
         gl_coding_mode=_coding_level_to_gl_mode(lvl),
@@ -396,6 +499,7 @@ async def get_form_config(
         show_location=show_loc,
         require_location=req_loc,
         categories=categories,
+        dimensions=dimensions,
     )
 
 

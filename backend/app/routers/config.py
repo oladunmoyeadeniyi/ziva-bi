@@ -36,6 +36,9 @@ Endpoints:
     DELETE /api/config/categories/{id}/gl-mappings/{gl_id}  Remove GL mapping
     PATCH  /api/config/categories/{id}/gl-mappings/{gl_id}  Set/unset as default
 
+  GL Search (M9):
+    GET    /api/config/gl/search?q=...&limit=20        Search GL accounts with dimension requirements
+
 All endpoints are tenant-scoped and require authentication.
 Admin-only operations require is_tenant_admin or is_super_admin.
 """
@@ -80,6 +83,7 @@ from app.schemas.config import (
     DimensionValueCreate,
     DimensionValueResponse,
     DimensionValueUpdate,
+    GLSearchResult,
     UploadResult,
     _generate_code,
 )
@@ -1235,6 +1239,47 @@ async def remove_gl_mapping(
 
     await db.delete(mapping)
     await db.flush()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GL SEARCH (M9 — expense form Level 3/4 GL picker)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/gl/search", response_model=list[GLSearchResult])
+async def search_gl_accounts(
+    q: str = Query(default="", description="Search term matched against GL number or name"),
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[GLSearchResult]:
+    """
+    Search active GL accounts by number or name for the expense form GL picker.
+
+    Returns accounts with their per-dimension requirements so the form can render
+    the correct dimension dropdowns immediately after GL selection.
+    Tenant-scoped; available to all authenticated business users (not admin-only).
+    """
+    tenant_id = _require_tenant(current_user)
+
+    query = (
+        select(ChartOfAccount)
+        .where(
+            ChartOfAccount.tenant_id == tenant_id,
+            ChartOfAccount.is_active == True,  # noqa: E712
+        )
+        .options(selectinload(ChartOfAccount.dimension_requirements))
+        .order_by(ChartOfAccount.gl_number)
+        .limit(limit)
+    )
+
+    if q.strip():
+        term = f"%{q.strip()}%"
+        query = query.where(
+            ChartOfAccount.gl_number.ilike(term) | ChartOfAccount.gl_name.ilike(term)
+        )
+
+    result = await db.execute(query)
+    return [GLSearchResult.from_orm(g) for g in result.scalars().all()]
 
 
 @router.patch(
