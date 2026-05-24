@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (M9 — Intelligent Expense Form: GL picker, dimensions, split lines, AI suggestions, card-based form)
+> Last updated: May 2026 (M9 Bug Fixes — compact line cards, split progress text, document attach inline, comma formatting, GL prominence, dimension upload fix)
 
 ---
 
@@ -377,6 +377,16 @@ M9 connects the M8 configuration (coding levels 0–4, CoA, dimensions, category
 - Submit blocked when any line is incomplete; button shows `"Submit (N incomplete)"` when blocked
 - Edit page: loads existing lines (with split nesting), disables all inputs unless status allows editing (`DRAFT | REJECTED | REFERRED_TO_REQUESTOR`)
 
+### ✅ Completed — M9 Bug Fixes (May 2026)
+Six bugs fixed following M9 testing:
+- **Fix 1 (backend):** Dimension values bulk upload failed on integer sort_order from Excel (stored as float 10.0). Fixed `int(sort_str)` → `int(float(sort_str))` in `config.py` upload endpoint.
+- **Fix 2:** Compact line cards — tighter padding, `text-[11px]` labels, `gap-2.5` grid, `py-1.5` inputs.
+- **Fix 3:** Split button moved to card header (shown only when GL selected + amount > 0 + no splits). Progress text changed from "₦X remaining" → "₦X of ₦Y allocated".
+- **Fix 4:** Document attach button moved inside expanded card body footer; paperclip indicator (gray=none, green=attached) always visible in collapsed header.
+- **Fix 5:** Amount inputs changed to `type="text" inputMode="decimal"` with `fmtCommaInput`/`stripCommas` helpers — comma-formatted display, plain number storage. Applied to both new + edit forms.
+- **Fix 6:** GL selector is now a prominent blue outlined button when unselected; blue filled chip with "change" link when selected. Submit attempt sets `submitAttempted` state — highlights unfilled required fields in red, shows incomplete lines summary with line numbers, scrolls to first incomplete line.
+Both new/page.tsx and edit/page.tsx updated.
+
 ### ⏳ Next milestone TBD
 Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts Payable module, or OCR receipt scanning.
 
@@ -388,4 +398,4 @@ Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts
 
 ---
 
-*End of Master Context. Last updated: May 2026 (M9 complete — intelligent expense form: GL picker popup, dimension fields, split lines, AI suggestions, card-based UX).*
+*End of Master Context. Last updated: May 2026 (M9 Bug Fixes complete — compact cards, split text, inline docs, comma formatting, GL prominence, dimension upload fix).*
