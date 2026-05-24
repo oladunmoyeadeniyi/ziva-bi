@@ -1,7 +1,7 @@
 # MASTER CONTEXT — Ziva BI
 
 > Single source of truth. If anything in other docs conflicts with this, **this wins**.
-> Last updated: May 2026 (M9 Bug Fixes Round 3 — split dimension logic, upload state fix, collapsed summary, GL button sizing)
+> Last updated: May 2026 (M8.1 — advanced CoA template, dimension types/cascading, bulk actions, employee master, cost center head, finance review config)
 
 ---
 
@@ -404,6 +404,29 @@ Four issues fixed following third round of testing:
 
 Both new/page.tsx and edit/page.tsx updated.
 
+### ✅ Completed — Milestone 8.1: Advanced CoA, Dimension Types, Employee Master (May 2026)
+Full-stack milestone expanding master data management and intelligent form capabilities.
+
+**Backend additions:**
+- Alembic migration `j0k1l2m3n4o5`: 8 new columns on `chart_of_accounts` (gl_group, gl_subgroup, gl_sub_subgroup, fs_head, fs_note, tb_mapping, group_account_number, group_account_name); 5 new columns on `dimension_values` (value_type, cascade_dimension_id, cascade_value_id, valid_from, valid_to); `accepted_value_types` on `tenant_dimensions`; 5 new tables: `employees`, `employee_code_history`, `employee_transfers`, `cost_center_config`, `finance_review_config`
+- 3-sheet enterprise CoA xlsx template (GL Accounts + Dimensions Setup + Instructions) with color-coded headers and dropdown validations
+- Multi-sheet CoA upload: Sheet 2 (dimensions) processed first, Sheet 1 (GL) second; returns per-sheet UploadResult
+- Bulk action endpoints for CoA (`/api/config/coa/bulk-action`), dimension values, and categories (activate/deactivate/delete)
+- Replace-all endpoint: deactivates all existing CoA then re-imports from upload
+- `hr.py` router: employee CRUD + code history + transfers + xlsx upload; cost center head assignment; finance review chain management per module
+- `expense_config.py`: dimension values filtered by `valid_from`/`valid_to` at form-config serve time
+
+**Frontend additions:**
+- `settings/employees/page.tsx`: employee table, add, upload, transfer, code update, history drawer
+- `settings/cost-centers/page.tsx`: cost center head search & assign per cost center
+- `settings/finance-review/page.tsx`: per-module reviewer chain with level ordering, add/edit/remove
+- `settings/chart-of-accounts/page.tsx`: bulk select, replace-all, multi-sheet upload result display, SOCI/SOFP account types
+- `settings/dimensions/[id]/values/page.tsx`: value_type, valid_from/to dates, bulk actions
+- `settings/expense-categories/page.tsx`: bulk selection + bulk action
+- `settings/layout.tsx`: Employees, Cost Centers under Master Data; Finance Review in top links
+- Expense form (new + edit): dimension values filtered by validity period; cascade auto-fill on select; `accepted_value_types` filtering
+- `SplitLinePanel.tsx`: `DimensionValueForForm` interface extended with M8.1 fields
+
 ### ⏳ Next milestone TBD
 Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts Payable module, or OCR receipt scanning.
 
@@ -415,4 +438,4 @@ Suggested candidates: Personal Expense Tracking (individual dashboard), Accounts
 
 ---
 
-*End of Master Context. Last updated: May 2026 (M9 Bug Fixes Round 3 — split dimension logic, upload state fix, collapsed summary, GL button sizing).*
+*End of Master Context. Last updated: May 2026 (M8.1 — advanced CoA template, dimension types/cascading, bulk actions, employee master, cost center head, finance review config).*
