@@ -145,11 +145,11 @@ function glChip(l: LineState, level: number): string {
   if (level === 1) {
     if (l.subcategory_name) return `${l.category_name} / ${l.subcategory_name}`;
     if (l.category_name) return l.category_name;
-    return "Select Category…";
+    return "Select Expense Type";
   }
   if (l.gl_number) return `${l.gl_number}${l.gl_name ? ` — ${l.gl_name}` : ""}`;
   if (l.category_name) return `${l.category_name}${l.subcategory_name ? ` / ${l.subcategory_name}` : ""}`;
-  return "Select GL…";
+  return "Select GL Account";
 }
 
 function mainPayload(l: LineState) {
@@ -196,6 +196,20 @@ function fmtBytes(b: number) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Format a raw numeric string with comma separators for display. */
+function fmtCommaInput(val: string): string {
+  if (!val) return "";
+  const clean = val.replace(/[^0-9.]/g, "");
+  const [intPart, decPart] = clean.split(".");
+  const formatted = (intPart || "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decPart !== undefined ? `${formatted}.${decPart}` : formatted;
+}
+
+/** Strip commas from a formatted amount string before storing. */
+function stripCommas(v: string): string {
+  return v.replace(/,/g, "");
+}
+
 function FileIcon({ mime }: { mime: string }) {
   if (mime === "application/pdf") return <span className="text-red-500 font-bold text-xs">PDF</span>;
   if (mime.startsWith("image/")) return <span className="text-blue-500 font-bold text-xs">IMG</span>;
@@ -224,6 +238,7 @@ export default function NewExpensePage() {
   const [formConfig, setFormConfig] = useState<FormConfig>(DEFAULT_CFG);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   // Auto-save state
   const [savedReportId, setSavedReportId] = useState<string | null>(null);
@@ -317,7 +332,6 @@ export default function NewExpensePage() {
             const nl = resp.lines.find((rl) => !knownIds.has(rl.id));
             if (nl) { updatedLines[i] = { ...updatedLines[i], backendId: nl.id }; knownIds.add(nl.id); }
 
-            // Save splits for this line
             const parentId = updatedLines[i].backendId;
             if (parentId) {
               for (let j = 0; j < updatedLines[i].split_lines.length; j++) {
@@ -424,7 +438,15 @@ export default function NewExpensePage() {
   // ── Line management ───────────────────────────────────────────────────────
 
   const updateLine = (localId: string, patch: Partial<LineState>) => {
-    setLines((prev) => prev.map((l) => l.localId === localId ? { ...l, ...patch } : l));
+    setLines((prev) => prev.map((l) => {
+      if (l.localId !== localId) return l;
+      const updated = { ...l, ...patch };
+      // Auto-collapse when line becomes complete (skip if patch explicitly sets is_expanded)
+      if (!("is_expanded" in patch) && l.is_expanded && isComplete(updated, formConfigRef.current)) {
+        return { ...updated, is_expanded: false };
+      }
+      return updated;
+    }));
   };
 
   const toggleExpand = (localId: string) => {
@@ -448,7 +470,7 @@ export default function NewExpensePage() {
 
   const addSplitLine = (lineLocalId: string) => {
     setLines((prev) => prev.map((l) =>
-      l.localId === lineLocalId ? { ...l, split_lines: [...l.split_lines, makeSplit()] } : l
+      l.localId === lineLocalId ? { ...l, split_lines: [...l.split_lines, makeSplit()], is_expanded: true } : l
     ));
     scheduleAutoSave();
   };
@@ -481,7 +503,6 @@ export default function NewExpensePage() {
     setPickerFor(null);
 
     if (ctx.splitLocalId) {
-      // Update split line
       setLines((prev) => prev.map((l) =>
         l.localId !== ctx.lineLocalId ? l : {
           ...l,
@@ -525,7 +546,6 @@ export default function NewExpensePage() {
           { token: accessToken }
         );
         setSuggestions((prev) => ({ ...prev, [ctx.lineLocalId]: sugg }));
-        // Auto-apply high-confidence suggestions
         setLines((prev) => prev.map((l) => {
           if (l.localId !== ctx.lineLocalId) return l;
           const dimVals = { ...l.dimension_values };
@@ -693,6 +713,18 @@ export default function NewExpensePage() {
   };
 
   const handleOpenApproverModal = async () => {
+    // If lines are incomplete, highlight them instead of proceeding
+    if (incompleteCount > 0) {
+      setSubmitAttempted(true);
+      const firstIdx = lines.findIndex((l) => !isComplete(l, formConfig));
+      if (firstIdx >= 0) {
+        setLines((prev) => prev.map((l, i) => i === firstIdx ? { ...l, is_expanded: true } : l));
+        setTimeout(() => {
+          document.getElementById(`line-card-${lines[firstIdx].localId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 50);
+      }
+      return;
+    }
     const ve = validate();
     if (ve) { setError(ve); return; }
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
@@ -753,8 +785,8 @@ export default function NewExpensePage() {
   const total = calcTotal(lines);
   const needsL2 = matrix ? matrix.levels >= 2 && (matrix.amount_threshold_l2 === null || total > parseFloat(matrix.amount_threshold_l2)) : false;
   const needsL3 = matrix ? matrix.levels >= 3 && (matrix.amount_threshold_l3 === null || total > parseFloat(matrix.amount_threshold_l3)) : false;
-  const hasBackendLines = lines.some((l) => l.backendId);
   const incompleteCount = lines.filter((l) => !isComplete(l, formConfig)).length;
+  const incompleteLinesIndices = lines.map((l, i) => !isComplete(l, formConfig) ? i + 1 : 0).filter(Boolean);
   const cfg = formConfig;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -845,6 +877,13 @@ export default function NewExpensePage() {
         </div>
       )}
 
+      {uploadError && (
+        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+          <span>{uploadError}</span>
+          <button type="button" onClick={() => setUploadError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
+        </div>
+      )}
+
       {cfg.coding_level === 0 && (
         <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
           GL coding will be assigned by Finance during the approval review.
@@ -878,7 +917,16 @@ export default function NewExpensePage() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Expense Lines</h2>
-            {incompleteCount > 0 && (
+            {submitAttempted && incompleteLinesIndices.length > 0 && (
+              <div className="mt-1 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                {incompleteLinesIndices.length} line{incompleteLinesIndices.length !== 1 ? "s" : ""} incomplete — please fill all required fields before submitting
+                <br />
+                <span className="font-semibold">
+                  Line{incompleteLinesIndices.length !== 1 ? "s" : ""} {incompleteLinesIndices.join(", ")}
+                </span>
+              </div>
+            )}
+            {!submitAttempted && incompleteCount > 0 && (
               <p className="text-xs text-amber-600 mt-0.5">{incompleteCount} line{incompleteCount !== 1 ? "s" : ""} incomplete</p>
             )}
           </div>
@@ -900,25 +948,40 @@ export default function NewExpensePage() {
             const activeDims = line.dimension_requirements.filter((r) => r.requirement !== "na");
             const lineSugg = suggestions[line.localId];
             const chipSelected = cfg.coding_level === 1 ? !!line.subcategory_id : !!line.gl_id;
+            const lineDocs = documents.filter((d) => d.line_id === line.backendId);
+            const hasLineDocs = lineDocs.length > 0;
+            const isUploading = uploadingFor === line.backendId;
+            const isIncomplete = submitAttempted && !complete;
 
             return (
-              <div key={line.localId}
+              <div key={line.localId} id={`line-card-${line.localId}`}
                 className={`rounded-xl border border-gray-200 overflow-hidden ${complete ? "border-l-4 border-l-green-400" : "border-l-4 border-l-amber-400"}`}>
 
-                {/* Card header */}
-                <div className="flex items-center gap-3 px-4 py-3 bg-white">
+                {/* Card header — click to expand/collapse */}
+                <div className="flex items-center gap-2 px-3 py-2 bg-white cursor-pointer"
+                  onClick={() => toggleExpand(line.localId)}>
                   <span className="text-xs font-bold text-gray-400 shrink-0 w-5">#{idx + 1}</span>
 
-                  {/* GL chip */}
-                  <div className="flex-1 min-w-0">
+                  {/* GL chip / prominent button */}
+                  <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
                     {cfg.coding_level === 0 ? (
                       <span className="text-xs text-gray-400 italic">Finance assigns GL</span>
+                    ) : chipSelected ? (
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors truncate flex-1 min-w-0">
+                          <span className="truncate">{glChip(line, cfg.coding_level)}</span>
+                          {line.flag_incorrect && <span className="shrink-0 text-yellow-300" title="Flagged as incorrect">⚑</span>}
+                        </button>
+                        <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
+                          className="text-xs text-blue-500 hover:text-blue-700 shrink-0">
+                          change
+                        </button>
+                      </div>
                     ) : (
                       <button type="button" onClick={() => setPickerFor({ lineLocalId: line.localId })}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors max-w-full truncate
-                          ${chipSelected ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100" : "bg-gray-50 border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-500"}`}>
-                        <span className="truncate">{glChip(line, cfg.coding_level)}</span>
-                        {line.flag_incorrect && <span className="shrink-0 text-amber-500" title="Flagged as incorrect">⚑</span>}
+                        className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border-2 transition-colors ${isIncomplete ? "border-red-400 text-red-600 hover:bg-red-50" : "border-blue-400 text-blue-600 hover:bg-blue-50"}`}>
+                        🔍 {cfg.coding_level === 1 ? "Select Expense Type" : "Select GL Account"}
                       </button>
                     )}
                   </div>
@@ -928,8 +991,23 @@ export default function NewExpensePage() {
                     {line.amount ? `₦${(parseFloat(line.amount) || 0).toLocaleString("en-NG", { minimumFractionDigits: 2 })}` : "—"}
                   </span>
 
+                  {/* Split button — shown in header after GL selected */}
+                  {chipSelected && line.split_lines.length === 0 && (parseFloat(line.amount) || 0) > 0 && (
+                    <button type="button"
+                      onClick={(e) => { e.stopPropagation(); addSplitLine(line.localId); }}
+                      className="text-xs font-medium text-gray-500 hover:text-blue-600 border border-gray-200 hover:border-blue-300 rounded px-1.5 py-0.5 shrink-0">
+                      ⑂ Split
+                    </button>
+                  )}
+
+                  {/* Paperclip indicator */}
+                  <span className={`text-sm shrink-0 ${hasLineDocs ? "text-green-500" : "text-gray-300"}`}
+                    title={hasLineDocs ? `${lineDocs.length} document(s) attached` : "No documents"}>
+                    📎
+                  </span>
+
                   {/* Expand toggle */}
-                  <button type="button" onClick={() => toggleExpand(line.localId)}
+                  <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(line.localId); }}
                     className="text-gray-400 hover:text-gray-600 text-xs shrink-0 w-5 text-center">
                     {line.is_expanded ? "▲" : "▼"}
                   </button>
@@ -937,87 +1015,100 @@ export default function NewExpensePage() {
 
                 {/* Collapsed summary */}
                 {!line.is_expanded && (line.description || line.category_name) && (
-                  <div className="px-10 pb-2 text-xs text-gray-500 truncate">
+                  <div className="px-9 pb-1.5 text-xs text-gray-500 truncate">
                     {[line.category_name, line.subcategory_name].filter(Boolean).join(" / ")}
-                    {line.description && <span className="text-gray-400"> — {line.description.slice(0, 50)}</span>}
+                    {line.description && <span className="text-gray-400"> — {line.description.slice(0, 60)}</span>}
                   </div>
                 )}
 
                 {/* Expanded body */}
                 {line.is_expanded && (
-                  <div className="px-4 pb-4 pt-0 border-t border-gray-100">
-                    <div className="space-y-3 mt-3">
+                  <div className="px-3 pb-3 pt-0 border-t border-gray-100">
+                    <div className="space-y-2.5 mt-2.5">
 
-                      {/* Amount / Invoice Date / Invoice No */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {/* Row 1: Amount / Invoice Date / Invoice No */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Amount (NGN) <span className="text-red-500">*</span></label>
-                          <input type="number" min="0.01" step="0.01" value={line.amount}
-                            onChange={(e) => { updateLine(line.localId, { amount: e.target.value }); scheduleAutoSave(); }}
+                          <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && (!line.amount || parseFloat(line.amount) <= 0) ? "text-red-600" : "text-gray-600"}`}>
+                            Amount (NGN) <span className="text-red-500">*</span>
+                          </label>
+                          <input type="text" inputMode="decimal" value={fmtCommaInput(line.amount)}
+                            onChange={(e) => {
+                              const raw = stripCommas(e.target.value.replace(/[^0-9.,]/g, ""));
+                              updateLine(line.localId, { amount: raw });
+                              scheduleAutoSave();
+                            }}
                             placeholder="0.00"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            className={`w-full px-3 py-1.5 border rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500 ${isIncomplete && (!line.amount || parseFloat(line.amount) <= 0) ? "border-red-400" : "border-gray-300"}`} />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Invoice Date <span className="text-red-500">*</span></label>
+                          <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && !line.invoice_date ? "text-red-600" : "text-gray-600"}`}>
+                            Invoice Date <span className="text-red-500">*</span>
+                          </label>
                           <input type="date" value={line.invoice_date}
                             onChange={(e) => { updateLine(line.localId, { invoice_date: e.target.value }); scheduleAutoSave(); }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${isIncomplete && !line.invoice_date ? "border-red-400" : "border-gray-300"}`} />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Invoice No. <span className="text-red-500">*</span></label>
+                          <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && !line.invoice_number.trim() ? "text-red-600" : "text-gray-600"}`}>
+                            Invoice No. <span className="text-red-500">*</span>
+                          </label>
                           <input type="text" value={line.invoice_number}
                             onChange={(e) => { updateLine(line.localId, { invoice_number: e.target.value }); scheduleAutoSave(); }}
                             placeholder="INV-001"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${isIncomplete && !line.invoice_number.trim() ? "border-red-400" : "border-gray-300"}`} />
                         </div>
                       </div>
 
-                      {/* Description */}
+                      {/* Row 2: Description */}
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Description <span className="text-red-500">*</span></label>
+                        <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && !line.description.trim() ? "text-red-600" : "text-gray-600"}`}>
+                          Description <span className="text-red-500">*</span>
+                        </label>
                         <input type="text" value={line.description}
                           onChange={(e) => { updateLine(line.localId, { description: e.target.value }); scheduleAutoSave(); }}
                           placeholder="What was this expense for?"
                           disabled={!cfg.allow_free_text_description && !!line.description}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600" />
+                          className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600 ${isIncomplete && !line.description.trim() ? "border-red-400" : "border-gray-300"}`} />
                       </div>
 
                       {/* Location */}
                       {cfg.show_location && (
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">
+                          <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && cfg.require_location && !line.location.trim() ? "text-red-600" : "text-gray-600"}`}>
                             Location{cfg.require_location && <span className="text-red-500"> *</span>}
                           </label>
                           <input type="text" value={line.location}
                             onChange={(e) => { updateLine(line.localId, { location: e.target.value }); scheduleAutoSave(); }}
                             placeholder="e.g. Lagos"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${isIncomplete && cfg.require_location && !line.location.trim() ? "border-red-400" : "border-gray-300"}`} />
                         </div>
                       )}
 
                       {/* Level-2 flag comment */}
                       {cfg.coding_level === 2 && line.flag_incorrect && (
                         <div>
-                          <label className="block text-xs font-medium text-amber-700 mb-1">Why is the GL incorrect? <span className="text-red-500">*</span></label>
+                          <label className="block text-[11px] font-medium text-amber-700 mb-1">Why is the GL incorrect? <span className="text-red-500">*</span></label>
                           <input type="text" value={line.flag_comment}
                             onChange={(e) => { updateLine(line.localId, { flag_comment: e.target.value }); scheduleAutoSave(); }}
                             placeholder="Briefly explain the issue"
-                            className="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                            className="w-full px-3 py-1.5 border border-amber-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
                         </div>
                       )}
 
-                      {/* Dimension dropdowns */}
+                      {/* Row 3: Dimension dropdowns (2 per row) */}
                       {activeDims.length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                           {activeDims.map((req) => {
                             const dim = cfg.dimensions.find((d) => d.id === req.dimension_id);
                             if (!dim) return null;
                             const sugg = lineSugg?.dimensions[req.dimension_id];
                             const showPill = sugg && sugg.confidence >= 0.40 && sugg.confidence < 0.80 && !line.dimension_values[req.dimension_id];
                             const pillLabel = dim.values.find((v) => v.id === sugg?.value_id)?.code;
+                            const missingRequired = isIncomplete && req.requirement === "required" && !line.dimension_values[req.dimension_id];
                             return (
                               <div key={req.dimension_id}>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
+                                <label className={`block text-[11px] font-medium mb-1 ${missingRequired ? "text-red-600" : "text-gray-600"}`}>
                                   {dim.name}{req.requirement === "required" && <span className="text-red-500"> *</span>}
                                 </label>
                                 <select
@@ -1026,7 +1117,7 @@ export default function NewExpensePage() {
                                     updateLine(line.localId, { dimension_values: { ...line.dimension_values, [req.dimension_id]: e.target.value } });
                                     scheduleAutoSave();
                                   }}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                  className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${missingRequired ? "border-red-400" : "border-gray-300"}`}>
                                   <option value="">Select…</option>
                                   {dim.values.map((v) => (
                                     <option key={v.id} value={v.id}>{v.code} — {v.name}</option>
@@ -1048,7 +1139,7 @@ export default function NewExpensePage() {
                         </div>
                       )}
 
-                      {/* Split lines */}
+                      {/* Split lines panel */}
                       {line.split_lines.length > 0 && (
                         <SplitLinePanel
                           parentAmount={parseFloat(line.amount) || 0}
@@ -1061,16 +1152,44 @@ export default function NewExpensePage() {
                         />
                       )}
 
-                      {/* Line actions */}
-                      <div className="flex items-center gap-4 pt-1">
-                        {line.split_lines.length === 0 && parseFloat(line.amount) > 0 && (
-                          <button type="button" onClick={() => addSplitLine(line.localId)}
-                            className="text-xs text-gray-500 hover:text-blue-600 font-medium">
-                            Split this line
-                          </button>
-                        )}
+                      {/* Line footer: document attach + remove button */}
+                      <div className="flex items-start justify-between pt-1.5 border-t border-gray-100 gap-3">
+                        {/* Document attachment */}
+                        <div className="flex-1">
+                          {lineDocs.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {lineDocs.map((doc) => (
+                                <div key={doc.id} className="flex items-center gap-2 text-xs text-gray-600">
+                                  <span className="text-gray-400">📎</span>
+                                  <span className="flex-1 truncate">{doc.file_name}</span>
+                                  <span className="text-gray-400 shrink-0 text-[10px]">{fmtBytes(doc.file_size)}</span>
+                                  {doc.signed_url && (
+                                    <a href={doc.signed_url} target="_blank" rel="noopener noreferrer"
+                                      className="text-blue-600 hover:text-blue-800 shrink-0">View</a>
+                                  )}
+                                  <button type="button" onClick={() => handleDeleteDocument(doc.id)}
+                                    className="text-red-400 hover:text-red-600 shrink-0">×</button>
+                                </div>
+                              ))}
+                              <button type="button" disabled={isUploading || !line.backendId}
+                                onClick={() => line.backendId && triggerUpload(line.backendId)}
+                                className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300 mt-0.5">
+                                {isUploading ? "Uploading…" : "📎 Add document"}
+                              </button>
+                            </div>
+                          ) : (
+                            <button type="button" disabled={isUploading || !line.backendId}
+                              onClick={() => line.backendId && triggerUpload(line.backendId)}
+                              title={!line.backendId ? "Save the report first to attach documents" : undefined}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
+                              {isUploading ? "Uploading…" : "📎 Attach Document"}
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Remove line */}
                         <button type="button" onClick={() => removeLine(line.localId)} disabled={lines.length === 1}
-                          className="text-xs text-red-400 hover:text-red-600 disabled:text-gray-300 font-medium ml-auto">
+                          className="text-xs text-red-400 hover:text-red-600 disabled:text-gray-300 font-medium shrink-0">
                           Remove Line
                         </button>
                       </div>
@@ -1097,50 +1216,6 @@ export default function NewExpensePage() {
       <input ref={fileInputRef} type="file" className="hidden"
         accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc"
         onChange={handleFileSelected} />
-
-      {/* Per-line attachments */}
-      {hasBackendLines && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Line Attachments</h2>
-          <p className="text-xs text-gray-400 mb-4">Receipts or invoices per expense line. PDF, JPG, PNG, Excel, Word (max 10 MB).</p>
-          {uploadError && (
-            <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-center justify-between">
-              <span>{uploadError}</span>
-              <button onClick={() => setUploadError(null)} className="ml-2 text-red-400 hover:text-red-600 font-bold">×</button>
-            </div>
-          )}
-          <div className="space-y-3">
-            {lines.filter((l) => l.backendId).map((line, idx) => {
-              const lineDocs = documents.filter((d) => d.line_id === line.backendId);
-              const isUp = uploadingFor === line.backendId;
-              return (
-                <div key={line.localId} className="border border-gray-100 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-gray-600 mb-2">
-                    Line {idx + 1} — {line.description || line.gl_number || "(new)"}
-                  </p>
-                  {lineDocs.length > 0 && (
-                    <ul className="mb-2 space-y-1">
-                      {lineDocs.map((doc) => (
-                        <li key={doc.id} className="flex items-center gap-2 text-xs text-gray-700">
-                          <FileIcon mime={doc.mime_type} />
-                          <span className="flex-1 truncate">{doc.file_name}</span>
-                          <span className="text-gray-400 shrink-0">{fmtBytes(doc.file_size)}</span>
-                          {doc.signed_url && <a href={doc.signed_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 shrink-0">View</a>}
-                          <button type="button" onClick={() => handleDeleteDocument(doc.id)} className="text-red-400 hover:text-red-600 shrink-0">Remove</button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <button type="button" disabled={isUp || !line.backendId} onClick={() => line.backendId && triggerUpload(line.backendId)}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300">
-                    {isUp ? "Uploading…" : "+ Attach Document"}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Report-level documents */}
       {savedReportId && (
@@ -1186,8 +1261,7 @@ export default function NewExpensePage() {
           {isSubmitting ? "Saving…" : "Save Draft"}
         </button>
         <button type="button" onClick={handleOpenApproverModal}
-          disabled={isSubmitting || incompleteCount > 0}
-          title={incompleteCount > 0 ? `${incompleteCount} line${incompleteCount !== 1 ? "s" : ""} still incomplete` : undefined}
+          disabled={isSubmitting}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
           {isSubmitting ? "Preparing…" : incompleteCount > 0 ? `Submit (${incompleteCount} incomplete)` : "Submit for Approval"}
         </button>

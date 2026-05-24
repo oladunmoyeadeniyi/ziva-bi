@@ -59,9 +59,9 @@ export default function SplitLinePanel({ parentAmount, splitLines, onAddSplit, o
         {isExact ? (
           <span className="text-xs text-green-600 font-medium">Fully allocated ✓</span>
         ) : isOver ? (
-          <span className="text-xs text-red-500 font-medium">Over by {fmt(remaining)}</span>
+          <span className="text-xs text-red-500 font-medium">{fmt(allocated)} of {fmt(parentAmount)} allocated — over by {fmt(Math.abs(remaining))}</span>
         ) : (
-          <span className="text-xs text-amber-600 font-medium">{fmt(remaining)} remaining</span>
+          <span className="text-xs text-amber-600 font-medium">{fmt(allocated)} of {fmt(parentAmount)} allocated</span>
         )}
       </div>
 

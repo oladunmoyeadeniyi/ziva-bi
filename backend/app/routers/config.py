@@ -506,7 +506,7 @@ async def upload_dimension_values(
         sort_order = 0
         if sort_str:
             try:
-                sort_order = int(sort_str)
+                sort_order = int(float(sort_str))
             except ValueError:
                 errors.append({"row": i, "reason": f"Invalid sort_order: '{sort_str}'."})
                 continue
