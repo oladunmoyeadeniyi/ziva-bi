@@ -145,6 +145,8 @@ class UserTenant(Base):
     )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # M8.2: implementation portal role tier — 'consultant' | 'power_admin' | 'functional_admin'
+    role_tier: Mapped[str | None] = mapped_column(String(50), nullable=True)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

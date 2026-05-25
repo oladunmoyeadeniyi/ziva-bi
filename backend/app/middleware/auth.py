@@ -46,6 +46,8 @@ class CurrentUser:
     is_super_admin: bool = False
     is_tenant_admin: bool = False
     has_non_admin_role: bool = False
+    # M8.2: 'consultant' | 'power_admin' | 'functional_admin' | None
+    role_tier: str | None = None
 
 
 async def require_auth(
@@ -75,4 +77,5 @@ async def require_auth(
         is_super_admin=payload.get("is_super_admin", False),
         is_tenant_admin=payload.get("is_tenant_admin", False),
         has_non_admin_role=payload.get("has_non_admin_role", False),
+        role_tier=payload.get("role_tier"),
     )

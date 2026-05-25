@@ -131,6 +131,8 @@ def _build_access_token(
         "is_super_admin": user.is_super_admin,
         "is_tenant_admin": is_tenant_admin,
         "has_non_admin_role": has_non_admin_role,
+        # M8.2: role tier for implementation portal
+        "role_tier": getattr(user_tenant, "role_tier", None),
     })
 
 
@@ -309,6 +311,7 @@ async def signup(
             tenant.id if tenant else None,
             is_tenant_admin=admin_flag,
             has_non_admin_role=False,
+            role_tier=getattr(user_tenant, "role_tier", None),
         ),
     )
 
@@ -405,6 +408,7 @@ async def login(
             user, user_tenant.tenant_id,
             is_tenant_admin=admin_flag,
             has_non_admin_role=non_admin_flag,
+            role_tier=getattr(user_tenant, "role_tier", None),
         ),
     )
 

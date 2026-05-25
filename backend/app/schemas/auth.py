@@ -112,6 +112,8 @@ class UserResponse(BaseModel):
     is_super_admin: bool
     is_tenant_admin: bool = False
     has_non_admin_role: bool = False
+    # M8.2: implementation portal role tier
+    role_tier: str | None = None
     # Extended profile fields (null until the user fills them in)
     employee_code: str | None = None
     department: str | None = None
@@ -128,6 +130,7 @@ class UserResponse(BaseModel):
         *,
         is_tenant_admin: bool = False,
         has_non_admin_role: bool = False,
+        role_tier: str | None = None,
     ) -> "UserResponse":
         """Build response from a User ORM object + optional tenant_id and role flags."""
         return cls(
@@ -139,6 +142,7 @@ class UserResponse(BaseModel):
             is_super_admin=user.is_super_admin,  # type: ignore[attr-defined]
             is_tenant_admin=is_tenant_admin,
             has_non_admin_role=has_non_admin_role,
+            role_tier=role_tier,
             employee_code=getattr(user, "employee_code", None),
             department=getattr(user, "department", None),
             job_title=getattr(user, "job_title", None),

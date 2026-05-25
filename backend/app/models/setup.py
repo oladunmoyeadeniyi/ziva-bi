@@ -1,0 +1,274 @@
+"""
+ZivaBI — M8.2 Implementation Portal ORM models.
+
+Tables:
+    implementation_locks  — consultant-locked sections per tenant
+    tenant_modules        — activated modules per tenant
+    document_rules        — required documents per module / transaction type
+    tenant_tax_config     — tax configuration (VAT, WHT, PAYE, other statutory) as JSONB
+    tenant_fx_config      — FX rates, currency list, revaluation rules as JSONB
+    tenant_org_config     — organisation identity, org structure, branding, fiscal year
+
+All tables are tenant-scoped via tenant_id FK → tenants(id).
+"""
+
+import uuid
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class ImplementationLock(Base):
+    """
+    Records which portal sections a consultant has locked for a tenant.
+
+    Each row represents one locked section. The frontend checks this table
+    to decide whether to show a field as editable or locked (with the
+    "Contact your Ziva BI consultant" message).
+
+    section examples: 'organisation', 'coa', 'dimensions', 'employees'
+    """
+
+    __tablename__ = "implementation_locks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    section: Mapped[str] = mapped_column(String(100), nullable=False)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )
+    locked_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class TenantModule(Base):
+    """
+    Tracks which modules are activated for a tenant.
+
+    Only activated modules appear in the Module Setup section of the sidebar
+    and in the go-live readiness checklist.
+
+    module_key values: expense, ap, ar, payroll, inventory, fixed_assets,
+                       posm, vendor_portal, customer_portal, warehouse,
+                       bank_recon, budget, tax_engine, reporting
+    """
+
+    __tablename__ = "tenant_modules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    module_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    activated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "module_key", name="uq_tenant_modules_tenant_module"
+        ),
+    )
+
+
+class DocumentRule(Base):
+    """
+    Per-tenant document requirement for a given module and transaction type.
+
+    Examples:
+      module='expense', transaction_type='expense_report' → receipt required
+      module='ap', transaction_type='vendor_invoice'      → invoice + PO required
+    """
+
+    __tablename__ = "document_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    module: Mapped[str] = mapped_column(String(50), nullable=False)
+    transaction_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    document_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    track_expiry: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ocr_template: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    max_size_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    allowed_formats: Mapped[Optional[list]] = mapped_column(ARRAY(Text), nullable=True)
+    max_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TenantTaxConfig(Base):
+    """
+    Tenant-level tax configuration stored as JSONB blobs per tax type.
+
+    One row per tenant (enforced by UNIQUE on tenant_id).
+    JSON structures for each tax type are defined by the frontend form and
+    validated at the schema layer — the model is intentionally schema-less
+    so new tax rules can be added without migrations.
+
+    vat_config: { vat_registered, standard_rate, vat_gl, input_vat_gl, ... }
+    wht_config: { categories: [...], non_resident_rate, wht_gl }
+    paye_config: { bands: [...], employee_pension_rate, employer_pension_rate, ... }
+    other_statutory: { levies: [...] }
+    """
+
+    __tablename__ = "tenant_tax_config"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    vat_config: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    wht_config: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    paye_config: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    other_statutory: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TenantFxConfig(Base):
+    """
+    Tenant-level foreign exchange configuration.
+
+    One row per tenant (enforced by UNIQUE on tenant_id).
+
+    additional_currencies: [{ code, name, symbol, is_active }]
+    fx_rates: [{ from_currency, to_currency, rate, source, effective_date }]
+    revaluation_rules: { realized_gl, unrealized_gl, month_end_revaluation, ... }
+    """
+
+    __tablename__ = "tenant_fx_config"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    functional_currency: Mapped[Optional[str]] = mapped_column(
+        String(3), nullable=True
+    )
+    reporting_currency: Mapped[Optional[str]] = mapped_column(
+        String(3), nullable=True
+    )
+    additional_currencies: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    fx_rates: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    revaluation_rules: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TenantOrgConfig(Base):
+    """
+    Organisation identity, structure, branding, and fiscal year configuration.
+
+    One row per tenant (enforced by UNIQUE on tenant_id).
+
+    org_structure: tree of nodes { id, node_type, name, code, parent_code,
+                                   cost_center_code, children: [...] }
+    branding: { logo_url, primary_colour, button_style }
+    """
+
+    __tablename__ = "tenant_org_config"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    # Identity
+    legal_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    rc_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    industry: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    group_structure: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    parent_company_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    tin: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    vat_reg_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    functional_currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
+    reporting_currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
+    # Fiscal year
+    fiscal_year_start_month: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True
+    )
+    fiscal_year_start_day: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True
+    )
+    period_frequency: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Tree and branding stored as JSONB
+    org_structure: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    branding: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

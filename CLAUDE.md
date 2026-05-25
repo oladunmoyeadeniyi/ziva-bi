@@ -113,6 +113,7 @@ ruff check app/
 | M7 | Expense Categories & GL Coding Mode Config | ✅ Done |
 | M8 | Intelligent Expense Form Foundation (dimensions, CoA, coding levels 0–4) | ✅ Done |
 | M9 | Intelligent Expense Form (GL picker, dimensions, split lines, AI suggestions) | ✅ Done |
+| M8.2 | Implementation Portal (setup dashboard, org, modules, FX, tax, roles, doc rules, go-live) | ✅ Done |
 
 ## Module PRDs
 

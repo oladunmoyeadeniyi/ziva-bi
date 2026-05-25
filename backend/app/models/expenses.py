@@ -231,6 +231,8 @@ class TenantExpenseConfig(Base):
     )
     show_location: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     require_location: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # M8.2: consultant can lock this config from Power Admin modification
+    locked_by_implementation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

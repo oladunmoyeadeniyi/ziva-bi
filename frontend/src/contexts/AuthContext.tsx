@@ -36,6 +36,8 @@ export interface AuthUser {
   is_super_admin: boolean;
   is_tenant_admin: boolean;
   has_non_admin_role: boolean;
+  /** M8.2: implementation portal role tier */
+  role_tier?: "consultant" | "power_admin" | "functional_admin" | null;
   employee_code?: string | null;
   department?: string | null;
   job_title?: string | null;

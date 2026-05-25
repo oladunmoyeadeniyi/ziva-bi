@@ -154,6 +154,7 @@ from app.routers import documents as documents_router
 from app.routers import expense_config as expense_config_router
 from app.routers import config as config_router
 from app.routers import hr as hr_router
+from app.routers import setup as setup_router
 
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
@@ -165,6 +166,7 @@ app.include_router(documents_router.router)
 app.include_router(expense_config_router.router)
 app.include_router(config_router.router)
 app.include_router(hr_router.router)
+app.include_router(setup_router.router)
 
 
 @app.get("/api/health", tags=["system"])
