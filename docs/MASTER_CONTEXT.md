@@ -275,22 +275,19 @@ All endpoints tenant-scoped via JWT. Base: /api/
 
 ---
 
-### M8.2 — Implementation Portal Redesign
-- Sidebar completely restructured: COMMON DATA | WORKFLOW & ACCESS | MODULE SETUP | GO-LIVE groups
-- Implementation Mode banner for consultant role_tier
-- LockedField component for consultant-locked fields
-- Setup dashboard: progress bar, 12 checklist cards with status, locked/unlocked states
-- Organisation page: 4 tabs (Identity, Structure, Branding, Fiscal year)
-- Module activation page: 14 module toggle cards, auto-saves
-- Currencies & FX page: 3 tabs (Currencies, FX rates, Revaluation rules)
-- Tax & statutory page: 4 tabs (VAT, WHT, PAYE, Other statutory)
-- Roles & permissions page: 3 tabs (Role tiers, Permission matrix, User assignments)
-- Document rules page: per-module tabs, add/edit/delete rules
-- All 13 module setup stub pages (dynamic route)
-- Readiness & go-live page: blocking/non-blocking checklist, go-live confirmation
-- Alembic migration: implementation_locks, tenant_modules, document_rules, tenant_tax_config, tenant_fx_config, tenant_org_config, role_tier on user_tenants, locked_by_implementation on 3 tables
-- role_tier added to JWT payload and AuthUser interface
-- Settings sub-layout simplified to pass-through
+### M8.2 — Implementation Portal Redesign ✅ COMPLETE
+- Sidebar: 6-group structure (COMMON DATA | FINANCIALS | PEOPLE | WORKFLOW & ACCESS | MODULE SETUP | GO-LIVE), Tabler outline icons throughout
+- Implementation Mode banner for consultant role_tier (amber, 36px, non-dismissable)
+- Setup dashboard: progress bar, checklist cards with Tabler icons, correct locked/unlocked sequence per brief, green/amber/grey states
+- Organisation page: all identity fields (Legal & registration, Contact & address, Group & currency), Structure tree CRUD + template download + upload, Fiscal year with period generation
+- Module activation: split-panel (40/60), subscribed vs available groups, full MODULE_DETAILS per module, is_licensed enforcement (403 on unlicensed activate)
+- Dimensions: 3-tab layout (Dimension setup, Master data/values, Not using dimensions?), sequence alert, not-applicable endpoint (POST /api/setup/dimensions/not-applicable)
+- Dimension values: Download template button added beside Upload
+- CoA: expanded Add/Edit modals (all fields: hierarchy, FS mappings, group reporting), sequence note alert
+- Employees: 4-tab layout (Add employees, Employee list, Transfers & changes, Code config), 3 onboarding method cards (bulk upload, HR manual, self-onboarding invite)
+- Self-onboarding: public /onboard/[token] page, invite modal, backend token flow
+- api.ts: Omit<RequestInit, 'body'> fix for proper object body passing
+- Alembic migration l2m3n4o5p6q7: org_structure, fiscal_periods, employee_onboarding_tokens + new columns on tenants + tenant_org_config + tenant_modules
 
 ## 10. NEXT MILESTONE — M9 (already complete — see above)
 
@@ -344,8 +341,8 @@ Redesign the Tenant Portal to properly implement the Implementation Portal flow.
 
 ## 12. KNOWN ISSUES / TECH DEBT
 
-- CoA template not yet fully rebuilt to M8.1 full spec — addressed in M8.2
-- Settings sidebar still uses old structure — replaced in M8.2
+- CoA template and edit modal fully rebuilt in M8.2 fixes
+- Settings sidebar restructured in M8.2 fixes
 - "Invalid or expired token" errors on some admin pages — restart backend + re-login
 - UI polish deferred to dedicated milestone — do not fix piecemeal
 
