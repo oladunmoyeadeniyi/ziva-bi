@@ -36,6 +36,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import Optional
 
 from app.database import Base
 
@@ -61,6 +62,10 @@ class Tenant(Base):
     country: Mapped[str] = mapped_column(String(2), nullable=False)  # ISO 3166-1 alpha-2
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # M8.2 fixes: tracks setup state flags
+    dimensions_not_applicable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    documents_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    module_setup_visited: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

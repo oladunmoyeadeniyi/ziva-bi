@@ -31,12 +31,13 @@ function extractMessage(body: ApiError): string {
 
 export async function apiFetch<T>(
   path: string,
-  options: RequestInit & { token?: string; isFormData?: boolean } = {}
+  options: Omit<RequestInit, "body"> & { token?: string; isFormData?: boolean; body?: unknown; formData?: FormData } = {}
 ): Promise<T> {
-  const { token, isFormData, headers: extraHeaders = {}, ...rest } = options;
+  const { token, isFormData, formData, body, headers: extraHeaders = {}, ...rest } = options;
 
   // Don't set Content-Type for FormData — the browser sets it with the multipart boundary.
-  const headers: Record<string, string> = isFormData
+  const hasForm = isFormData || formData instanceof FormData;
+  const headers: Record<string, string> = hasForm
     ? { ...(extraHeaders as Record<string, string>) }
     : { "Content-Type": "application/json", ...(extraHeaders as Record<string, string>) };
 
@@ -44,7 +45,11 @@ export async function apiFetch<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE}${path}`, { ...rest, headers });
+  const fetchBody = formData instanceof FormData ? formData
+    : body !== undefined ? JSON.stringify(body)
+    : undefined;
+
+  const res = await fetch(`${BASE}${path}`, { ...rest, body: fetchBody, headers });
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;

@@ -446,6 +446,81 @@ async def delete_dimension_value(
     await db.flush()
 
 
+@router.get("/dimensions/{dimension_id}/values/template")
+async def download_dimension_values_template(
+    dimension_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Download an .xlsx upload template for dimension values.
+
+    Generates a template pre-populated with the dimension name in the filename,
+    with example row and column instructions. Columns: code, name, value_type,
+    valid_from, valid_to, sort_order.
+    """
+    tenant_id = _require_tenant(current_user)
+    dim = await _get_dimension_or_404(dimension_id, tenant_id, db)
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed.")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Values"
+
+    headers = ["code*", "name*", "value_type", "valid_from (dd/mm/yyyy)", "valid_to (dd/mm/yyyy)", "sort_order"]
+    header_fill = PatternFill("solid", fgColor="2563EB")
+    req_fill = PatternFill("solid", fgColor="DBEAFE")
+    opt_fill = PatternFill("solid", fgColor="F3F4F6")
+    header_font = Font(bold=True, color="FFFFFF")
+    instr_font = Font(italic=True, color="6B7280", size=9)
+
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill if col_idx <= 2 else opt_fill
+        if col_idx <= 2:
+            cell.font = Font(bold=True, color="FFFFFF")
+        else:
+            cell.font = Font(bold=True, color="374151")
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col_idx)].width = 24
+
+    instructions = [
+        "Unique code e.g. NG_FIN",
+        "Display name e.g. Nigeria Finance",
+        "Optional value type for filtering",
+        "Optional — start date for this value",
+        "Optional — end date (leave blank = no expiry)",
+        "Optional — display order (default 0)",
+    ]
+    for col_idx, instr in enumerate(instructions, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=instr)
+        cell.font = instr_font
+
+    example = ["NG_FIN", "Nigeria Finance", "cost_center", "01/01/2026", "", "1"]
+    for col_idx, val in enumerate(example, start=1):
+        ws.cell(row=3, column=col_idx, value=val)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_name = dim.name.replace(" ", "_").lower()
+    filename = f"{safe_name}_values_template.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @router.post(
     "/dimensions/{dimension_id}/values/upload",
     response_model=UploadResult,
@@ -612,7 +687,7 @@ async def download_coa_template(
     )
     dimensions = list(dim_result.scalars().all())
 
-    from app.models.users import Tenant  # local import to avoid circulars
+    from app.models.auth import Tenant  # local import to avoid circulars
     tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant_obj = tenant_result.scalar_one_or_none()
     tenant_name = tenant_obj.name if tenant_obj else "Company"

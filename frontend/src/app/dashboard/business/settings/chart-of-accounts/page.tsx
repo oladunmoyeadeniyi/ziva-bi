@@ -23,6 +23,12 @@ interface GLAccount {
   is_active: boolean;
   gl_group?: string;
   gl_subgroup?: string;
+  gl_sub_subgroup?: string;
+  fs_head?: string;
+  fs_note?: string;
+  tb_mapping?: string;
+  group_account_number?: string;
+  group_account_name?: string;
 }
 
 interface Dimension {
@@ -81,6 +87,14 @@ export default function ChartOfAccountsPage() {
   const [addGL, setAddGL] = useState("");
   const [addName, setAddName] = useState("");
   const [addType, setAddType] = useState<"SOCI" | "SOFP">("SOCI");
+  const [addGroup, setAddGroup] = useState("");
+  const [addSubgroup, setAddSubgroup] = useState("");
+  const [addSubSubgroup, setAddSubSubgroup] = useState("");
+  const [addFsHead, setAddFsHead] = useState("");
+  const [addFsNote, setAddFsNote] = useState("");
+  const [addTbMapping, setAddTbMapping] = useState("");
+  const [addGroupAccNum, setAddGroupAccNum] = useState("");
+  const [addGroupAccName, setAddGroupAccName] = useState("");
   const [addingGL, setAddingGL] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
@@ -89,6 +103,15 @@ export default function ChartOfAccountsPage() {
   const [editGL, setEditGL] = useState("");
   const [editName, setEditName] = useState("");
   const [editType, setEditType] = useState<"SOCI" | "SOFP">("SOCI");
+  const [editActive, setEditActive] = useState(true);
+  const [editGroup, setEditGroup] = useState("");
+  const [editSubgroup, setEditSubgroup] = useState("");
+  const [editSubSubgroup, setEditSubSubgroup] = useState("");
+  const [editFsHead, setEditFsHead] = useState("");
+  const [editFsNote, setEditFsNote] = useState("");
+  const [editTbMapping, setEditTbMapping] = useState("");
+  const [editGroupAccNum, setEditGroupAccNum] = useState("");
+  const [editGroupAccName, setEditGroupAccName] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Dimensions modal
@@ -148,9 +171,25 @@ export default function ChartOfAccountsPage() {
       await apiFetch("/api/config/coa", {
         method: "POST",
         token: accessToken,
-        body: JSON.stringify({ gl_number: addGL.trim(), gl_name: addName.trim(), account_type: addType }),
+        body: JSON.stringify({
+          gl_number: addGL.trim(),
+          gl_name: addName.trim(),
+          account_type: addType,
+          gl_group: addGroup.trim() || null,
+          gl_subgroup: addSubgroup.trim() || null,
+          gl_sub_subgroup: addSubSubgroup.trim() || null,
+          fs_head: addFsHead.trim() || null,
+          fs_note: addFsNote.trim() || null,
+          tb_mapping: addTbMapping.trim() || null,
+          group_account_number: addGroupAccNum.trim() || null,
+          group_account_name: addGroupAccName.trim() || null,
+        }),
       });
-      setAddGL(""); setAddName(""); setAddType("SOCI"); setShowAdd(false);
+      setAddGL(""); setAddName(""); setAddType("SOCI");
+      setAddGroup(""); setAddSubgroup(""); setAddSubSubgroup("");
+      setAddFsHead(""); setAddFsNote(""); setAddTbMapping("");
+      setAddGroupAccNum(""); setAddGroupAccName("");
+      setShowAdd(false);
       await load();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create GL account.");
@@ -166,7 +205,19 @@ export default function ChartOfAccountsPage() {
       await apiFetch(`/api/config/coa/${editId}`, {
         method: "PATCH",
         token: accessToken,
-        body: JSON.stringify({ gl_number: editGL.trim(), gl_name: editName.trim(), account_type: editType }),
+        body: JSON.stringify({
+          gl_name: editName.trim(),
+          account_type: editType,
+          is_active: editActive,
+          gl_group: editGroup.trim() || null,
+          gl_subgroup: editSubgroup.trim() || null,
+          gl_sub_subgroup: editSubSubgroup.trim() || null,
+          fs_head: editFsHead.trim() || null,
+          fs_note: editFsNote.trim() || null,
+          tb_mapping: editTbMapping.trim() || null,
+          group_account_number: editGroupAccNum.trim() || null,
+          group_account_name: editGroupAccName.trim() || null,
+        }),
       });
       setEditId(null);
       await load();
@@ -366,9 +417,16 @@ export default function ChartOfAccountsPage() {
           </button>
         </div>
       </div>
-      <p className="text-sm text-gray-500 mb-6">
+      <p className="text-sm text-gray-500 mb-4">
         Manage GL accounts. Download the template for the full enterprise format with hierarchy, FS mappings, and dynamic dimension columns.
       </p>
+
+      <div className="mb-5 flex items-start gap-2.5 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <i className="ti ti-info-circle text-blue-500 shrink-0 mt-0.5" style={{ fontSize: 15 }} />
+        <p className="text-sm text-blue-800">
+          Your CoA template is generated based on your configured dimensions. Complete dimension setup first for the correct template format.
+        </p>
+      </div>
 
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
@@ -513,11 +571,13 @@ export default function ChartOfAccountsPage() {
 
       {/* Add modal */}
       {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Add GL Account</h2>
             {addError && <p className="text-xs text-red-600 mb-3">{addError}</p>}
-            <div className="space-y-3">
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">GL Identity</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">GL Number <span className="text-red-500">*</span></label>
                 <input type="text" value={addGL} onChange={(e) => setAddGL(e.target.value)} placeholder="e.g. 670010"
@@ -528,16 +588,53 @@ export default function ChartOfAccountsPage() {
                 <input type="text" value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="e.g. Travel Expenses"
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
                 <select value={addType} onChange={(e) => setAddType(e.target.value as "SOCI" | "SOFP")}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="SOCI">SOCI — P&amp;L (Income Statement)</option>
-                  <option value="SOFP">SOFP — Balance Sheet</option>
+                  <option value="SOCI">SOCI — Statement of Comprehensive Income</option>
+                  <option value="SOFP">SOFP — Statement of Financial Position</option>
                 </select>
               </div>
             </div>
-            <div className="flex gap-3 justify-end mt-5">
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">GL Hierarchy</p>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {([["GL Group", addGroup, setAddGroup], ["GL Subgroup", addSubgroup, setAddSubgroup], ["GL Sub-subgroup", addSubSubgroup, setAddSubSubgroup]] as [string, string, (v: string) => void][]).map(([label, val, setter]) => (
+                <div key={label}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                  <input type="text" value={val} onChange={(e) => setter(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Financial Statement Mappings</p>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {([["FS Head", addFsHead, setAddFsHead], ["FS Note", addFsNote, setAddFsNote], ["TB Mapping", addTbMapping, setAddTbMapping]] as [string, string, (v: string) => void][]).map(([label, val, setter]) => (
+                <div key={label}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                  <input type="text" value={val} onChange={(e) => setter(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Group Reporting (optional)</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Group Account Number</label>
+                <input type="text" value={addGroupAccNum} onChange={(e) => setAddGroupAccNum(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Group Account Name</label>
+                <input type="text" value={addGroupAccName} onChange={(e) => setAddGroupAccName(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end mt-2">
               <button type="button" onClick={() => { setShowAdd(false); setAddError(null); }}
                 disabled={addingGL} className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                 Cancel
@@ -553,30 +650,81 @@ export default function ChartOfAccountsPage() {
 
       {/* Edit modal */}
       {editId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Edit GL Account</h2>
-            <div className="space-y-3">
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">GL Identity</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">GL Number</label>
-                <input type="text" value={editGL} onChange={(e) => setEditGL(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="text" value={editGL} readOnly
+                  className="w-full px-3 py-1.5 border border-gray-200 rounded text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">GL Name</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">GL Name <span className="text-red-500">*</span></label>
                 <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Account Type</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
                 <select value={editType} onChange={(e) => setEditType(e.target.value as "SOCI" | "SOFP")}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="SOCI">SOCI — P&amp;L</option>
-                  <option value="SOFP">SOFP — Balance Sheet</option>
+                  <option value="SOCI">SOCI — Statement of Comprehensive Income</option>
+                  <option value="SOFP">SOFP — Statement of Financial Position</option>
                 </select>
               </div>
+              <div className="flex items-center gap-2 pt-5">
+                <input type="checkbox" id="editActive" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="accent-blue-600" />
+                <label htmlFor="editActive" className="text-sm text-gray-700">Active</label>
+              </div>
             </div>
-            <div className="flex gap-3 justify-end mt-5">
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">GL Hierarchy</p>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {[
+                ["GL Group", editGroup, setEditGroup],
+                ["GL Subgroup", editSubgroup, setEditSubgroup],
+                ["GL Sub-subgroup", editSubSubgroup, setEditSubSubgroup],
+              ].map(([label, val, setter]) => (
+                <div key={label as string}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label as string}</label>
+                  <input type="text" value={val as string} onChange={(e) => (setter as (v: string) => void)(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Financial Statement Mappings</p>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {[
+                ["FS Head", editFsHead, setEditFsHead],
+                ["FS Note", editFsNote, setEditFsNote],
+                ["TB Mapping", editTbMapping, setEditTbMapping],
+              ].map(([label, val, setter]) => (
+                <div key={label as string}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label as string}</label>
+                  <input type="text" value={val as string} onChange={(e) => (setter as (v: string) => void)(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Group Reporting (optional)</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Group Account Number</label>
+                <input type="text" value={editGroupAccNum} onChange={(e) => setEditGroupAccNum(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Group Account Name</label>
+                <input type="text" value={editGroupAccName} onChange={(e) => setEditGroupAccName(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end mt-2">
               <button type="button" onClick={() => setEditId(null)} disabled={savingEdit}
                 className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                 Cancel
@@ -694,7 +842,21 @@ export default function ChartOfAccountsPage() {
                     <div className="flex items-center gap-2 justify-end">
                       <button
                         type="button"
-                        onClick={() => { setEditId(gl.id); setEditGL(gl.gl_number); setEditName(gl.gl_name); setEditType((gl.account_type === "PL" ? "SOCI" : gl.account_type === "BS" ? "SOFP" : gl.account_type) as "SOCI" | "SOFP"); }}
+                        onClick={() => {
+                          setEditId(gl.id);
+                          setEditGL(gl.gl_number);
+                          setEditName(gl.gl_name);
+                          setEditType((gl.account_type === "PL" ? "SOCI" : gl.account_type === "BS" ? "SOFP" : gl.account_type) as "SOCI" | "SOFP");
+                          setEditActive(gl.is_active);
+                          setEditGroup(gl.gl_group ?? "");
+                          setEditSubgroup(gl.gl_subgroup ?? "");
+                          setEditSubSubgroup(gl.gl_sub_subgroup ?? "");
+                          setEditFsHead(gl.fs_head ?? "");
+                          setEditFsNote(gl.fs_note ?? "");
+                          setEditTbMapping(gl.tb_mapping ?? "");
+                          setEditGroupAccNum(gl.group_account_number ?? "");
+                          setEditGroupAccName(gl.group_account_name ?? "");
+                        }}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                       >
                         Edit

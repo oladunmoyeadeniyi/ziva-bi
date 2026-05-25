@@ -169,6 +169,102 @@ app.include_router(hr_router.router)
 app.include_router(setup_router.router)
 
 
+@app.get("/onboard/{token}", tags=["onboarding"])
+async def validate_onboarding_token(token: str) -> dict:
+    """
+    Public endpoint — validates a self-onboarding token and returns employee stub.
+
+    No authentication required. Used by the new hire onboarding form.
+    """
+    from app.models.setup import EmployeeOnboardingToken
+    from app.models.master_data import Employee
+    from app.models.auth import Tenant
+    from datetime import datetime, timezone
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(
+            select(EmployeeOnboardingToken).where(EmployeeOnboardingToken.token == token)
+        )
+        token_row = result.scalar_one_or_none()
+
+        if not token_row:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Invalid or expired onboarding link.")
+
+        now = datetime.now(timezone.utc)
+        if token_row.expires_at < now or token_row.used_at is not None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=410, detail="This onboarding link has expired or already been used.")
+
+        emp_result = await db.execute(select(Employee).where(Employee.id == token_row.employee_id))
+        emp = emp_result.scalar_one_or_none()
+        if not emp:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Employee record not found.")
+
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == token_row.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+
+        return {
+            "employee_id": str(emp.id),
+            "first_name": emp.first_name,
+            "last_name": emp.last_name,
+            "email": emp.email,
+            "tenant_name": tenant.name if tenant else "",
+            "expires_at": token_row.expires_at.isoformat(),
+        }
+
+
+@app.post("/onboard/{token}", tags=["onboarding"])
+async def submit_onboarding_form(token: str, data: dict) -> dict:
+    """
+    Public endpoint — new hire submits their self-onboarding form.
+
+    No authentication required. Marks the token as used and updates the
+    employee record with the submitted details.
+    """
+    from app.models.setup import EmployeeOnboardingToken
+    from app.models.master_data import Employee
+    from datetime import datetime, timezone
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(
+            select(EmployeeOnboardingToken).where(EmployeeOnboardingToken.token == token)
+        )
+        token_row = result.scalar_one_or_none()
+
+        if not token_row:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Invalid onboarding link.")
+
+        now = datetime.now(timezone.utc)
+        if token_row.expires_at < now or token_row.used_at is not None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=410, detail="This onboarding link has expired or already been used.")
+
+        emp_result = await db.execute(select(Employee).where(Employee.id == token_row.employee_id))
+        emp = emp_result.scalar_one_or_none()
+        if not emp:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Employee record not found.")
+
+        # Update employee with submitted fields (subset of columns that exist)
+        ALLOWED_FIELDS = {
+            "other_name", "preferred_name", "date_of_birth", "gender",
+            "phone", "nin", "bank_name", "bank_account_number", "bvn",
+        }
+        for field, value in data.items():
+            if field in ALLOWED_FIELDS and hasattr(emp, field):
+                setattr(emp, field, value)
+
+        token_row.used_at = now
+        await db.commit()
+
+        return {"message": "Onboarding form submitted successfully. HR will review and activate your account."}
+
+
 @app.get("/api/health", tags=["system"])
 async def health_check() -> dict:
     """

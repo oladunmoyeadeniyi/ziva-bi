@@ -32,6 +32,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Tabler Icons webfont — outline icon set used throughout the admin UI */}
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css"
+        />
+      </head>
       <body>
         {/* AuthProvider is a Client Component — Next.js App Router handles the boundary */}
         <AuthProvider>{children}</AuthProvider>

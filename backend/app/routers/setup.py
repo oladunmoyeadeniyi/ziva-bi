@@ -7,8 +7,17 @@ Endpoints:
   GET   /api/setup/progress                   Setup dashboard completion state
   GET   /api/setup/org                        Organisation config
   PATCH /api/setup/org                        Update organisation config
-  GET   /api/setup/modules                    Activated modules list
-  PATCH /api/setup/modules                    Update module activations
+  GET   /api/setup/org-structure              Org tree (recursive)
+  POST  /api/setup/org-structure              Add a node
+  PATCH /api/setup/org-structure/{id}         Update a node
+  DELETE /api/setup/org-structure/{id}        Remove a node
+  GET   /api/setup/org-structure/template     Download xlsx template
+  POST  /api/setup/org-structure/upload       Upload structure from xlsx/csv
+  GET   /api/setup/fiscal-periods             List fiscal periods
+  POST  /api/setup/fiscal-periods/generate    Generate periods for a fiscal year
+  GET   /api/setup/modules                    Activated modules list (with is_licensed)
+  PATCH /api/setup/modules                    Update module activations (checks is_licensed)
+  POST  /api/setup/dimensions/not-applicable   Mark tenant as not using dimensions
   GET   /api/setup/currencies                 FX config
   PATCH /api/setup/currencies                 Update FX config
   GET   /api/setup/tax                        Tax config
@@ -29,41 +38,54 @@ Admin-only: require is_tenant_admin or is_super_admin.
 go-live: require role_tier == 'consultant'.
 """
 
+import io
 import uuid
-from datetime import datetime, timezone
+from calendar import monthrange
+from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func as sqlfunc
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select, func as sqlfunc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
-from app.models.auth import UserTenant, User
+from app.models.auth import UserTenant, User, Tenant
 from app.models.expenses import TenantExpenseConfig
 from app.models.master_data import ChartOfAccount, Employee, TenantDimension
 from app.models.setup import (
     DocumentRule,
+    EmployeeOnboardingToken,
+    FiscalPeriod,
+    OrgStructureNode,
     TenantFxConfig,
     TenantModule,
     TenantOrgConfig,
     TenantTaxConfig,
 )
 from app.schemas.setup import (
+    BrandingUpdate,
     DocumentRuleCreate,
     DocumentRuleResponse,
     DocumentRuleUpdate,
+    FiscalPeriodResponse,
+    FiscalYearUpdate,
     FxConfigResponse,
     FxConfigUpdate,
+    GeneratePeriodsRequest,
     GoLiveResponse,
     ModuleState,
     ModulesResponse,
     ModulesUpdate,
     OrgConfigResponse,
     OrgIdentityUpdate,
+    OrgStructureNodeCreate,
+    OrgStructureNodeResponse,
+    OrgStructureNodeUpdate,
+    OrgStructureTreeResponse,
     OrgStructureUpdate,
-    BrandingUpdate,
-    FiscalYearUpdate,
+    OrgStructureUploadResult,
     PermissionMatrixResponse,
     PermissionMatrixUpdate,
     ProgressResponse,
@@ -167,20 +189,56 @@ def _org_to_response(org: Optional[TenantOrgConfig], tenant_id: uuid.UUID) -> Or
         tenant_id=str(org.tenant_id),
         legal_name=org.legal_name,
         rc_number=org.rc_number,
+        date_of_registration=org.date_of_registration,
+        commencement_date=org.commencement_date,
+        company_type=org.company_type,
         industry=org.industry,
-        functional_currency=org.functional_currency,
-        reporting_currency=org.reporting_currency,
-        country=org.country,
-        group_structure=org.group_structure,
-        parent_company_name=org.parent_company_name,
         tin=org.tin,
         vat_reg_number=org.vat_reg_number,
+        country=org.country,
+        registered_address=org.registered_address,
+        operating_address=org.operating_address,
+        company_phone=org.company_phone,
+        company_email=org.company_email,
+        website=org.website,
+        external_auditor=org.external_auditor,
+        group_structure=org.group_structure,
+        parent_company_name=org.parent_company_name,
+        functional_currency=org.functional_currency,
+        reporting_currency=org.reporting_currency,
+        authorised_share_capital=float(org.authorised_share_capital) if org.authorised_share_capital else None,
         fiscal_year_start_month=org.fiscal_year_start_month,
         fiscal_year_start_day=org.fiscal_year_start_day,
-        period_frequency=org.period_frequency,
-        org_structure=org.org_structure,
+        fiscal_year_name_format=org.fiscal_year_name_format,
+        period_closing_frequency=org.period_closing_frequency,
         branding=org.branding,
     )
+
+
+def _build_tree(nodes: list[OrgStructureNode]) -> list[OrgStructureNodeResponse]:
+    """Build a nested tree from a flat list of nodes (single pass)."""
+    node_map: dict[str, OrgStructureNodeResponse] = {}
+    for n in nodes:
+        node_map[str(n.id)] = OrgStructureNodeResponse(
+            id=str(n.id),
+            parent_id=str(n.parent_id) if n.parent_id else None,
+            node_type=n.node_type,
+            name=n.name,
+            code=n.code,
+            cost_center_code=n.cost_center_code,
+            is_active=n.is_active,
+            sort_order=n.sort_order,
+            children=[],
+        )
+
+    roots: list[OrgStructureNodeResponse] = []
+    for n in nodes:
+        resp = node_map[str(n.id)]
+        if n.parent_id and str(n.parent_id) in node_map:
+            node_map[str(n.parent_id)].children.append(resp)
+        else:
+            roots.append(resp)
+    return roots
 
 
 # ── Progress ───────────────────────────────────────────────────────────────────
@@ -193,23 +251,28 @@ async def get_progress(
     """
     Return setup dashboard completion state for the current tenant.
 
-    Calculates completion status for each of the 12 setup sections based on
-    the presence and content of the corresponding config records. Returns
-    a percentage and per-section status for the checklist cards.
+    Fixed logic per M8.2 fixes brief:
+    - Dimensions: complete if not_applicable flag set OR all dims have >= 1 value
+    - Locked/unlocked sequence enforced
+    - is_licensed enforced on module activation
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
+
+    # Fetch tenant flags
+    tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = tenant_result.scalar_one_or_none()
+    dims_not_applicable = bool(tenant and tenant.dimensions_not_applicable)
+    docs_setup_complete = bool(tenant and tenant.documents_setup_complete)
 
     # Check org config
     org_result = await db.execute(
         select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
     )
     org = org_result.scalar_one_or_none()
-    org_complete = bool(
-        org and org.legal_name and org.functional_currency and org.fiscal_year_start_month
-    )
+    org_complete = bool(org and org.legal_name and org.functional_currency)
 
-    # Check modules
+    # Check modules (at least 1 active)
     mods_result = await db.execute(
         select(TenantModule).where(
             TenantModule.tenant_id == tenant_id, TenantModule.is_active.is_(True)
@@ -236,7 +299,8 @@ async def get_progress(
         )
     )
     dim_count = dim_count_result.scalar_one() or 0
-    dims_complete = dim_count > 0  # also complete if org has 'not_applicable' flag
+    dims_complete = dims_not_applicable or dim_count > 0
+    dims_in_progress = not dims_not_applicable and dim_count > 0
 
     # Check employees
     emp_count_result = await db.execute(
@@ -251,7 +315,7 @@ async def get_progress(
     # Check currencies (auto-complete if org functional_currency set)
     currencies_complete = bool(org and org.functional_currency)
 
-    # Check tax
+    # Check tax (at least one rule configured)
     tax_result = await db.execute(
         select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == tenant_id)
     )
@@ -269,7 +333,7 @@ async def get_progress(
     pa_count = pa_result.scalar_one() or 0
     roles_complete = pa_count > 0
 
-    # Check workflows — at least 1 expense approval matrix entry (best proxy available)
+    # Check workflows — at least 1 expense approval matrix entry
     from app.models.approvals import ApprovalMatrix
     wf_result = await db.execute(
         select(sqlfunc.count(ApprovalMatrix.id)).where(
@@ -279,35 +343,23 @@ async def get_progress(
     wf_count = wf_result.scalar_one() or 0
     workflows_complete = wf_count > 0
 
-    # Document rules (non-blocking — just check if any rules exist)
-    doc_count_result = await db.execute(
-        select(sqlfunc.count(DocumentRule.id)).where(
-            DocumentRule.tenant_id == tenant_id,
-            DocumentRule.is_active.is_(True),
-        )
-    )
-    doc_count = doc_count_result.scalar_one() or 0
-    docs_complete = doc_count > 0
+    # Document rules (manually marked complete by consultant)
+    docs_complete = docs_setup_complete
 
-    # Module setup — expense config exists (best proxy for at least 1 module configured)
+    # Module setup — expense config exists (proxy for at least 1 module configured)
     ec_result = await db.execute(
         select(TenantExpenseConfig).where(TenantExpenseConfig.tenant_id == tenant_id)
     )
     ec = ec_result.scalar_one_or_none()
     module_setup_complete = ec is not None
 
-    # Go-live — all blocking sections done
+    # Go-live blocking items
     blocking_complete = all([
-        org_complete,
-        modules_complete,
-        coa_complete,
-        dims_complete,
-        employees_complete,
-        tax_complete,
-        roles_complete,
-        workflows_complete,
+        org_complete, modules_complete, coa_complete, dims_complete,
+        employees_complete, tax_complete, roles_complete, workflows_complete,
     ])
 
+    # Locked/unlocked sequence per brief
     def _s(
         key: str,
         label: str,
@@ -316,59 +368,93 @@ async def get_progress(
         route: str,
         blocking: bool = True,
         locked: bool = False,
+        in_progress: bool = False,
     ) -> SectionStatus:
         if locked:
             st = "locked"
         elif complete:
             st = "complete"
+        elif in_progress:
+            st = "in_progress"
         else:
             st = "not_started"
         return SectionStatus(
-            key=key,
-            label=label,
-            status=st,
-            subtitle=subtitle,
-            route=route,
-            blocking=blocking,
+            key=key, label=label, status=st,
+            subtitle=subtitle, route=route, blocking=blocking,
         )
 
+    # Unlock sequence:
+    # - Organisation: always
+    # - Module activation: always
+    # - Dimensions: unlocked after Organisation
+    # - CoA: unlocked after Dimensions (or not_applicable)
+    # - Employees: unlocked after CoA
+    # - Currencies: unlocked after Organisation
+    # - Tax: unlocked after Organisation
+    # - Roles: unlocked after Employees
+    # - Workflows: unlocked after Roles
+    # - Documents: unlocked after Module activation
+    # - Module setup: unlocked after CoA + Dimensions
+    # - Go-live: unlocked when all blocking complete
+
+    dims_locked = not org_complete
+    coa_locked = not (dims_complete or dims_not_applicable) or dims_locked
+    employees_locked = not coa_complete or coa_locked
+    currencies_locked = not org_complete
+    tax_locked = not org_complete
+    roles_locked = not employees_complete or employees_locked
+    workflows_locked = not roles_complete or roles_locked
+    docs_locked = not modules_complete
+    module_setup_locked = not (coa_complete and (dims_complete or dims_not_applicable))
+    golive_locked = not blocking_complete
+
     sections = [
-        _s("organisation",   "Organisation",     org_complete,
+        _s("organisation", "Organisation", org_complete,
            f"Legal name: {org.legal_name}" if org_complete else "Not configured",
            "/dashboard/business/setup/organisation"),
-        _s("modules",        "Module activation", modules_complete,
+        _s("modules", "Module activation", modules_complete,
            f"{len(active_modules)} module(s) active" if modules_complete else "No modules activated",
            "/dashboard/business/setup/modules"),
-        _s("coa",            "Chart of accounts", coa_complete,
-           f"{coa_count:,} GL accounts loaded" if coa_complete else "No accounts loaded",
-           "/dashboard/business/settings/chart-of-accounts"),
-        _s("dimensions",     "Dimensions",        dims_complete,
-           f"{dim_count} dimension(s) configured" if dims_complete else "Not configured",
-           "/dashboard/business/settings/dimensions"),
-        _s("employees",      "Employees",         employees_complete,
-           f"{emp_count:,} employee(s) loaded" if employees_complete else "No employees loaded",
-           "/dashboard/business/settings/employees"),
-        _s("currencies",     "Currencies & FX",   currencies_complete,
-           f"Functional: {org.functional_currency}" if currencies_complete else "Not configured",
-           "/dashboard/business/setup/currencies", blocking=False),
-        _s("tax",            "Tax & statutory",   tax_complete,
-           "Tax rules configured" if tax_complete else "Not configured",
-           "/dashboard/business/setup/tax"),
-        _s("roles",          "Roles & permissions", roles_complete,
-           f"{pa_count} Power Admin(s) assigned" if roles_complete else "No Power Admin assigned",
-           "/dashboard/business/setup/roles"),
-        _s("workflows",      "Approval workflows", workflows_complete,
-           "Workflows configured" if workflows_complete else "Not configured",
-           "/dashboard/business/settings/approval-matrix"),
-        _s("documents",      "Document rules",    docs_complete,
-           f"{doc_count} rule(s) configured" if docs_complete else "Not configured",
-           "/dashboard/business/setup/documents", blocking=False),
-        _s("module_setup",   "Module setup",      module_setup_complete,
-           "Expense module configured" if module_setup_complete else "No modules configured",
-           "/dashboard/business/settings/expense-config", blocking=False),
-        _s("golive",         "Go-live",           blocking_complete,
+        _s("dimensions", "Dimensions", dims_complete,
+           "Not applicable" if dims_not_applicable else (f"{dim_count} dimension(s) configured" if dims_complete else "Not configured"),
+           "/dashboard/business/settings/dimensions",
+           locked=dims_locked, in_progress=dims_in_progress),
+        _s("coa", "Chart of accounts", coa_complete,
+           f"{coa_count:,} GL accounts loaded" if coa_complete else ("Requires Dimensions first" if coa_locked else "No accounts loaded"),
+           "/dashboard/business/settings/chart-of-accounts",
+           locked=coa_locked),
+        _s("employees", "Employees", employees_complete,
+           f"{emp_count:,} employee(s) loaded" if employees_complete else ("Requires CoA first" if employees_locked else "No employees loaded"),
+           "/dashboard/business/settings/employees",
+           locked=employees_locked),
+        _s("currencies", "Currencies & FX", currencies_complete,
+           f"Functional: {org.functional_currency}" if currencies_complete else ("Requires Organisation first" if currencies_locked else "Not configured"),
+           "/dashboard/business/setup/currencies", blocking=False,
+           locked=currencies_locked),
+        _s("tax", "Tax & statutory", tax_complete,
+           "Tax rules configured" if tax_complete else ("Requires Organisation first" if tax_locked else "Not configured"),
+           "/dashboard/business/setup/tax",
+           locked=tax_locked),
+        _s("roles", "Roles & permissions", roles_complete,
+           f"{pa_count} Power Admin(s) assigned" if roles_complete else ("Requires Employees first" if roles_locked else "No Power Admin assigned"),
+           "/dashboard/business/setup/roles",
+           locked=roles_locked),
+        _s("workflows", "Approval workflows", workflows_complete,
+           "Workflows configured" if workflows_complete else ("Requires Roles first" if workflows_locked else "Not configured"),
+           "/dashboard/business/settings/approval-matrix",
+           locked=workflows_locked),
+        _s("documents", "Document rules", docs_complete,
+           "Marked complete" if docs_complete else ("Requires Module activation first" if docs_locked else "Not marked complete"),
+           "/dashboard/business/setup/documents", blocking=False,
+           locked=docs_locked),
+        _s("module_setup", "Module setup", module_setup_complete,
+           "Expense module configured" if module_setup_complete else ("Requires CoA & Dimensions first" if module_setup_locked else "No modules configured"),
+           "/dashboard/business/settings/expense-config", blocking=False,
+           locked=module_setup_locked),
+        _s("golive", "Go-live", blocking_complete,
            "All blocking items complete" if blocking_complete else "Blocking items incomplete",
-           "/dashboard/business/setup/go-live"),
+           "/dashboard/business/setup/go-live",
+           locked=golive_locked),
     ]
 
     completed = sum(1 for s in sections if s.status == "complete")
@@ -401,22 +487,437 @@ async def patch_org(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> OrgConfigResponse:
-    """
-    Update org config (any subset of fields).
-
-    Accepts any of the four tab payloads — only present fields are updated.
-    """
+    """Update org config (any subset of fields)."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
     org = await _get_or_create_org(tenant_id, db)
 
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        setattr(org, field, value)
+        if hasattr(org, field):
+            setattr(org, field, value)
 
     await db.commit()
     await db.refresh(org)
     return _org_to_response(org, tenant_id)
+
+
+# ── Org Structure ─────────────────────────────────────────────────────────────
+
+@router.get("/org-structure", response_model=OrgStructureTreeResponse)
+async def get_org_structure(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> OrgStructureTreeResponse:
+    """Return the full org hierarchy as a nested tree (single recursive query)."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(OrgStructureNode)
+        .where(OrgStructureNode.tenant_id == tenant_id, OrgStructureNode.is_active.is_(True))
+        .order_by(OrgStructureNode.sort_order, OrgStructureNode.name)
+    )
+    flat = result.scalars().all()
+    return OrgStructureTreeResponse(nodes=_build_tree(flat))
+
+
+@router.post("/org-structure", response_model=OrgStructureNodeResponse, status_code=201)
+async def create_org_node(
+    data: OrgStructureNodeCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> OrgStructureNodeResponse:
+    """Add a new node to the org hierarchy."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    node = OrgStructureNode(
+        tenant_id=tenant_id,
+        parent_id=data.parent_id,
+        node_type=data.node_type,
+        name=data.name,
+        code=data.code,
+        cost_center_code=data.cost_center_code,
+    )
+    db.add(node)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A node with this code already exists.")
+
+    await db.refresh(node)
+    return OrgStructureNodeResponse(
+        id=str(node.id),
+        parent_id=str(node.parent_id) if node.parent_id else None,
+        node_type=node.node_type,
+        name=node.name,
+        code=node.code,
+        cost_center_code=node.cost_center_code,
+        is_active=node.is_active,
+        sort_order=node.sort_order,
+    )
+
+
+@router.patch("/org-structure/{node_id}", response_model=OrgStructureNodeResponse)
+async def update_org_node(
+    node_id: uuid.UUID,
+    data: OrgStructureNodeUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> OrgStructureNodeResponse:
+    """Update an existing org node."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(OrgStructureNode).where(
+            OrgStructureNode.id == node_id,
+            OrgStructureNode.tenant_id == tenant_id,
+        )
+    )
+    node = result.scalar_one_or_none()
+    if not node:
+        raise HTTPException(status_code=404, detail="Org node not found.")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(node, field, value)
+
+    await db.commit()
+    await db.refresh(node)
+    return OrgStructureNodeResponse(
+        id=str(node.id),
+        parent_id=str(node.parent_id) if node.parent_id else None,
+        node_type=node.node_type,
+        name=node.name,
+        code=node.code,
+        cost_center_code=node.cost_center_code,
+        is_active=node.is_active,
+        sort_order=node.sort_order,
+    )
+
+
+@router.delete("/org-structure/{node_id}", status_code=204)
+async def delete_org_node(
+    node_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Soft-delete an org node."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(OrgStructureNode).where(
+            OrgStructureNode.id == node_id,
+            OrgStructureNode.tenant_id == tenant_id,
+        )
+    )
+    node = result.scalar_one_or_none()
+    if not node:
+        raise HTTPException(status_code=404, detail="Org node not found.")
+    node.is_active = False
+    await db.commit()
+
+
+@router.get("/org-structure/template")
+async def download_org_structure_template(
+    current_user: CurrentUser = Depends(require_auth),
+) -> StreamingResponse:
+    """Generate and stream a .xlsx template for org structure upload."""
+    _require_admin(current_user)
+    _require_tenant(current_user)
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed.")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Org Structure"
+
+    headers = ["Node Type*", "Name*", "Code*", "Parent Code", "Cost Center Code", "Description"]
+    bold_blue = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="2563EB")
+    instruction_fill = PatternFill("solid", fgColor="F3F4F6")
+
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = bold_blue
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col_idx)].width = 22
+
+    instructions = [
+        "Legal entity | Division | Department | Cost center",
+        "Full name of the node",
+        "Unique code (e.g. NG, NG_FIN, NG_FIN_AP)",
+        "Code of the parent node (leave blank for top-level)",
+        "Required only if Node Type = Cost center",
+        "Optional description",
+    ]
+    for col_idx, instruction in enumerate(instructions, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=instruction)
+        cell.fill = instruction_fill
+        cell.font = Font(italic=True, color="6B7280")
+
+    example = ["Legal entity", "Nigeria Operations", "NG", "", "", "Main operating entity"]
+    for col_idx, val in enumerate(example, start=1):
+        ws.cell(row=3, column=col_idx, value=val)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=org_structure_template.xlsx"},
+    )
+
+
+@router.post("/org-structure/upload", response_model=OrgStructureUploadResult)
+async def upload_org_structure(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> OrgStructureUploadResult:
+    """Upload org structure from .xlsx or .csv. Upserts by code."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    content = await file.read()
+    rows: list[dict] = []
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        for row in ws.iter_rows(min_row=3, values_only=True):
+            if not any(row):
+                continue
+            rows.append({
+                "node_type": str(row[0]).strip() if row[0] else "",
+                "name": str(row[1]).strip() if row[1] else "",
+                "code": str(row[2]).strip() if row[2] else "",
+                "parent_code": str(row[3]).strip() if row[3] else None,
+                "cost_center_code": str(row[4]).strip() if row[4] else None,
+            })
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
+
+    VALID_TYPES = {"Legal entity", "Division", "Department", "Cost center"}
+    imported = updated = 0
+    errors: list[dict] = []
+
+    # Fetch existing nodes for this tenant
+    existing_result = await db.execute(
+        select(OrgStructureNode).where(OrgStructureNode.tenant_id == tenant_id)
+    )
+    existing_map = {n.code: n for n in existing_result.scalars().all()}
+
+    for row_num, row in enumerate(rows, start=3):
+        if not row["node_type"] or row["node_type"] not in VALID_TYPES:
+            errors.append({"row": row_num, "reason": f"Invalid Node Type: '{row['node_type']}'"})
+            continue
+        if not row["name"] or not row["code"]:
+            errors.append({"row": row_num, "reason": "Name and Code are required."})
+            continue
+
+        # Resolve parent
+        parent_id = None
+        if row["parent_code"]:
+            parent = existing_map.get(row["parent_code"])
+            if not parent:
+                errors.append({"row": row_num, "reason": f"Parent code '{row['parent_code']}' not found."})
+                continue
+            parent_id = parent.id
+
+        if row["code"] in existing_map:
+            node = existing_map[row["code"]]
+            node.name = row["name"]
+            node.node_type = row["node_type"]
+            node.parent_id = parent_id
+            node.cost_center_code = row["cost_center_code"]
+            node.is_active = True
+            updated += 1
+        else:
+            node = OrgStructureNode(
+                tenant_id=tenant_id,
+                node_type=row["node_type"],
+                name=row["name"],
+                code=row["code"],
+                parent_id=parent_id,
+                cost_center_code=row["cost_center_code"],
+            )
+            db.add(node)
+            existing_map[row["code"]] = node
+            imported += 1
+
+    await db.commit()
+    return OrgStructureUploadResult(imported=imported, updated=updated, errors=errors)
+
+
+# ── Fiscal Periods ────────────────────────────────────────────────────────────
+
+@router.get("/fiscal-periods", response_model=list[FiscalPeriodResponse])
+async def get_fiscal_periods(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[FiscalPeriodResponse]:
+    """List all generated fiscal periods for this tenant."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(FiscalPeriod)
+        .where(FiscalPeriod.tenant_id == tenant_id)
+        .order_by(FiscalPeriod.start_date)
+    )
+    periods = result.scalars().all()
+
+    return [
+        FiscalPeriodResponse(
+            id=str(p.id),
+            fiscal_year=p.fiscal_year,
+            period_name=p.period_name,
+            start_date=p.start_date,
+            end_date=p.end_date,
+            status=p.status,
+        )
+        for p in periods
+    ]
+
+
+@router.post("/fiscal-periods/generate", response_model=list[FiscalPeriodResponse], status_code=201)
+async def generate_fiscal_periods(
+    data: GeneratePeriodsRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[FiscalPeriodResponse]:
+    """
+    Generate fiscal periods for a given fiscal year label.
+
+    Reads the tenant's fiscal_year_start_month, fiscal_year_start_day, and
+    period_closing_frequency from org config. Deletes existing periods for
+    the same fiscal_year label before re-generating.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    org_result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+    if not org or not org.fiscal_year_start_month:
+        raise HTTPException(
+            status_code=422,
+            detail="Fiscal year start month not configured. Set it on the Organisation page first.",
+        )
+
+    start_month = org.fiscal_year_start_month
+    start_day = org.fiscal_year_start_day or 1
+    frequency = org.period_closing_frequency or "Monthly"
+
+    # Determine how many years the label covers to find the calendar start year
+    # e.g. "FY2026" → year=2026, "2025/2026" → year=2025
+    label = data.fiscal_year_label
+    import re
+    year_match = re.search(r"(\d{4})", label)
+    if not year_match:
+        raise HTTPException(status_code=422, detail="Could not parse year from fiscal_year_label.")
+    start_year = int(year_match.group(1))
+
+    fy_start = date(start_year, start_month, start_day)
+    today = date.today()
+
+    if frequency == "Monthly":
+        num_periods = 12
+    elif frequency == "Quarterly":
+        num_periods = 4
+    else:
+        num_periods = 1
+
+    # Generate period date ranges
+    generated: list[tuple[str, date, date]] = []
+    current = fy_start
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    for i in range(num_periods):
+        if frequency == "Monthly":
+            period_end_day = monthrange(current.year, current.month)[1]
+            period_end = date(current.year, current.month, period_end_day)
+            period_name = f"{month_names[current.month - 1]} {current.year}"
+            next_month = current.month + 1
+            next_year = current.year + (1 if next_month > 12 else 0)
+            next_month = next_month if next_month <= 12 else 1
+            next_start = date(next_year, next_month, start_day)
+        elif frequency == "Quarterly":
+            # 3 months per quarter
+            end_month = current.month + 2
+            end_year = current.year + (end_month - 1) // 12
+            end_month = ((end_month - 1) % 12) + 1
+            period_end = date(end_year, end_month, monthrange(end_year, end_month)[1])
+            period_name = f"Q{i + 1} {label}"
+            next_start = date(end_year, end_month, 1)
+            if end_month < 12:
+                next_start = date(end_year, end_month + 1, start_day)
+            else:
+                next_start = date(end_year + 1, 1, start_day)
+        else:
+            period_end_year = start_year + 1 if start_month > 1 else start_year
+            period_end_month = start_month - 1 if start_month > 1 else 12
+            period_end = date(period_end_year, period_end_month,
+                              monthrange(period_end_year, period_end_month)[1])
+            period_name = label
+            next_start = period_end  # only one period
+
+        generated.append((period_name, current, period_end))
+        current = next_start
+
+    # Delete existing periods for this fiscal year label
+    await db.execute(
+        delete(FiscalPeriod).where(
+            FiscalPeriod.tenant_id == tenant_id,
+            FiscalPeriod.fiscal_year == label,
+        )
+    )
+
+    created: list[FiscalPeriod] = []
+    for period_name, start, end in generated:
+        # Mark the period containing today as 'current'
+        period_status = "current" if start <= today <= end else "open"
+        p = FiscalPeriod(
+            tenant_id=tenant_id,
+            fiscal_year=label,
+            period_name=period_name,
+            start_date=start,
+            end_date=end,
+            status=period_status,
+        )
+        db.add(p)
+        created.append(p)
+
+    await db.commit()
+    for p in created:
+        await db.refresh(p)
+
+    return [
+        FiscalPeriodResponse(
+            id=str(p.id),
+            fiscal_year=p.fiscal_year,
+            period_name=p.period_name,
+            start_date=p.start_date,
+            end_date=p.end_date,
+            status=p.status,
+        )
+        for p in created
+    ]
 
 
 # ── Modules ────────────────────────────────────────────────────────────────────
@@ -426,20 +927,21 @@ async def get_modules(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ModulesResponse:
-    """Return all 14 modules with their activation state for the tenant."""
+    """Return all 14 modules with their activation and licensing state."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(
         select(TenantModule).where(TenantModule.tenant_id == tenant_id)
     )
-    existing = {m.module_key: m.is_active for m in result.scalars().all()}
+    existing = {m.module_key: m for m in result.scalars().all()}
 
     modules = [
         ModuleState(
             module_key=m["key"],
             label=m["label"],
-            is_active=existing.get(m["key"], False),
+            is_active=existing[m["key"]].is_active if m["key"] in existing else False,
+            is_licensed=existing[m["key"]].is_licensed if m["key"] in existing else False,
         )
         for m in MODULE_CATALOGUE
     ]
@@ -455,9 +957,8 @@ async def patch_modules(
     """
     Activate or deactivate modules for the tenant.
 
-    Upserts a row per module_key — creates the row if it does not exist,
-    updates is_active if it does. Partial updates are supported (only send
-    the modules you want to change).
+    Enforces: a module can only be activated if is_licensed = true.
+    Returns 403 if attempting to activate an unlicensed module.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
@@ -470,25 +971,98 @@ async def patch_modules(
     now = datetime.now(timezone.utc)
     for key, active in data.modules.items():
         if key not in MODULE_KEY_TO_LABEL:
-            continue  # ignore unknown keys
-        if key in existing_map:
-            mod = existing_map[key]
-            if active and not mod.is_active:
-                mod.activated_at = now
-                mod.activated_by = current_user.user_id
-            mod.is_active = active
-        else:
-            mod = TenantModule(
+            continue
+
+        existing = existing_map.get(key)
+        if existing is None:
+            # Create with is_licensed=False by default (consultant must license it)
+            existing = TenantModule(
                 tenant_id=tenant_id,
                 module_key=key,
-                is_active=active,
-                activated_at=now if active else None,
-                activated_by=current_user.user_id if active else None,
+                is_active=False,
+                is_licensed=False,
             )
-            db.add(mod)
+            db.add(existing)
+            existing_map[key] = existing
+
+        if active and not existing.is_licensed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Module '{MODULE_KEY_TO_LABEL[key]}' is not licensed for this tenant.",
+            )
+
+        if active and not existing.is_active:
+            existing.activated_at = now
+            existing.activated_by = current_user.user_id
+        existing.is_active = active
 
     await db.commit()
     return await get_modules(current_user=current_user, db=db)
+
+
+@router.patch("/modules/{module_key}/license", response_model=ModuleState)
+async def set_module_license(
+    module_key: str,
+    is_licensed: bool,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ModuleState:
+    """Set is_licensed for a module (consultant or super admin only)."""
+    if not current_user.is_super_admin and current_user.role_tier != "consultant":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only consultants can set module licensing.",
+        )
+    tenant_id = _require_tenant(current_user)
+
+    if module_key not in MODULE_KEY_TO_LABEL:
+        raise HTTPException(status_code=404, detail="Unknown module key.")
+
+    result = await db.execute(
+        select(TenantModule).where(
+            TenantModule.tenant_id == tenant_id,
+            TenantModule.module_key == module_key,
+        )
+    )
+    mod = result.scalar_one_or_none()
+    if mod is None:
+        mod = TenantModule(tenant_id=tenant_id, module_key=module_key, is_active=False, is_licensed=is_licensed)
+        db.add(mod)
+    else:
+        mod.is_licensed = is_licensed
+
+    await db.commit()
+    await db.refresh(mod)
+    return ModuleState(
+        module_key=mod.module_key,
+        label=MODULE_KEY_TO_LABEL[mod.module_key],
+        is_active=mod.is_active,
+        is_licensed=mod.is_licensed,
+    )
+
+
+# ── Dimensions not-applicable flag ────────────────────────────────────────────
+
+@router.post("/dimensions/not-applicable", status_code=204)
+async def set_dimensions_not_applicable(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Mark this tenant as not using analytical dimensions.
+
+    Sets dimensions_not_applicable=True on the tenant record, which causes
+    the setup progress endpoint to count dimensions as complete and unlocks
+    the Chart of Accounts section.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = tenant_result.scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    tenant.dimensions_not_applicable = True
+    await db.commit()
 
 
 # ── Currencies & FX ───────────────────────────────────────────────────────────
@@ -502,7 +1076,6 @@ async def get_currencies(
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
-    # Functional currency comes from org config
     org_result = await db.execute(
         select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
     )
@@ -533,8 +1106,7 @@ async def patch_currencies(
     tenant_id = _require_tenant(current_user)
     fx = await _get_or_create_fx(tenant_id, db)
 
-    update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(fx, field, value)
 
     await db.commit()
@@ -552,7 +1124,7 @@ async def get_tax(
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
     tax = await _get_or_create_tax(tenant_id, db)
-    await db.commit()  # persist the created row if new
+    await db.commit()
     return TaxConfigResponse(
         vat_config=tax.vat_config,
         wht_config=tax.wht_config,
@@ -567,13 +1139,12 @@ async def patch_tax(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> TaxConfigResponse:
-    """Update tax config for the tenant (partial updates supported)."""
+    """Update tax config for the tenant."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
     tax = await _get_or_create_tax(tenant_id, db)
 
-    update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(tax, field, value)
 
     await db.commit()
@@ -593,12 +1164,7 @@ async def get_roles_matrix(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PermissionMatrixResponse:
-    """
-    Return the permission matrix for all sections × role tiers.
-
-    For M8.2 this returns a static default matrix. Customisation is stored
-    and returned in a future enhancement.
-    """
+    """Return the permission matrix for all sections × role tiers."""
     _require_admin(current_user)
     _require_tenant(current_user)
 
@@ -622,10 +1188,9 @@ async def patch_roles_matrix(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PermissionMatrixResponse:
-    """Update permission matrix cells (consultant only in production)."""
+    """Update permission matrix cells."""
     _require_admin(current_user)
     _require_tenant(current_user)
-    # For M8.2: return the updated cells as-is (no persistence yet)
     return PermissionMatrixResponse(cells=data.cells)
 
 
@@ -641,13 +1206,8 @@ async def get_role_assignments(
     result = await db.execute(
         select(UserTenant, User)
         .join(User, UserTenant.user_id == User.id)
-        .where(
-            UserTenant.tenant_id == tenant_id,
-            UserTenant.is_active.is_(True),
-        )
+        .where(UserTenant.tenant_id == tenant_id, UserTenant.is_active.is_(True))
     )
-    rows = result.all()
-
     return [
         RoleAssignmentResponse(
             id=str(ut.id),
@@ -657,7 +1217,7 @@ async def get_role_assignments(
             role_tier=ut.role_tier,
             is_active=ut.is_active,
         )
-        for ut, u in rows
+        for ut, u in result.all()
     ]
 
 
@@ -674,10 +1234,7 @@ async def create_role_assignment(
     result = await db.execute(
         select(UserTenant, User)
         .join(User, UserTenant.user_id == User.id)
-        .where(
-            UserTenant.id == data.user_tenant_id,
-            UserTenant.tenant_id == tenant_id,
-        )
+        .where(UserTenant.id == data.user_tenant_id, UserTenant.tenant_id == tenant_id)
     )
     row = result.first()
     if not row:
@@ -687,14 +1244,10 @@ async def create_role_assignment(
     ut.role_tier = data.role_tier
     await db.commit()
     await db.refresh(ut)
-
     return RoleAssignmentResponse(
-        id=str(ut.id),
-        user_tenant_id=str(ut.id),
-        full_name=u.full_name,
-        email=u.email,
-        role_tier=ut.role_tier,
-        is_active=ut.is_active,
+        id=str(ut.id), user_tenant_id=str(ut.id),
+        full_name=u.full_name, email=u.email,
+        role_tier=ut.role_tier, is_active=ut.is_active,
     )
 
 
@@ -712,10 +1265,7 @@ async def update_role_assignment(
     result = await db.execute(
         select(UserTenant, User)
         .join(User, UserTenant.user_id == User.id)
-        .where(
-            UserTenant.id == assignment_id,
-            UserTenant.tenant_id == tenant_id,
-        )
+        .where(UserTenant.id == assignment_id, UserTenant.tenant_id == tenant_id)
     )
     row = result.first()
     if not row:
@@ -725,14 +1275,10 @@ async def update_role_assignment(
     ut.role_tier = data.role_tier
     await db.commit()
     await db.refresh(ut)
-
     return RoleAssignmentResponse(
-        id=str(ut.id),
-        user_tenant_id=str(ut.id),
-        full_name=u.full_name,
-        email=u.email,
-        role_tier=ut.role_tier,
-        is_active=ut.is_active,
+        id=str(ut.id), user_tenant_id=str(ut.id),
+        full_name=u.full_name, email=u.email,
+        role_tier=ut.role_tier, is_active=ut.is_active,
     )
 
 
@@ -740,40 +1286,31 @@ async def update_role_assignment(
 
 @router.get("/documents", response_model=list[DocumentRuleResponse])
 async def get_documents(
-    module: Optional[str] = Query(None, description="Filter by module key"),
+    module: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentRuleResponse]:
-    """List document rules for the tenant, optionally filtered by module."""
+    """List document rules, optionally filtered by module."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     q = select(DocumentRule).where(
-        DocumentRule.tenant_id == tenant_id,
-        DocumentRule.is_active.is_(True),
+        DocumentRule.tenant_id == tenant_id, DocumentRule.is_active.is_(True)
     )
     if module:
         q = q.where(DocumentRule.module == module)
     q = q.order_by(DocumentRule.module, DocumentRule.transaction_type)
 
     result = await db.execute(q)
-    rules = result.scalars().all()
-
     return [
         DocumentRuleResponse(
-            id=str(r.id),
-            module=r.module,
-            transaction_type=r.transaction_type,
-            document_name=r.document_name,
-            is_required=r.is_required,
-            track_expiry=r.track_expiry,
-            ocr_template=r.ocr_template,
-            max_size_mb=r.max_size_mb,
-            allowed_formats=r.allowed_formats,
-            max_files=r.max_files,
-            is_active=r.is_active,
+            id=str(r.id), module=r.module, transaction_type=r.transaction_type,
+            document_name=r.document_name, is_required=r.is_required,
+            track_expiry=r.track_expiry, ocr_template=r.ocr_template,
+            max_size_mb=r.max_size_mb, allowed_formats=r.allowed_formats,
+            max_files=r.max_files, is_active=r.is_active,
         )
-        for r in rules
+        for r in result.scalars().all()
     ]
 
 
@@ -783,38 +1320,26 @@ async def create_document_rule(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentRuleResponse:
-    """Create a new document rule for the tenant."""
+    """Create a new document rule."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     rule = DocumentRule(
-        tenant_id=tenant_id,
-        module=data.module,
-        transaction_type=data.transaction_type,
-        document_name=data.document_name,
-        is_required=data.is_required,
-        track_expiry=data.track_expiry,
-        ocr_template=data.ocr_template,
-        max_size_mb=data.max_size_mb,
-        allowed_formats=data.allowed_formats,
+        tenant_id=tenant_id, module=data.module, transaction_type=data.transaction_type,
+        document_name=data.document_name, is_required=data.is_required,
+        track_expiry=data.track_expiry, ocr_template=data.ocr_template,
+        max_size_mb=data.max_size_mb, allowed_formats=data.allowed_formats,
         max_files=data.max_files,
     )
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
-
     return DocumentRuleResponse(
-        id=str(rule.id),
-        module=rule.module,
-        transaction_type=rule.transaction_type,
-        document_name=rule.document_name,
-        is_required=rule.is_required,
-        track_expiry=rule.track_expiry,
-        ocr_template=rule.ocr_template,
-        max_size_mb=rule.max_size_mb,
-        allowed_formats=rule.allowed_formats,
-        max_files=rule.max_files,
-        is_active=rule.is_active,
+        id=str(rule.id), module=rule.module, transaction_type=rule.transaction_type,
+        document_name=rule.document_name, is_required=rule.is_required,
+        track_expiry=rule.track_expiry, ocr_template=rule.ocr_template,
+        max_size_mb=rule.max_size_mb, allowed_formats=rule.allowed_formats,
+        max_files=rule.max_files, is_active=rule.is_active,
     )
 
 
@@ -830,10 +1355,7 @@ async def update_document_rule(
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(
-        select(DocumentRule).where(
-            DocumentRule.id == rule_id,
-            DocumentRule.tenant_id == tenant_id,
-        )
+        select(DocumentRule).where(DocumentRule.id == rule_id, DocumentRule.tenant_id == tenant_id)
     )
     rule = result.scalar_one_or_none()
     if not rule:
@@ -844,19 +1366,12 @@ async def update_document_rule(
 
     await db.commit()
     await db.refresh(rule)
-
     return DocumentRuleResponse(
-        id=str(rule.id),
-        module=rule.module,
-        transaction_type=rule.transaction_type,
-        document_name=rule.document_name,
-        is_required=rule.is_required,
-        track_expiry=rule.track_expiry,
-        ocr_template=rule.ocr_template,
-        max_size_mb=rule.max_size_mb,
-        allowed_formats=rule.allowed_formats,
-        max_files=rule.max_files,
-        is_active=rule.is_active,
+        id=str(rule.id), module=rule.module, transaction_type=rule.transaction_type,
+        document_name=rule.document_name, is_required=rule.is_required,
+        track_expiry=rule.track_expiry, ocr_template=rule.ocr_template,
+        max_size_mb=rule.max_size_mb, allowed_formats=rule.allowed_formats,
+        max_files=rule.max_files, is_active=rule.is_active,
     )
 
 
@@ -866,20 +1381,16 @@ async def delete_document_rule(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Soft-delete a document rule (sets is_active=false)."""
+    """Soft-delete a document rule."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(
-        select(DocumentRule).where(
-            DocumentRule.id == rule_id,
-            DocumentRule.tenant_id == tenant_id,
-        )
+        select(DocumentRule).where(DocumentRule.id == rule_id, DocumentRule.tenant_id == tenant_id)
     )
     rule = result.scalar_one_or_none()
     if not rule:
         raise HTTPException(status_code=404, detail="Document rule not found.")
-
     rule.is_active = False
     await db.commit()
 
@@ -895,8 +1406,7 @@ async def mark_go_live(
     Mark this tenant as live.
 
     Requires role_tier == 'consultant' or is_super_admin.
-    Checks that all blocking sections are complete before allowing go-live.
-    Sets tenant.is_active = True and updates a go-live timestamp.
+    All blocking sections must be complete.
     """
     if not current_user.is_super_admin and current_user.role_tier != "consultant":
         raise HTTPException(
@@ -906,18 +1416,14 @@ async def mark_go_live(
 
     tenant_id = _require_tenant(current_user)
 
-    # Verify progress — all blocking items must be complete
     progress = await get_progress(current_user=current_user, db=db)
-    blocking_incomplete = [
-        s.label for s in progress.sections if s.blocking and s.status != "complete"
-    ]
+    blocking_incomplete = [s.label for s in progress.sections if s.blocking and s.status != "complete"]
     if blocking_incomplete:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Blocking items incomplete: {', '.join(blocking_incomplete)}",
         )
 
-    from app.models.auth import Tenant
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     tenant = result.scalar_one_or_none()
     if not tenant:

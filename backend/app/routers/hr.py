@@ -1,38 +1,47 @@
 """
-ZivaBI — M8.1 HR module router.
+ZivaBI — M8.1 / M8.2 HR module router.
 
 Registered at prefix /api/hr.
 
 Endpoints:
   Employees:
-    GET    /api/hr/employees                    List employees (paginated, searchable)
-    POST   /api/hr/employees                    Create single employee
-    PATCH  /api/hr/employees/{id}               Update employee
-    DELETE /api/hr/employees/{id}               Soft delete (deactivate)
-    POST   /api/hr/employees/upload             Bulk upload via xlsx/csv
-    GET    /api/hr/employees/template           Download employee upload template
-    POST   /api/hr/employees/{id}/transfer      Transfer to new cost center
-    POST   /api/hr/employees/{id}/update-code   Update employee code (retro/progressive)
-    GET    /api/hr/employees/{id}/history       View code change + transfer history
+    GET    /api/hr/employees                         List employees (paginated, searchable)
+    POST   /api/hr/employees                         Create single employee
+    PATCH  /api/hr/employees/{id}                    Update employee
+    DELETE /api/hr/employees/{id}                    Soft delete (deactivate)
+    POST   /api/hr/employees/upload                  Bulk upload via xlsx/csv
+    GET    /api/hr/employees/template                Download employee upload template
+    POST   /api/hr/employees/{id}/transfer           Transfer to new cost center
+    POST   /api/hr/employees/{id}/update-code        Update employee code (retro/progressive)
+    GET    /api/hr/employees/{id}/history            View code change + transfer history
+    POST   /api/hr/employees/invite                  Send self-onboarding invite (M8.2)
+    POST   /api/hr/employees/{id}/approve-onboarding Approve HR self-onboarding (M8.2)
+    POST   /api/hr/employees/{id}/reject-onboarding  Reject HR self-onboarding with comment (M8.2)
 
   Cost Center Config:
-    GET    /api/hr/cost-centers                 List cost centers with head assignments
-    PUT    /api/hr/cost-centers/{id}/head       Set or update cost center head
+    GET    /api/hr/cost-centers                      List cost centers with head assignments
+    PUT    /api/hr/cost-centers/{id}/head            Set or update cost center head
 
   Finance Review Config:
-    GET    /api/hr/finance-review               List finance reviewers by module
-    POST   /api/hr/finance-review               Add a reviewer
-    PATCH  /api/hr/finance-review/{id}          Update reviewer level/scope
-    DELETE /api/hr/finance-review/{id}          Remove reviewer
+    GET    /api/hr/finance-review                    List finance reviewers by module
+    POST   /api/hr/finance-review                    Add a reviewer
+    PATCH  /api/hr/finance-review/{id}               Update reviewer level/scope
+    DELETE /api/hr/finance-review/{id}               Remove reviewer
 
-All endpoints are tenant-scoped and require authentication.
+Public (no auth required):
+  GET    /onboard/{token}                            Validate token and return employee stub
+  POST   /onboard/{token}                            New hire submits self-onboarding form
+
+All authenticated endpoints are tenant-scoped and require authentication.
 Admin-only operations require is_tenant_admin or is_super_admin.
 """
 
 import csv
 import io
 import re
+import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -52,6 +61,9 @@ from app.models.master_data import (
     FinanceReviewConfig,
     TenantDimension,
 )
+from app.models.setup import EmployeeOnboardingToken
+from app.models.auth import Tenant
+from app.schemas.setup import EmployeeInviteCreate, SelfOnboardingSubmit, SelfOnboardingTokenResponse
 from app.schemas.hr import (
     CodeUpdateRequest,
     CodeHistoryResponse,
@@ -906,3 +918,100 @@ async def remove_finance_reviewer(
 
     await db.delete(cfg)
     await db.flush()
+
+
+# ── Employee Self-onboarding (M8.2) ──────────────────────────────────────────
+
+@router.post("/employees/invite", status_code=201)
+async def send_employee_invite(
+    data: EmployeeInviteCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    HR creates a basic employee record and sends a self-onboarding invite.
+
+    Creates employee with status='pending_self_onboarding', generates a
+    30-day secure token, and logs the onboarding link (email TBD).
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    emp = Employee(
+        tenant_id=tenant_id,
+        first_name=data.first_name,
+        last_name=data.last_name,
+        email=data.email,
+        cost_center_id=data.cost_center_id,
+        resumption_date=data.start_date,
+        is_active=False,
+    )
+    db.add(emp)
+    await db.flush()
+
+    token_value = secrets.token_urlsafe(48)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+
+    token = EmployeeOnboardingToken(
+        tenant_id=tenant_id,
+        employee_id=emp.id,
+        token=token_value,
+        expires_at=expires_at,
+    )
+    db.add(token)
+    await db.commit()
+
+    # Log link to console — email integration in a future milestone
+    onboarding_link = f"/onboard/{token_value}"
+    print(f"[ONBOARDING] Invite for {data.email}: {onboarding_link}")
+
+    return {
+        "message": "Invite created successfully.",
+        "employee_id": str(emp.id),
+        "onboarding_link": onboarding_link,
+    }
+
+
+@router.post("/employees/{employee_id}/approve-onboarding", status_code=200)
+async def approve_employee_onboarding(
+    employee_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """HR approves a self-onboarding submission. Activates the employee from their start date."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(Employee).where(Employee.id == employee_id, Employee.tenant_id == tenant_id)
+    )
+    emp = result.scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+
+    emp.is_active = True
+    await db.commit()
+    return {"message": "Employee onboarding approved. Account is now active."}
+
+
+@router.post("/employees/{employee_id}/reject-onboarding", status_code=200)
+async def reject_employee_onboarding(
+    employee_id: uuid.UUID,
+    comment: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """HR rejects self-onboarding with a comment. Employee stays in pending state."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(Employee).where(Employee.id == employee_id, Employee.tenant_id == tenant_id)
+    )
+    emp = result.scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+
+    # Log rejection comment — store in employee notes in future
+    print(f"[ONBOARDING] Rejected employee {employee_id}: {comment}")
+    return {"message": "Onboarding rejected.", "comment": comment}

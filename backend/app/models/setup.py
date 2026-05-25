@@ -2,25 +2,31 @@
 ZivaBI — M8.2 Implementation Portal ORM models.
 
 Tables:
-    implementation_locks  — consultant-locked sections per tenant
-    tenant_modules        — activated modules per tenant
-    document_rules        — required documents per module / transaction type
-    tenant_tax_config     — tax configuration (VAT, WHT, PAYE, other statutory) as JSONB
-    tenant_fx_config      — FX rates, currency list, revaluation rules as JSONB
-    tenant_org_config     — organisation identity, org structure, branding, fiscal year
+    implementation_locks         — consultant-locked sections per tenant
+    tenant_modules               — activated modules per tenant
+    document_rules               — required documents per module / transaction type
+    tenant_tax_config            — tax configuration (VAT, WHT, PAYE, other statutory) as JSONB
+    tenant_fx_config             — FX rates, currency list, revaluation rules as JSONB
+    tenant_org_config            — organisation identity, org structure, branding, fiscal year
+    org_structure                — hierarchical org nodes (M8.2 fixes)
+    fiscal_periods               — auto-generated fiscal periods per tenant (M8.2 fixes)
+    employee_onboarding_tokens   — secure self-onboarding tokens for new hires (M8.2 fixes)
 
 All tables are tenant-scoped via tenant_id FK → tenants(id).
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -91,6 +97,8 @@ class TenantModule(Base):
     )
     module_key: Mapped[str] = mapped_column(String(50), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # M8.2 fixes: licensed modules can be activated; unlicensed show "contact consultant"
+    is_licensed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     activated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -244,31 +252,150 @@ class TenantOrgConfig(Base):
         unique=True,
         index=True,
     )
-    # Identity
+    # Identity — Legal & registration
     legal_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     rc_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    date_of_registration: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    commencement_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    company_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     industry: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    group_structure: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    parent_company_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     tin: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     vat_reg_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Identity — Contact & address
+    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    registered_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    operating_address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    company_phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    company_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    website: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    external_auditor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Identity — Group & currency
+    group_structure: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    parent_company_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     functional_currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
     reporting_currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
+    authorised_share_capital: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 2), nullable=True)
     # Fiscal year
-    fiscal_year_start_month: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True
-    )
-    fiscal_year_start_day: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True
-    )
-    period_frequency: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    # Tree and branding stored as JSONB
-    org_structure: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    fiscal_year_start_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fiscal_year_start_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fiscal_year_name_format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    period_closing_frequency: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Branding stored as JSONB
     branding: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class OrgStructureNode(Base):
+    """
+    Hierarchical org node (legal entity, division, department, or cost center).
+
+    Self-referencing: parent_id → org_structure.id
+    code must be unique within the tenant.
+    The tree is rendered in the Organisation → Structure tab.
+    """
+
+    __tablename__ = "org_structure"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("org_structure.id"),
+        nullable=True,
+    )
+    node_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    cost_center_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_org_structure_tenant_code"),
+    )
+
+
+class FiscalPeriod(Base):
+    """
+    A generated fiscal period for a tenant.
+
+    Generated by the /api/setup/fiscal-periods/generate endpoint based on
+    the tenant's fiscal year config (start month, frequency, label format).
+    status: 'open' | 'current' | 'closed'
+    """
+
+    __tablename__ = "fiscal_periods"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    fiscal_year: Mapped[str] = mapped_column(String(20), nullable=False)
+    period_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "fiscal_year", "period_name",
+            name="uq_fiscal_periods_tenant_year_period"
+        ),
+    )
+
+
+class EmployeeOnboardingToken(Base):
+    """
+    Secure token for new hire self-onboarding.
+
+    HR sends an invite → system creates a pending employee record + this token.
+    New hire visits /onboard/{token} to fill their details.
+    HR then approves → employee becomes active from their start date.
+    Token expires after 30 days and can only be used once.
+    """
+
+    __tablename__ = "employee_onboarding_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

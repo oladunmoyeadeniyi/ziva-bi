@@ -63,16 +63,26 @@ interface EmployeeHistory {
   transfers: Transfer[];
 }
 
+type EmpTab = "add" | "list" | "transfers" | "config";
+
 export default function EmployeesPage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
 
+  const [activeTab, setActiveTab] = useState<EmpTab>("add");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [costCenters, setCostCenters] = useState<DimensionValue[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterCostCenter, setFilterCostCenter] = useState("");
+
+  // Self-onboarding invite
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ first_name: "", last_name: "", email: "", cost_center_id: "", start_date: "" });
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -306,6 +316,32 @@ export default function EmployeesPage() {
     }
   };
 
+  const handleInvite = async () => {
+    if (!accessToken) return;
+    setInviting(true);
+    setInviteError(null);
+    try {
+      await apiFetch("/api/hr/employees/invite", {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({
+          first_name: inviteForm.first_name.trim(),
+          last_name: inviteForm.last_name.trim(),
+          email: inviteForm.email.trim(),
+          cost_center_id: inviteForm.cost_center_id || null,
+          start_date: inviteForm.start_date || null,
+        }),
+      });
+      setInviteSuccess(`Self-onboarding link sent to ${inviteForm.email}. Check the server console for the link.`);
+      setInviteForm({ first_name: "", last_name: "", email: "", cost_center_id: "", start_date: "" });
+      setTimeout(() => { setInviteSuccess(null); setShowInvite(false); }, 4000);
+    } catch (e) {
+      setInviteError(e instanceof Error ? e.message : "Failed to send invite.");
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   };
@@ -323,30 +359,34 @@ export default function EmployeesPage() {
     );
   }
 
+  const EMP_TABS: { key: EmpTab; label: string }[] = [
+    { key: "add", label: "Add employees" },
+    { key: "list", label: "Employee list" },
+    { key: "transfers", label: "Transfers & changes" },
+    { key: "config", label: "Code config" },
+  ];
+
+  const REQUIRED_COLS = ["First name *", "Last name *", "Email *"];
+  const OPTIONAL_COLS = ["Employee code", "Cost center code", "Line manager email", "Other name", "Preferred name", "Phone", "Start date", "Date of birth", "Gender", "NIN", "Bank name", "Bank account number", "BVN", "Emergency contact name", "Emergency contact phone", "Residential address"];
+
   return (
     <div className="px-6 py-8 max-w-6xl">
-      <div className="flex items-center justify-between mb-1">
-        <h1 className="text-xl font-bold text-gray-900">Employees</h1>
-        <div className="flex gap-2 flex-wrap justify-end">
-          <button type="button" onClick={handleDownloadTemplate} disabled={downloadingTemplate}
-            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
-            {downloadingTemplate ? "…" : "Download Template"}
-          </button>
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
-            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
-            {uploading ? "Uploading…" : "Upload Employees"}
-          </button>
-          <input type="file" ref={fileInputRef} accept=".xlsx,.csv"
-            onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} className="hidden" />
-          <button type="button" onClick={() => setShowAdd(true)}
-            className="px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
-            + Add Employee
-          </button>
-        </div>
-      </div>
-      <p className="text-sm text-gray-500 mb-6">
+      <h1 className="text-xl font-bold text-gray-900 mb-1">Employees</h1>
+      <p className="text-sm text-gray-500 mb-5">
         Manage your employee master data. Employees can be mapped to cost centers and used as dimension values.
       </p>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-gray-200 mb-6">
+        {EMP_TABS.map((tab) => (
+          <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
@@ -355,40 +395,127 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      {uploadResult && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm">
-          <p className="font-medium text-green-800 mb-1">Upload complete</p>
-          <p className="text-green-700">
-            {uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.skipped} skipped · {uploadResult.errors.length} errors
-          </p>
-          {uploadResult.errors.length > 0 && (
-            <ul className="mt-2 text-xs text-red-700 space-y-0.5">
-              {uploadResult.errors.slice(0, 10).map((e, i) => <li key={i}>Row {e.row}: {e.reason}</li>)}
-            </ul>
-          )}
+      {/* ── Tab 1: Add employees ───────────────────────────────────────────────── */}
+      {activeTab === "add" && (
+        <div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            {/* Bulk upload */}
+            <div className="border border-gray-200 rounded-xl p-5 bg-white flex flex-col gap-3">
+              <i className="ti ti-upload text-gray-500" style={{ fontSize: 22 }} />
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Bulk upload</p>
+                <p className="text-xs text-gray-500 mt-1">Download the template, fill all employee records, upload back. Best for initial mass onboarding.</p>
+              </div>
+              <div className="flex gap-2 mt-auto">
+                <button type="button" onClick={handleDownloadTemplate} disabled={downloadingTemplate}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+                  {downloadingTemplate ? "…" : "Download template"}
+                </button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                  {uploading ? "Uploading…" : "Upload file"}
+                </button>
+                <input type="file" ref={fileInputRef} accept=".xlsx,.csv"
+                  onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} className="hidden" />
+              </div>
+              {uploadResult && (
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+                  {uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.errors.length} errors
+                </div>
+              )}
+            </div>
+
+            {/* HR manual entry */}
+            <div className="border border-gray-200 rounded-xl p-5 bg-white flex flex-col gap-3">
+              <i className="ti ti-user-plus text-gray-500" style={{ fontSize: 22 }} />
+              <div>
+                <p className="text-sm font-semibold text-gray-800">HR manual entry</p>
+                <p className="text-xs text-gray-500 mt-1">HR fills in all details directly in the portal. Good for single new hires where HR has all the information.</p>
+              </div>
+              <button type="button" onClick={() => setShowAdd(true)}
+                className="mt-auto px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+                Add employee
+              </button>
+            </div>
+
+            {/* Self-onboarding */}
+            <div className="border border-gray-200 rounded-xl p-5 bg-white flex flex-col gap-3">
+              <i className="ti ti-link text-gray-500" style={{ fontSize: 22 }} />
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Self-onboarding link</p>
+                <p className="text-xs text-gray-500 mt-1">HR creates a basic record. System sends a secure link to the new hire. They fill their own details. HR reviews and approves.</p>
+              </div>
+              <button type="button" onClick={() => setShowInvite(true)}
+                className="mt-auto px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+                Send invite
+              </button>
+            </div>
+          </div>
+
+          {/* Template columns */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Template columns</p>
+            <div className="flex flex-wrap gap-1.5">
+              {REQUIRED_COLS.map((col) => (
+                <span key={col} className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">{col}</span>
+              ))}
+              {OPTIONAL_COLS.map((col) => (
+                <span key={col} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{col}</span>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Search + filter */}
-      <div className="flex gap-2 mb-4">
-        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && load()}
-          placeholder="Search name, email or employee code…"
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-        <button type="button" onClick={load}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
-          Search
-        </button>
-        {search && (
-          <button type="button" onClick={() => { setSearch(""); setFilterCostCenter(""); load(); }}
-            className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
-            Clear
+      {/* ── Tab 3: Transfers & changes ─────────────────────────────────────────── */}
+      {activeTab === "transfers" && (
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Initiate cost center transfers or line manager changes per employee. Use the Employee list tab to select an employee and click Transfer.
+          </p>
+          <button type="button" onClick={() => setActiveTab("list")}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+            Go to Employee list →
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Bulk toolbar */}
-      {selectedIds.size > 0 && (
+      {/* ── Tab 4: Code config ─────────────────────────────────────────────────── */}
+      {activeTab === "config" && (
+        <div>
+          <p className="text-sm text-gray-500 mb-4">
+            Update employee codes (progressive or retrospective). Use the Employee list tab to select an employee and click Code.
+          </p>
+          <button type="button" onClick={() => setActiveTab("list")}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+            Go to Employee list →
+          </button>
+        </div>
+      )}
+
+      {/* ── Tab 2: Employee list ───────────────────────────────────────────────── */}
+      {activeTab === "list" && (
+        <>
+          {/* Search + filter */}
+          <div className="flex gap-2 mb-4">
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
+              placeholder="Search name, email or employee code…"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button type="button" onClick={load}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+              Search
+            </button>
+            {search && (
+              <button type="button" onClick={() => { setSearch(""); setFilterCostCenter(""); load(); }}
+                className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Bulk toolbar */}
+          {selectedIds.size > 0 && (
         <div className="mb-3 flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
           <span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span>
           <button type="button" onClick={() => setBulkAction("activate")}
@@ -648,6 +775,44 @@ export default function EmployeesPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+        </>
+      )}
+
+      {/* Invite modal */}
+      {showInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
+            <h2 className="text-base font-semibold text-gray-900 mb-4">Send self-onboarding invite</h2>
+            {inviteError && <p className="text-xs text-red-600 mb-3">{inviteError}</p>}
+            {inviteSuccess && <p className="text-xs text-green-600 mb-3">{inviteSuccess}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                ["first_name", "First name *", "text"],
+                ["last_name", "Last name *", "text"],
+                ["email", "Email *", "email"],
+                ["cost_center_id", "Cost center ID", "text"],
+                ["start_date", "Start date", "date"],
+              ] as [keyof typeof inviteForm, string, string][]).map(([field, label, type]) => (
+                <div key={field} className={field === "email" ? "col-span-2" : ""}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                  <input type={type} value={inviteForm[field]}
+                    onChange={(e) => setInviteForm((f) => ({ ...f, [field]: e.target.value }))}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 justify-end mt-5">
+              <button type="button" onClick={() => { setShowInvite(false); setInviteError(null); }} disabled={inviting}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={handleInvite}
+                disabled={inviting || !inviteForm.first_name.trim() || !inviteForm.last_name.trim() || !inviteForm.email.trim()}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                {inviting ? "Sending…" : "Send invite"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -24,7 +24,7 @@ interface Employee {
 }
 
 export default function CostCentersPage() {
-  const { token } = useAuth();
+  const { accessToken: token } = useAuth();
   const [costCenters, setCostCenters] = useState<CostCenterConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -268,6 +268,14 @@ export default function DimensionValuesPage() {
           {dimension?.name ?? "Dimension"} Values
         </h1>
         <div className="flex gap-2">
+          <a
+            href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/config/dimensions/${dimensionId}/values/template`}
+            download
+            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 inline-flex items-center gap-1.5"
+          >
+            <i className="ti ti-download" style={{ fontSize: 13 }} />
+            Download template
+          </a>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}

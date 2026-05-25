@@ -28,7 +28,7 @@ const MODULES = [
 ];
 
 export default function FinanceReviewPage() {
-  const { token } = useAuth();
+  const { accessToken: token } = useAuth();
   const [activeModule, setActiveModule] = useState("expense_retirement");
   const [reviewers, setReviewers] = useState<FinanceReviewer[]>([]);
   const [loading, setLoading] = useState(true);

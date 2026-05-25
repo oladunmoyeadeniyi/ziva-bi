@@ -3,10 +3,9 @@
 /**
  * Business dashboard layout — shared shell for all /dashboard/business/* pages.
  *
- * M8.2: Full sidebar restructure into four groups:
- *   COMMON DATA | WORKFLOW & ACCESS | MODULE SETUP | GO-LIVE
- * Implementation Mode banner for consultant role.
- * Module Setup items dynamically rendered based on activated modules.
+ * M8.2 Fixes: 6-group sidebar with Tabler outline icons.
+ * Groups: COMMON DATA | FINANCIALS | PEOPLE | WORKFLOW & ACCESS | MODULE SETUP | GO-LIVE
+ * Implementation Mode banner for consultant role (36px, amber).
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -23,27 +22,34 @@ interface ModuleState {
   module_key: string;
   label: string;
   is_active: boolean;
+  is_licensed: boolean;
 }
 
-// ── Nav structure for admin users ──────────────────────────────────────────────
+// ── Tabler icon component (inline SVG via CSS class) ──────────────────────────
+// Uses the @tabler/icons-webfont CDN included in globals or loaded via layout.
+// ti-* class names render the correct outline icon.
 
-const COMMON_DATA = [
-  { href: "/dashboard/business/setup",               label: "Setup dashboard",   exact: true },
-  { href: "/dashboard/business/setup/organisation",  label: "Organisation" },
-  { href: "/dashboard/business/setup/modules",       label: "Module activation" },
-  { href: "/dashboard/business/settings/chart-of-accounts", label: "Chart of accounts" },
-  { href: "/dashboard/business/settings/dimensions", label: "Dimensions" },
-  { href: "/dashboard/business/settings/employees",  label: "Employees" },
-  { href: "/dashboard/business/setup/currencies",    label: "Currencies & FX" },
-  { href: "/dashboard/business/setup/tax",           label: "Tax & statutory" },
-];
+const Icon = ({ name, size = 15 }: { name: string; size?: number }) => (
+  <i className={`ti ti-${name}`} style={{ fontSize: size, lineHeight: 1 }} />
+);
 
-const WORKFLOW_ACCESS = [
-  { href: "/dashboard/business/setup/roles",                 label: "Roles & permissions" },
-  { href: "/dashboard/business/settings/approval-matrix",    label: "Approval workflows" },
-  { href: "/dashboard/business/setup/documents",             label: "Document rules" },
-  { href: "/dashboard/business/admin/users",                 label: "Team" },
-];
+// ── Module icon map ────────────────────────────────────────────────────────────
+const MODULE_ICONS: Record<string, string> = {
+  expense:          "receipt",
+  ap:               "invoice",
+  ar:               "credit-card",
+  payroll:          "wallet",
+  inventory:        "package",
+  fixed_assets:     "chart-pie",
+  posm:             "tags",
+  vendor_portal:    "truck",
+  customer_portal:  "user-check",
+  warehouse:        "building-warehouse",
+  bank_recon:       "building-bank",
+  budget:           "chart-bar",
+  tax_engine:       "calculator",
+  reporting:        "chart-dots",
+};
 
 // Map module_key to sidebar route
 const MODULE_ROUTES: Record<string, string> = {
@@ -75,12 +81,13 @@ export default function BusinessLayout({
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [activeModules, setActiveModules] = useState<ModuleState[] | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isAdmin = user?.is_tenant_admin || user?.is_super_admin;
   const isConsultant = user?.role_tier === "consultant";
 
-  // Fetch pending approval badge count on every navigation
+  // Fetch pending approval badge
   useEffect(() => {
     if (!accessToken) return;
     apiFetch<ApprovalQueueItem[]>("/api/approvals/queue", { token: accessToken })
@@ -88,7 +95,7 @@ export default function BusinessLayout({
       .catch(() => {});
   }, [accessToken, pathname]);
 
-  // Fetch activated modules for the MODULE SETUP section (admin only)
+  // Fetch activated modules for MODULE SETUP section
   const fetchModules = useCallback(async () => {
     if (!accessToken || !isAdmin) return;
     try {
@@ -105,7 +112,24 @@ export default function BusinessLayout({
     fetchModules();
   }, [fetchModules]);
 
-  // Close the dropdown when clicking outside
+  // Fetch company name from org config for profile dropdown
+  const fetchCompanyName = useCallback(async () => {
+    if (!accessToken || !isAdmin) return;
+    try {
+      const data = await apiFetch<{ legal_name?: string }>("/api/setup/org", {
+        token: accessToken,
+      });
+      if (data.legal_name) setCompanyName(data.legal_name);
+    } catch {
+      // silently fail — fall back to tenant name
+    }
+  }, [accessToken, isAdmin]);
+
+  useEffect(() => {
+    fetchCompanyName();
+  }, [fetchCompanyName]);
+
+  // Close dropdown on click-away
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -126,14 +150,17 @@ export default function BusinessLayout({
       ? pathname === href
       : pathname === href || pathname.startsWith(href + "/");
 
+  // Nav link with icon
   const NavLink = ({
     href,
     label,
+    icon,
     exact = false,
     badge = null,
   }: {
     href: string;
     label: string;
+    icon: string;
     exact?: boolean;
     badge?: number | null;
   }) => {
@@ -141,12 +168,13 @@ export default function BusinessLayout({
     return (
       <Link
         href={href}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors ${
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
           active
-            ? "bg-white text-gray-900 font-medium border border-gray-200 shadow-sm"
+            ? "bg-white text-gray-900 font-[500] border border-gray-200 shadow-sm"
             : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
         }`}
       >
+        <Icon name={icon} size={14} />
         <span className="flex-1 truncate">{label}</span>
         {badge !== null && badge > 0 && (
           <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
@@ -158,24 +186,29 @@ export default function BusinessLayout({
   };
 
   const SectionLabel = ({ label }: { label: string }) => (
-    <p className="px-3 pt-4 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+    <p className="px-3 pt-4 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest select-none">
       {label}
     </p>
   );
 
-  // Exclusively-admin users (config-only, no operational role) skip user-facing items
   const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role;
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
-      {/* Implementation Mode banner (consultant only) */}
+
+      {/* Implementation Mode banner — 36px, amber, consultant only */}
       {isConsultant && (
-        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center gap-2 shrink-0">
-          <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
-          <span className="text-xs font-medium text-amber-800">
-            Implementation mode — you have full override access. All changes are logged.
+        <div
+          className="flex items-center gap-2 px-4 shrink-0"
+          style={{
+            height: 36,
+            background: "var(--color-background-warning, #fffbeb)",
+            borderBottom: "0.5px solid var(--color-border-warning, #fcd34d)",
+          }}
+        >
+          <Icon name="shield-check" size={13} />
+          <span style={{ fontSize: 11, color: "var(--color-text-warning, #92400e)" }}>
+            Implementation mode — you have full override access. All changes are logged against your consultant account.
           </span>
         </div>
       )}
@@ -184,7 +217,7 @@ export default function BusinessLayout({
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shrink-0">
         <span className="text-lg font-bold text-gray-900">ZivaBI</span>
 
-        {/* User menu */}
+        {/* User + company menu */}
         <div className="relative" ref={menuRef}>
           <button
             type="button"
@@ -192,26 +225,42 @@ export default function BusinessLayout({
             className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 focus:outline-none"
           >
             <span className="font-medium">{user?.full_name}</span>
-            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
+            {companyName && (
+              <span className="text-gray-400 text-xs hidden sm:inline">— {companyName}</span>
+            )}
+            <Icon name="chevron-down" size={13} />
           </button>
 
           {showUserMenu && (
-            <div className="absolute right-0 mt-2 w-44 bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
+            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
+              {/* Close button */}
+              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
+                <span className="text-xs font-medium text-gray-500 truncate max-w-[140px]">
+                  {companyName || user?.full_name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowUserMenu(false)}
+                  className="text-gray-400 hover:text-gray-600 ml-2 flex-shrink-0"
+                >
+                  <Icon name="x" size={13} />
+                </button>
+              </div>
               <Link
                 href="/dashboard/profile"
                 onClick={() => setShowUserMenu(false)}
-                className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
               >
+                <Icon name="user" size={13} />
                 Profile
               </Link>
               <hr className="my-1 border-gray-100" />
               <button
                 type="button"
                 onClick={handleLogout}
-                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
               >
+                <Icon name="logout" size={13} />
                 Sign out
               </button>
             </div>
@@ -221,17 +270,18 @@ export default function BusinessLayout({
 
       {/* Body: sidebar + content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
+        {/* Sidebar — 240px, scrolls independently */}
         <nav className="w-60 shrink-0 bg-gray-50 border-r border-gray-200 py-2 flex flex-col overflow-y-auto">
 
-          {/* User-facing items (shown if user has non-admin roles, or is non-admin) */}
+          {/* User-facing items */}
           {!isExclusivelyAdmin && (
             <div className="px-2">
-              <NavLink href="/dashboard/business" label="Overview" exact />
-              <NavLink href="/dashboard/business/expenses" label="Expenses" />
+              <NavLink href="/dashboard/business" label="Overview" icon="home" exact />
+              <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
               <NavLink
                 href="/dashboard/business/approvals"
                 label="Approvals"
+                icon="checks"
                 badge={pendingCount}
               />
             </div>
@@ -240,25 +290,41 @@ export default function BusinessLayout({
           {/* Admin setup sections */}
           {isAdmin && (
             <>
+              {/* COMMON DATA */}
               <div className="px-2">
                 <SectionLabel label="Common Data" />
-                {COMMON_DATA.map((item) => (
-                  <NavLink
-                    key={item.href}
-                    href={item.href}
-                    label={item.label}
-                    exact={"exact" in item ? item.exact : false}
-                  />
-                ))}
+                <NavLink href="/dashboard/business/setup" label="Setup dashboard" icon="layout-dashboard" exact />
+                <NavLink href="/dashboard/business/setup/organisation" label="Organisation" icon="building" />
+                <NavLink href="/dashboard/business/setup/modules" label="Module activation" icon="puzzle" />
               </div>
 
+              {/* FINANCIALS */}
               <div className="px-2">
-                <SectionLabel label="Workflow & Access" />
-                {WORKFLOW_ACCESS.map((item) => (
-                  <NavLink key={item.href} href={item.href} label={item.label} />
-                ))}
+                <SectionLabel label="Financials" />
+                <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
+                <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
+                <NavLink href="/dashboard/business/settings/expense-categories" label="Expense categories" icon="sitemap" />
+                <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />
+                <NavLink href="/dashboard/business/setup/tax" label="Tax & statutory" icon="receipt-tax" />
               </div>
 
+              {/* PEOPLE */}
+              <div className="px-2">
+                <SectionLabel label="People" />
+                <NavLink href="/dashboard/business/settings/employees" label="Employees" icon="users" />
+                <NavLink href="/dashboard/business/settings/cost-centers" label="Cost centers" icon="building-community" />
+              </div>
+
+              {/* WORKFLOW & ACCESS */}
+              <div className="px-2">
+                <SectionLabel label="Workflow &amp; Access" />
+                <NavLink href="/dashboard/business/setup/roles" label="Roles & permissions" icon="key" />
+                <NavLink href="/dashboard/business/settings/approval-matrix" label="Approval workflows" icon="git-merge" />
+                <NavLink href="/dashboard/business/setup/documents" label="Document rules" icon="file-check" />
+                <NavLink href="/dashboard/business/admin/users" label="Team" icon="user-plus" />
+              </div>
+
+              {/* MODULE SETUP */}
               <div className="px-2">
                 <SectionLabel label="Module Setup" />
                 {activeModules === null ? (
@@ -268,16 +334,18 @@ export default function BusinessLayout({
                 ) : (
                   activeModules.map((mod) => {
                     const href = MODULE_ROUTES[mod.module_key] ?? `/dashboard/business/setup/modules/${mod.module_key}`;
+                    const icon = MODULE_ICONS[mod.module_key] ?? "puzzle";
                     return (
-                      <NavLink key={mod.module_key} href={href} label={mod.label} />
+                      <NavLink key={mod.module_key} href={href} label={mod.label} icon={icon} />
                     );
                   })
                 )}
               </div>
 
+              {/* GO-LIVE */}
               <div className="px-2">
                 <SectionLabel label="Go-live" />
-                <NavLink href="/dashboard/business/setup/go-live" label="Readiness & go-live" />
+                <NavLink href="/dashboard/business/setup/go-live" label="Readiness & go-live" icon="rocket" />
               </div>
             </>
           )}
