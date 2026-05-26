@@ -194,7 +194,7 @@ Three GL coding modes. All M7 bugs fixed:
 ## 7. KEY DATABASE TABLES
 
 ### Core
-- tenants, users, user_roles
+- tenants, users (email, full_name, first_name, account_type, is_active, is_super_admin), user_roles
 
 ### Org & Config
 - tenant_expense_config (coding_level, show_location, require_location)
@@ -289,6 +289,17 @@ All endpoints tenant-scoped via JWT. Base: /api/
 - api.ts: Omit<RequestInit, 'body'> fix for proper object body passing
 - Alembic migration l2m3n4o5p6q7: org_structure, fiscal_periods, employee_onboarding_tokens + new columns on tenants + tenant_org_config + tenant_modules
 
+### Login & Auth Fix ✅ COMPLETE (uncommitted — pending push)
+Surgical fix applied in May 2026 session to resolve login redirect and welcome message issues:
+- **`first_name` column added to users table** — Alembic migration `m3n4o5p6q7r8` (backfills from first word of full_name for existing rows)
+- **Backend model** (`app/models/auth.py`): `first_name: Mapped[str | None]` added to User
+- **Backend router** (`app/routers/auth.py`): auto-extracts `first_name` from full_name on signup
+- **Backend schema** (`app/schemas/auth.py`): `first_name` returned in UserResponse (falls back to `full_name.split(" ")[0]` for existing users without the column)
+- **Frontend AuthContext** (`src/contexts/AuthContext.tsx`): `first_name?: string | null` added to AuthUser interface
+- **Login page** (`src/app/auth/login/page.tsx`): redirects to `/dashboard/business/setup` after login (was `/dashboard`)
+- **Business dashboard** (`src/app/dashboard/business/page.tsx`): uses `user?.first_name` for welcome greeting (fallback to split); removed defunct "Tenant Admin" module card
+- **api.ts**: body serialization fix — pre-stringified string bodies passed through without double-encoding
+
 ## 10. NEXT MILESTONE — M9 (already complete — see above)
 
 Redesign the Tenant Portal to properly implement the Implementation Portal flow.
@@ -341,9 +352,9 @@ Redesign the Tenant Portal to properly implement the Implementation Portal flow.
 
 ## 12. KNOWN ISSUES / TECH DEBT
 
-- CoA template and edit modal fully rebuilt in M8.2 fixes
-- Settings sidebar restructured in M8.2 fixes
-- "Invalid or expired token" errors on some admin pages — restart backend + re-login
+- **Login fix uncommitted** — changes to auth.py, routers/auth.py, schemas/auth.py, login/page.tsx, AuthContext.tsx, api.ts, and migration m3n4o5p6q7r8 are staged but not yet committed or pushed to GitHub
+- **Migration m3n4o5p6q7r8 not applied to production** — must run `alembic upgrade head` on Render after pushing
+- "Invalid or expired token" errors on some admin pages — restart backend + re-login (likely stale JWT without new fields; fixed once migration runs and users re-login)
 - UI polish deferred to dedicated milestone — do not fix piecemeal
 
 ---

@@ -107,6 +107,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
+    first_name: str | None = None
     account_type: str
     tenant_id: str | None
     is_super_admin: bool
@@ -133,10 +134,12 @@ class UserResponse(BaseModel):
         role_tier: str | None = None,
     ) -> "UserResponse":
         """Build response from a User ORM object + optional tenant_id and role flags."""
+        full_name: str = user.full_name  # type: ignore[attr-defined]
         return cls(
             id=str(user.id),  # type: ignore[attr-defined]
             email=user.email,  # type: ignore[attr-defined]
-            full_name=user.full_name,  # type: ignore[attr-defined]
+            full_name=full_name,
+            first_name=getattr(user, "first_name", None) or full_name.split(" ")[0],
             account_type=user.account_type.value,  # type: ignore[attr-defined]
             tenant_id=str(tenant_id) if tenant_id else None,
             is_super_admin=user.is_super_admin,  # type: ignore[attr-defined]

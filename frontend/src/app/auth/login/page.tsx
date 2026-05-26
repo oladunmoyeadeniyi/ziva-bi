@@ -28,9 +28,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      // AuthContext updates user — read it after login resolves
-      // Redirect is handled by the dashboard layout based on account_type
-      router.push("/dashboard");
+      router.push("/dashboard/business/setup");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {

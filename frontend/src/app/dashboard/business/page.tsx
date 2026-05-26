@@ -14,7 +14,6 @@ const MODULES = [
   { icon: "📤", title: "Accounts Receivable", desc: "Coming soon", href: null, active: false },
   { icon: "✅", title: "Approvals", desc: "Review and action expense reports", href: "/dashboard/business/approvals", active: true },
   { icon: "💼", title: "Payroll", desc: "Coming soon", href: null, active: false },
-  { icon: "⚙️", title: "Tenant Admin", desc: "Coming soon", href: null, active: false },
 ];
 
 export default function BusinessDashboard() {
@@ -24,7 +23,7 @@ export default function BusinessDashboard() {
     <div className="max-w-4xl mx-auto px-6 py-10">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome, {user?.full_name?.split(" ")[0]}
+          Welcome, {user?.first_name || user?.full_name?.split(" ")[0]}
         </h1>
         <p className="mt-1 text-sm text-gray-500">Business finance platform</p>
       </div>

@@ -31,6 +31,7 @@ export interface AuthUser {
   id: string;
   email: string;
   full_name: string;
+  first_name?: string | null;
   account_type: "individual" | "business";
   tenant_id: string | null;
   is_super_admin: boolean;

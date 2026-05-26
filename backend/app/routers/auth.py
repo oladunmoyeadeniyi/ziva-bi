@@ -235,6 +235,7 @@ async def signup(
     user = User(
         email=data.email,
         full_name=data.full_name,
+        first_name=data.full_name.split(" ")[0],
         account_type=AccountType(data.account_type),
     )
     db.add(user)
