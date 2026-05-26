@@ -194,9 +194,13 @@ Three GL coding modes. All M7 bugs fixed:
 ## 7. KEY DATABASE TABLES
 
 ### Core
-- tenants, users (email, full_name, first_name, account_type, is_active, is_super_admin), user_roles
+- tenants (name, country, slug, is_active, dimensions_not_applicable, documents_setup_complete), users (email, full_name, first_name, account_type, is_active, is_super_admin), user_roles
 
 ### Org & Config
+- tenant_org_config (legal_name, functional_currency, reporting_currency, all identity/fiscal fields, branding JSONB)
+- org_structure (node_type, name, code, parent_id, cost_center_code, entity_code, is_active, sort_order) — self-referencing tree
+- fiscal_periods (fiscal_year, period_name, start_date, end_date, status)
+- tenant_modules (module_key, is_active, is_licensed)
 - tenant_expense_config (coding_level, show_location, require_location)
 - cost_center_config (cost center head assignments)
 - finance_review_config (reviewer chain per module)
@@ -289,16 +293,35 @@ All endpoints tenant-scoped via JWT. Base: /api/
 - api.ts: Omit<RequestInit, 'body'> fix for proper object body passing
 - Alembic migration l2m3n4o5p6q7: org_structure, fiscal_periods, employee_onboarding_tokens + new columns on tenants + tenant_org_config + tenant_modules
 
-### Login & Auth Fix ✅ COMPLETE (uncommitted — pending push)
-Surgical fix applied in May 2026 session to resolve login redirect and welcome message issues:
-- **`first_name` column added to users table** — Alembic migration `m3n4o5p6q7r8` (backfills from first word of full_name for existing rows)
-- **Backend model** (`app/models/auth.py`): `first_name: Mapped[str | None]` added to User
-- **Backend router** (`app/routers/auth.py`): auto-extracts `first_name` from full_name on signup
-- **Backend schema** (`app/schemas/auth.py`): `first_name` returned in UserResponse (falls back to `full_name.split(" ")[0]` for existing users without the column)
-- **Frontend AuthContext** (`src/contexts/AuthContext.tsx`): `first_name?: string | null` added to AuthUser interface
-- **Login page** (`src/app/auth/login/page.tsx`): redirects to `/dashboard/business/setup` after login (was `/dashboard`)
-- **Business dashboard** (`src/app/dashboard/business/page.tsx`): uses `user?.first_name` for welcome greeting (fallback to split); removed defunct "Tenant Admin" module card
-- **api.ts**: body serialization fix — pre-stringified string bodies passed through without double-encoding
+### M8.2 Post-release Fixes ✅ COMPLETE
+All committed and pushed in May 2026 session.
+
+**Login & Auth fix** (migration `m3n4o5p6q7r8`):
+- `first_name` column added to users table; auto-populated from full_name on signup and backfilled for existing rows
+- Login redirects to `/dashboard/business/setup`; welcome greeting uses `first_name`
+- `api.ts` body serialization fixed (pre-stringified strings no longer double-encoded)
+
+**Functional currency auto-detection** (no migration needed):
+- `COUNTRY_CURRENCY_MAP` added to `auth.py` and `setup.py`
+- At business signup, a `TenantOrgConfig` row is seeded with `functional_currency` derived from `company_country`
+- `_get_or_create_org` falls back to tenant's country for legacy tenants with no org config row
+- `functional_currency` is protected in PATCH `/api/setup/org` via `PROTECTED_ORG_FIELDS` — can never be overwritten by user input
+- Signup page shows amber functional currency preview after country selection (IAS 21 lock note)
+- Organisation page reporting currency field replaced with Select dropdown (15 currencies)
+
+**Signup page polish**:
+- Country defaults to blank, auto-detected via `ipapi.co/json/` on mount with silent fallback
+- "Detecting your location…" placeholder shown during geolocation; swaps to select once resolved
+- Full name label: "Your full name" with helper text; placeholder changed to generic example
+
+**Org structure — edit/delete + entity_code** (migration `n4o5p6q7r8s9`):
+- `entity_code VARCHAR(100)` added to `org_structure` table — stores ERP profit centre / entity code for Legal entity nodes (e.g. Sage X3 profit centre N22341)
+- Edit button on each tree node row (hover to reveal): opens Edit modal with name, node_type, cost_center_code, entity_code fields; code is read-only
+- Delete button on each tree node row: soft-delete with confirmation prompt
+- `entity_code` badge (blue) shown on Legal entity nodes in tree view
+- `entity_code` field in Add node modal (shown only for Legal entity)
+- Template generator rebuilt: 2-sheet xlsx (Instructions + Org Structure), Node Type dropdown validation, conditional formatting (amber row + red cell for Cost center nodes missing Cost Center Code, green cell when present), Entity Code column added
+- Upload handler reads 7 columns (was 5); `VALID_TYPES` updated to include "Division / Business unit"
 
 ## 10. NEXT MILESTONE — M9 (already complete — see above)
 
@@ -352,9 +375,8 @@ Redesign the Tenant Portal to properly implement the Implementation Portal flow.
 
 ## 12. KNOWN ISSUES / TECH DEBT
 
-- **Login fix uncommitted** — changes to auth.py, routers/auth.py, schemas/auth.py, login/page.tsx, AuthContext.tsx, api.ts, and migration m3n4o5p6q7r8 are staged but not yet committed or pushed to GitHub
-- **Migration m3n4o5p6q7r8 not applied to production** — must run `alembic upgrade head` on Render after pushing
-- "Invalid or expired token" errors on some admin pages — restart backend + re-login (likely stale JWT without new fields; fixed once migration runs and users re-login)
+- **Migrations not applied to production** — migrations `m3n4o5p6q7r8` (first_name) and `n4o5p6q7r8s9` (entity_code) are pushed to GitHub but must be applied on Render with `alembic upgrade head`
+- "Invalid or expired token" errors on some admin pages — restart backend + re-login
 - UI polish deferred to dedicated milestone — do not fix piecemeal
 
 ---
