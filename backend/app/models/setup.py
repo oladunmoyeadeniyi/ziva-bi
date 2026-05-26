@@ -319,6 +319,9 @@ class OrgStructureNode(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     code: Mapped[str] = mapped_column(String(100), nullable=False)
     cost_center_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # entity_code: used for Legal entity nodes — stores the ERP profit centre or
+    # entity code (e.g. Sage X3 profit centre).
+    entity_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(

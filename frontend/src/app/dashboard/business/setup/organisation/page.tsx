@@ -58,6 +58,7 @@ interface OrgNode {
   name: string;
   code: string;
   cost_center_code?: string;
+  entity_code?: string;
   is_active: boolean;
   sort_order: number;
   children: OrgNode[];
@@ -143,10 +144,23 @@ const NODE_TYPE_ICON: Record<string, string> = {
   "Cost center":           "folder",
 };
 
-function TreeNode({ node, depth = 0 }: { node: OrgNode; depth?: number }) {
+function TreeNode({
+  node,
+  depth = 0,
+  onEdit,
+  onDelete,
+  deletingId,
+}: {
+  node: OrgNode;
+  depth?: number;
+  onEdit: (node: OrgNode) => void;
+  onDelete: (id: string) => void;
+  deletingId: string | null;
+}) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children && node.children.length > 0;
   const icon = NODE_TYPE_ICON[node.node_type] ?? "folder";
+  const isDeleting = deletingId === node.id;
 
   return (
     <div style={{ marginLeft: depth * 16 }}>
@@ -164,12 +178,43 @@ function TreeNode({ node, depth = 0 }: { node: OrgNode; depth?: number }) {
             {node.cost_center_code}
           </span>
         )}
-        <span className="text-[10px] text-gray-400 ml-auto opacity-0 group-hover:opacity-100">
+        {node.node_type === "Legal entity" && node.entity_code && (
+          <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-mono">
+            {node.entity_code}
+          </span>
+        )}
+        <span className="text-[10px] text-gray-400 ml-1 opacity-0 group-hover:opacity-100">
           {node.node_type}
         </span>
+        <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={() => onEdit(node)}
+            className="p-1 text-gray-400 hover:text-blue-600 rounded"
+            title="Edit node"
+          >
+            <i className="ti ti-edit" style={{ fontSize: 13 }} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(node.id)}
+            disabled={isDeleting}
+            className="p-1 text-gray-400 hover:text-red-600 rounded disabled:opacity-50"
+            title="Delete node"
+          >
+            <i className={`ti ti-${isDeleting ? "loader" : "trash"}`} style={{ fontSize: 13 }} />
+          </button>
+        </div>
       </div>
       {expanded && node.children?.map(child => (
-        <TreeNode key={child.id} node={child} depth={depth + 1} />
+        <TreeNode
+          key={child.id}
+          node={child}
+          depth={depth + 1}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          deletingId={deletingId}
+        />
       ))}
     </div>
   );
@@ -188,8 +233,12 @@ export default function OrganisationPage() {
   const [genLabel, setGenLabel] = useState("FY2026");
   const [generating, setGenerating] = useState(false);
   const [showAddNode, setShowAddNode] = useState(false);
-  const [newNode, setNewNode] = useState({ node_type: "", name: "", code: "", parent_id: "", cost_center_code: "" });
+  const [newNode, setNewNode] = useState({ node_type: "", name: "", code: "", parent_id: "", cost_center_code: "", entity_code: "" });
   const [addingNode, setAddingNode] = useState(false);
+  const [editNode, setEditNode] = useState<OrgNode | null>(null);
+  const [editForm, setEditForm] = useState({ node_type: "", name: "", code: "", cost_center_code: "", entity_code: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const [uploadResult, setUploadResult] = useState<{ imported: number; updated: number; errors: Array<{ row: number; reason: string }> } | null>(null);
 
@@ -299,16 +348,70 @@ export default function OrganisationPage() {
           code: newNode.code,
           parent_id: newNode.parent_id || undefined,
           cost_center_code: newNode.cost_center_code || undefined,
+          entity_code: newNode.entity_code || undefined,
         },
       });
       setShowAddNode(false);
-      setNewNode({ node_type: "", name: "", code: "", parent_id: "", cost_center_code: "" });
+      setNewNode({ node_type: "", name: "", code: "", parent_id: "", cost_center_code: "", entity_code: "" });
       const treeData = await apiFetch<{ nodes: OrgNode[] }>("/api/setup/org-structure", { token: accessToken });
       setNodes(treeData.nodes);
     } catch (e: unknown) {
       alert((e as Error).message);
     } finally {
       setAddingNode(false);
+    }
+  };
+
+  const openEdit = (node: OrgNode) => {
+    setEditNode(node);
+    setEditForm({
+      node_type: node.node_type,
+      name: node.name,
+      code: node.code,
+      cost_center_code: node.cost_center_code ?? "",
+      entity_code: node.entity_code ?? "",
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!accessToken || !editNode) return;
+    setSavingEdit(true);
+    try {
+      await apiFetch(`/api/setup/org-structure/${editNode.id}`, {
+        method: "PATCH",
+        token: accessToken,
+        body: {
+          name: editForm.name,
+          node_type: editForm.node_type,
+          cost_center_code: editForm.cost_center_code || undefined,
+          entity_code: editForm.entity_code || undefined,
+        },
+      });
+      setEditNode(null);
+      const treeData = await apiFetch<{ nodes: OrgNode[] }>("/api/setup/org-structure", { token: accessToken });
+      setNodes(treeData.nodes);
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteNode = async (nodeId: string) => {
+    if (!accessToken) return;
+    if (!confirm("Delete this node? This cannot be undone.")) return;
+    setDeletingId(nodeId);
+    try {
+      await apiFetch(`/api/setup/org-structure/${nodeId}`, {
+        method: "DELETE",
+        token: accessToken,
+      });
+      const treeData = await apiFetch<{ nodes: OrgNode[] }>("/api/setup/org-structure", { token: accessToken });
+      setNodes(treeData.nodes);
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -502,7 +605,15 @@ export default function OrganisationPage() {
             </div>
           ) : (
             <div className="border border-gray-200 rounded-lg p-3 bg-white">
-              {nodes.map(n => <TreeNode key={n.id} node={n} />)}
+              {nodes.map(n => (
+                <TreeNode
+                  key={n.id}
+                  node={n}
+                  onEdit={openEdit}
+                  onDelete={deleteNode}
+                  deletingId={deletingId}
+                />
+              ))}
             </div>
           )}
 
@@ -535,6 +646,15 @@ export default function OrganisationPage() {
                       <Input value={newNode.cost_center_code} onChange={e => setNewNode(n => ({ ...n, cost_center_code: e.target.value }))} placeholder="Must match dimension value code" />
                     </Field>
                   )}
+                  {newNode.node_type === "Legal entity" && (
+                    <Field label="Entity code (optional)">
+                      <Input
+                        value={newNode.entity_code}
+                        onChange={e => setNewNode(n => ({ ...n, entity_code: e.target.value }))}
+                        placeholder="e.g. N22341 (ERP profit centre code)"
+                      />
+                    </Field>
+                  )}
                 </div>
                 <div className="flex gap-2 mt-5">
                   <button type="button" onClick={() => setShowAddNode(false)}
@@ -544,6 +664,51 @@ export default function OrganisationPage() {
                   <button type="button" onClick={addNode} disabled={addingNode || !newNode.name || !newNode.code || !newNode.node_type}
                     className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
                     {addingNode ? "Adding…" : "Add node"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Edit node modal */}
+          {editNode && (
+            <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+              <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+                <h3 className="text-base font-semibold mb-4">Edit org node</h3>
+                <div className="space-y-3">
+                  <Field label="Node type" required>
+                    <Select value={editForm.node_type} onChange={e => setEditForm(f => ({ ...f, node_type: e.target.value }))}>
+                      <option value="">— Select type —</option>
+                      {NODE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="Name" required>
+                    <Input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+                  </Field>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Code</label>
+                    <Input value={editForm.code} disabled className="bg-gray-100 text-gray-500 cursor-not-allowed" />
+                    <p className="text-xs text-gray-400 mt-1">Code cannot be changed after creation.</p>
+                  </div>
+                  {editForm.node_type === "Cost center" && (
+                    <Field label="Cost center code">
+                      <Input value={editForm.cost_center_code} onChange={e => setEditForm(f => ({ ...f, cost_center_code: e.target.value }))} />
+                    </Field>
+                  )}
+                  {editForm.node_type === "Legal entity" && (
+                    <Field label="Entity code (optional)">
+                      <Input value={editForm.entity_code} onChange={e => setEditForm(f => ({ ...f, entity_code: e.target.value }))} placeholder="e.g. N22341" />
+                    </Field>
+                  )}
+                </div>
+                <div className="flex gap-2 mt-5">
+                  <button type="button" onClick={() => setEditNode(null)}
+                    className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button type="button" onClick={saveEdit} disabled={savingEdit || !editForm.name || !editForm.node_type}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                    {savingEdit ? "Saving…" : "Save changes"}
                   </button>
                 </div>
               </div>

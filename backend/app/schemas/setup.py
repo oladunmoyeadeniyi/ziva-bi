@@ -131,6 +131,7 @@ class OrgStructureNodeCreate(BaseModel):
     code: str
     parent_id: Optional[uuid.UUID] = None
     cost_center_code: Optional[str] = None
+    entity_code: Optional[str] = None
 
 
 class OrgStructureNodeUpdate(BaseModel):
@@ -140,6 +141,7 @@ class OrgStructureNodeUpdate(BaseModel):
     node_type: Optional[str] = None
     parent_id: Optional[uuid.UUID] = None
     cost_center_code: Optional[str] = None
+    entity_code: Optional[str] = None
     sort_order: Optional[int] = None
 
 
@@ -152,6 +154,7 @@ class OrgStructureNodeResponse(BaseModel):
     name: str
     code: str
     cost_center_code: Optional[str] = None
+    entity_code: Optional[str] = None
     is_active: bool
     sort_order: int
     children: list["OrgStructureNodeResponse"] = []

@@ -244,6 +244,7 @@ def _build_tree(nodes: list[OrgStructureNode]) -> list[OrgStructureNodeResponse]
             name=n.name,
             code=n.code,
             cost_center_code=n.cost_center_code,
+            entity_code=n.entity_code,
             is_active=n.is_active,
             sort_order=n.sort_order,
             children=[],
@@ -561,6 +562,7 @@ async def create_org_node(
         name=data.name,
         code=data.code,
         cost_center_code=data.cost_center_code,
+        entity_code=data.entity_code,
     )
     db.add(node)
     try:
@@ -577,6 +579,7 @@ async def create_org_node(
         name=node.name,
         code=node.code,
         cost_center_code=node.cost_center_code,
+        entity_code=node.entity_code,
         is_active=node.is_active,
         sort_order=node.sort_order,
     )
@@ -615,6 +618,7 @@ async def update_org_node(
         name=node.name,
         code=node.code,
         cost_center_code=node.cost_center_code,
+        entity_code=node.entity_code,
         is_active=node.is_active,
         sort_order=node.sort_order,
     )
@@ -654,42 +658,159 @@ async def download_org_structure_template(
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from openpyxl.formatting.rule import FormulaRule
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
 
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Org Structure"
 
-    headers = ["Node Type*", "Name*", "Code*", "Parent Code", "Cost Center Code", "Description"]
-    bold_blue = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="2563EB")
-    instruction_fill = PatternFill("solid", fgColor="F3F4F6")
+    # ── Instructions sheet ────────────────────────────────────────────────────
+    ins = wb.active
+    ins.title = "Instructions"
+    ins.column_dimensions["A"].width = 26
+    ins.column_dimensions["B"].width = 62
 
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
-        cell.font = bold_blue
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
-        ws.column_dimensions[get_column_letter(col_idx)].width = 22
+    ins["A1"] = "Org Structure Upload — Instructions"
+    ins["A1"].font = Font(name="Arial", bold=True, size=14, color="FFFFFF")
+    ins["A1"].fill = PatternFill("solid", fgColor="1E3A5F")
+    ins["A1"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ins.merge_cells("A1:B1")
+    ins.row_dimensions[1].height = 36
 
-    instructions = [
-        "Legal entity | Division | Department | Cost center",
-        "Full name of the node",
-        "Unique code (e.g. NG, NG_FIN, NG_FIN_AP)",
-        "Code of the parent node (leave blank for top-level)",
-        "Required only if Node Type = Cost center",
-        "Optional description",
+    ins["A2"] = "Use the 'Org Structure' sheet to build your organisation hierarchy. Delete sample rows before uploading."
+    ins["A2"].font = Font(name="Arial", size=10, color="555555")
+    ins["A2"].fill = PatternFill("solid", fgColor="F7F9FC")
+    ins.merge_cells("A2:B2")
+    ins.row_dimensions[2].height = 22
+
+    ins.append(["", ""])
+
+    for col, val in [("A4", "Column"), ("B4", "Description")]:
+        ins[col].value = val
+        ins[col].font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+        ins[col].fill = PatternFill("solid", fgColor="2D6A9F")
+        ins[col].alignment = Alignment(vertical="center", indent=1)
+    ins.row_dimensions[4].height = 24
+
+    col_rows = [
+        ("Node Type *",      "Required. Select from dropdown:\n• Legal entity — the company itself (one per upload)\n• Division / Business unit — major grouping\n• Department — functional unit\n• Cost center — lowest level where costs are posted"),
+        ("Name *",           "Required. Full display name. Examples: Sales, Finance, Off Premise"),
+        ("Code *",           "Required. Unique short code, no spaces. Examples: N22341SA, NG_FIN"),
+        ("Parent Code",      "Code of this node's parent. Leave blank only for the top-level Legal entity.\nMust exactly match a Code in this file or already in the system."),
+        ("Cost Center Code", "Required when Node Type = Cost center. Must match the dimension value code in Ziva BI.\nLeave blank for Legal entity, Division, and Department nodes.\nConditional formatting flags missing values in red."),
+        ("Entity Code",      "Optional. Legal entity nodes only. Stores the ERP profit centre / entity code.\nExample: N22341 (Sage X3 profit centre for Red Bull Nigeria)."),
+        ("Description",      "Optional. Any notes about this node."),
     ]
-    for col_idx, instruction in enumerate(instructions, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=instruction)
-        cell.fill = instruction_fill
-        cell.font = Font(italic=True, color="6B7280")
 
-    example = ["Legal entity", "Nigeria Operations", "NG", "", "", "Main operating entity"]
-    for col_idx, val in enumerate(example, start=1):
-        ws.cell(row=3, column=col_idx, value=val)
+    section_fill = PatternFill("solid", fgColor="EBF2FF")
+    alt_fill = PatternFill("solid", fgColor="F7F9FC")
+
+    for i, (col, desc) in enumerate(col_rows):
+        r = 5 + i
+        c1 = ins.cell(row=r, column=1, value=col)
+        c1.font = Font(name="Arial", bold=True, size=11)
+        c1.fill = section_fill if i % 2 == 0 else alt_fill
+        c1.alignment = Alignment(vertical="top", indent=1)
+        c2 = ins.cell(row=r, column=2, value=desc)
+        c2.font = Font(name="Arial", size=11)
+        c2.fill = section_fill if i % 2 == 0 else alt_fill
+        c2.alignment = Alignment(wrap_text=True, vertical="top", indent=1)
+        ins.row_dimensions[r].height = 56
+
+    warn_row = 5 + len(col_rows) + 1
+    ins.cell(row=warn_row, column=1, value="⚠  Important").font = Font(name="Arial", bold=True, size=10, color="7B4F00")
+    ins.cell(row=warn_row, column=1).fill = PatternFill("solid", fgColor="FFF8E1")
+    ins.cell(row=warn_row, column=1).alignment = Alignment(vertical="top", indent=1)
+    ins.cell(row=warn_row, column=2, value=(
+        "• Do not delete or rename column headers.\n"
+        "• Do not add extra columns.\n"
+        "• Codes must be unique — duplicates will be rejected.\n"
+        "• Parent Code must reference a Code that exists in this file or already in the system.\n"
+        "• Uploading replaces the existing structure. Back up before uploading.\n"
+        "• Red highlighted cells = Cost center nodes missing a Cost Center Code. Fix before uploading."
+    )).font = Font(name="Arial", size=10, color="7B4F00")
+    ins.cell(row=warn_row, column=2).fill = PatternFill("solid", fgColor="FFF8E1")
+    ins.cell(row=warn_row, column=2).alignment = Alignment(wrap_text=True, vertical="top", indent=1)
+    ins.row_dimensions[warn_row].height = 88
+
+    # ── Org Structure sheet ───────────────────────────────────────────────────
+    ws = wb.create_sheet("Org Structure")
+
+    col_widths = [26, 28, 18, 18, 22, 18, 30]
+    for i, w in enumerate(col_widths, 1):
+        from openpyxl.utils import get_column_letter
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    headers = ["Node Type *", "Name *", "Code *", "Parent Code",
+               "Cost Center Code", "Entity Code", "Description"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1E3A5F")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 30
+
+    # Node Type dropdown
+    dv = DataValidation(
+        type="list",
+        formula1='"Legal entity,Division / Business unit,Department,Cost center"',
+        allow_blank=False,
+        showDropDown=False,
+        showErrorMessage=True,
+        errorTitle="Invalid node type",
+        error="Select from: Legal entity, Division / Business unit, Department, Cost center",
+    )
+    ws.add_data_validation(dv)
+    dv.sqref = "A2:A500"
+
+    # Conditional formatting: amber row + red cell when Cost center missing code
+    ws.conditional_formatting.add(
+        "A2:G500",
+        FormulaRule(
+            formula=['AND($A2="Cost center",$E2="")'],
+            fill=PatternFill("solid", fgColor="FFF3CD"),
+        )
+    )
+    ws.conditional_formatting.add(
+        "E2:E500",
+        FormulaRule(
+            formula=['AND(A2="Cost center",E2="")'],
+            fill=PatternFill("solid", fgColor="FFCCCC"),
+            font=Font(name="Arial", size=10, color="CC0000"),
+        )
+    )
+    ws.conditional_formatting.add(
+        "E2:E500",
+        FormulaRule(
+            formula=['AND(A2="Cost center",E2<>"")'],
+            fill=PatternFill("solid", fgColor="D4EDDA"),
+        )
+    )
+
+    # Sample rows
+    samples = [
+        ("Legal entity",            "Acme Corporation", "ACME",   "",     "",         "ACM001", "Top-level legal entity"),
+        ("Cost center",             "Finance",          "FIN",    "ACME", "FIN001",   "",       "Finance department"),
+        ("Cost center",             "Sales",            "SAL",    "ACME", "SAL001",   "",       "Sales department"),
+        ("Cost center",             "Off Premise",      "SAL_OP", "SAL",  "SAL_OP01", "",       "Off premise sales"),
+        ("Cost center",             "Marketing",        "MKT",    "ACME", "",         "",       "Missing cost center code — intentional demo of red flag"),
+    ]
+    s_font = Font(name="Arial", size=10, color="444444", italic=True)
+    for r, row in enumerate(samples, 2):
+        for c, val in enumerate(row, 1):
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font = s_font
+            cell.alignment = Alignment(vertical="center", indent=1)
+        ws.row_dimensions[r].height = 20
+
+    note_row = len(samples) + 3
+    ws.cell(row=note_row, column=1,
+        value="↑ Delete all sample rows above before uploading. Marketing row intentionally has no Cost Center Code to demonstrate the red flag."
+    ).font = Font(name="Arial", size=10, color="AA0000", italic=True)
+    ws.merge_cells(f"A{note_row}:G{note_row}")
+
+    ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -723,16 +844,17 @@ async def upload_org_structure(
             if not any(row):
                 continue
             rows.append({
-                "node_type": str(row[0]).strip() if row[0] else "",
-                "name": str(row[1]).strip() if row[1] else "",
-                "code": str(row[2]).strip() if row[2] else "",
-                "parent_code": str(row[3]).strip() if row[3] else None,
+                "node_type":        str(row[0]).strip() if row[0] else "",
+                "name":             str(row[1]).strip() if row[1] else "",
+                "code":             str(row[2]).strip() if row[2] else "",
+                "parent_code":      str(row[3]).strip() if row[3] else None,
                 "cost_center_code": str(row[4]).strip() if row[4] else None,
+                "entity_code":      str(row[5]).strip() if len(row) > 5 and row[5] else None,
             })
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
 
-    VALID_TYPES = {"Legal entity", "Division", "Department", "Cost center"}
+    VALID_TYPES = {"Legal entity", "Division / Business unit", "Department", "Cost center"}
     imported = updated = 0
     errors: list[dict] = []
 
@@ -765,6 +887,7 @@ async def upload_org_structure(
             node.node_type = row["node_type"]
             node.parent_id = parent_id
             node.cost_center_code = row["cost_center_code"]
+            node.entity_code = row["entity_code"]
             node.is_active = True
             updated += 1
         else:
@@ -775,6 +898,7 @@ async def upload_org_structure(
                 code=row["code"],
                 parent_id=parent_id,
                 cost_center_code=row["cost_center_code"],
+                entity_code=row["entity_code"],
             )
             db.add(node)
             existing_map[row["code"]] = node
