@@ -10,7 +10,7 @@
  * On success, the user is logged in automatically and redirected to their dashboard.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth, SignupData } from "@/contexts/AuthContext";
@@ -82,8 +82,30 @@ export default function SignupPage() {
   const [companyName, setCompanyName] = useState("");
   const [companyCountry, setCompanyCountry] = useState("");
 
+  const [countryLoading, setCountryLoading] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const detectCountry = async () => {
+      try {
+        const res = await fetch("https://ipapi.co/json/");
+        if (!res.ok) throw new Error("Failed");
+        const data = await res.json();
+        const detectedCode = data.country_code as string;
+        // Only set if the detected country exists in our COUNTRIES list
+        const exists = COUNTRIES.some((c) => c.code === detectedCode);
+        if (exists) {
+          setCompanyCountry(detectedCode);
+        }
+      } catch {
+        // Silently fall back to blank — user selects manually
+      } finally {
+        setCountryLoading(false);
+      }
+    };
+    detectCountry();
+  }, []);
 
   // ── Step 1: Account type selection ─────────────────────────────────────────
 
@@ -223,7 +245,7 @@ export default function SignupPage() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Adeniyi Oladunmoye"
+                placeholder="e.g. John Adeyemi"
               />
             </div>
 
@@ -263,19 +285,25 @@ export default function SignupPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Country
                   </label>
-                  <select
-                    required
-                    value={companyCountry}
-                    onChange={(e) => setCompanyCountry(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">— Select country —</option>
-                    {COUNTRIES.map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  {countryLoading ? (
+                    <div className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-400 bg-gray-50">
+                      Detecting your location…
+                    </div>
+                  ) : (
+                    <select
+                      required
+                      value={companyCountry}
+                      onChange={(e) => setCompanyCountry(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">— Select country —</option>
+                      {COUNTRIES.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 {companyCountry && COUNTRY_CURRENCY_MAP[companyCountry] && (
