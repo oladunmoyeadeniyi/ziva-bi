@@ -80,7 +80,7 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
-  const [companyCountry, setCompanyCountry] = useState("NG");
+  const [companyCountry, setCompanyCountry] = useState("");
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -214,8 +214,9 @@ export default function SignupPage() {
             {/* Full name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Full name
+                Your full name
               </label>
+              <p className="text-xs text-gray-500 mb-1">This will be your admin account for the company.</p>
               <input
                 type="text"
                 required
@@ -268,6 +269,7 @@ export default function SignupPage() {
                     onChange={(e) => setCompanyCountry(e.target.value)}
                     className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
+                    <option value="">— Select country —</option>
                     {COUNTRIES.map((c) => (
                       <option key={c.code} value={c.code}>
                         {c.name}
