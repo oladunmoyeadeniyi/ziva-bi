@@ -99,6 +99,15 @@ from app.schemas.setup import (
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
 
+# Country → functional currency map (ISO 4217)
+COUNTRY_CURRENCY_MAP: dict[str, str] = {
+    "NG": "NGN", "GH": "GHS", "KE": "KES", "ZA": "ZAR",
+    "GB": "GBP", "US": "USD", "CA": "CAD", "AU": "AUD",
+    "DE": "EUR", "FR": "EUR", "NL": "EUR", "AE": "AED",
+    "SG": "SGD", "IN": "INR", "BR": "BRL", "JP": "JPY",
+    "CN": "CNY", "EG": "EGP", "ET": "ETB", "RW": "RWF",
+}
+
 # ── Module catalogue (all 14 modules) ─────────────────────────────────────────
 
 MODULE_CATALOGUE = [
@@ -143,13 +152,22 @@ def _require_tenant(current_user: CurrentUser) -> uuid.UUID:
 
 
 async def _get_or_create_org(tenant_id: uuid.UUID, db: AsyncSession) -> TenantOrgConfig:
-    """Fetch the org config row, creating a blank one if it does not exist."""
+    """Fetch the org config row, creating one seeded with functional currency if it does not exist."""
     result = await db.execute(
         select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
     )
     org = result.scalar_one_or_none()
     if org is None:
-        org = TenantOrgConfig(tenant_id=tenant_id)
+        # Derive functional currency from the tenant's country (fallback for legacy tenants)
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+        functional_currency = COUNTRY_CURRENCY_MAP.get(
+            tenant.country if tenant else "", "USD"
+        )
+        org = TenantOrgConfig(
+            tenant_id=tenant_id,
+            functional_currency=functional_currency,
+        )
         db.add(org)
         await db.flush()
     return org
@@ -492,8 +510,12 @@ async def patch_org(
     tenant_id = _require_tenant(current_user)
     org = await _get_or_create_org(tenant_id, db)
 
+    PROTECTED_ORG_FIELDS = {"functional_currency"}
+
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
+        if field in PROTECTED_ORG_FIELDS:
+            continue
         if hasattr(org, field):
             setattr(org, field, value)
 

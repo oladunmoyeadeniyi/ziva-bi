@@ -40,6 +40,29 @@ const COUNTRIES = [
   { code: "RW", name: "Rwanda" },
 ].sort((a, b) => a.name.localeCompare(b.name));
 
+const COUNTRY_CURRENCY_MAP: Record<string, { code: string; name: string }> = {
+  NG: { code: "NGN", name: "Nigerian Naira" },
+  GH: { code: "GHS", name: "Ghanaian Cedi" },
+  KE: { code: "KES", name: "Kenyan Shilling" },
+  ZA: { code: "ZAR", name: "South African Rand" },
+  GB: { code: "GBP", name: "British Pound" },
+  US: { code: "USD", name: "US Dollar" },
+  CA: { code: "CAD", name: "Canadian Dollar" },
+  AU: { code: "AUD", name: "Australian Dollar" },
+  DE: { code: "EUR", name: "Euro" },
+  FR: { code: "EUR", name: "Euro" },
+  NL: { code: "EUR", name: "Euro" },
+  AE: { code: "AED", name: "UAE Dirham" },
+  SG: { code: "SGD", name: "Singapore Dollar" },
+  IN: { code: "INR", name: "Indian Rupee" },
+  BR: { code: "BRL", name: "Brazilian Real" },
+  JP: { code: "JPY", name: "Japanese Yen" },
+  CN: { code: "CNY", name: "Chinese Yuan" },
+  EG: { code: "EGP", name: "Egyptian Pound" },
+  ET: { code: "ETB", name: "Ethiopian Birr" },
+  RW: { code: "RWF", name: "Rwandan Franc" },
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 type AccountType = "individual" | "business";
@@ -252,6 +275,21 @@ export default function SignupPage() {
                     ))}
                   </select>
                 </div>
+
+                {companyCountry && COUNTRY_CURRENCY_MAP[companyCountry] && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                    <p className="text-xs font-medium text-amber-800 mb-1">
+                      Functional currency — locked after go-live (IAS 21)
+                    </p>
+                    <p className="text-sm font-semibold text-amber-900">
+                      {COUNTRY_CURRENCY_MAP[companyCountry].code} —{" "}
+                      {COUNTRY_CURRENCY_MAP[companyCountry].name}
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Auto-detected from your country. This cannot be changed after go-live.
+                    </p>
+                  </div>
+                )}
               </>
             )}
 

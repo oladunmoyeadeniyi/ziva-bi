@@ -57,6 +57,15 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 LOCKOUT_THRESHOLD = 5    # failed attempts before lockout
 LOCKOUT_MINUTES = 15     # lockout duration
 
+# Country → functional currency map (ISO 4217)
+COUNTRY_CURRENCY_MAP: dict[str, str] = {
+    "NG": "NGN", "GH": "GHS", "KE": "KES", "ZA": "ZAR",
+    "GB": "GBP", "US": "USD", "CA": "CAD", "AU": "AUD",
+    "DE": "EUR", "FR": "EUR", "NL": "EUR", "AE": "AED",
+    "SG": "SGD", "IN": "INR", "BR": "BRL", "JP": "JPY",
+    "CN": "CNY", "EG": "EGP", "ET": "ETB", "RW": "RWF",
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -229,6 +238,15 @@ async def signup(
         )
         db.add(tenant)
         await db.flush()  # get tenant.id
+
+        # Seed TenantOrgConfig with functional currency derived from country
+        from app.models.setup import TenantOrgConfig as _TenantOrgConfig
+        _functional_currency = COUNTRY_CURRENCY_MAP.get(data.company_country, "USD")
+        db.add(_TenantOrgConfig(
+            tenant_id=tenant.id,
+            functional_currency=_functional_currency,
+        ))
+        await db.flush()
 
     # ── 3. Create user ────────────────────────────────────────────────────────
     from app.models.auth import AccountType

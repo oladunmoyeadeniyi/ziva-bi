@@ -409,7 +409,24 @@ export default function OrganisationPage() {
               <Input value={org.functional_currency ?? "NGN"} readOnly disabled placeholder="Set during signup" />
             </Field>
             <Field label="Reporting currency (optional)">
-              <Input value={org.reporting_currency ?? ""} onChange={e => setOrg(o => ({ ...o, reporting_currency: e.target.value }))} placeholder="e.g. USD (for group reporting)" />
+              <Select value={org.reporting_currency ?? ""} onChange={e => setOrg(o => ({ ...o, reporting_currency: e.target.value }))}>
+                <option value="">Same as functional currency</option>
+                <option value="USD">USD — US Dollar</option>
+                <option value="EUR">EUR — Euro</option>
+                <option value="GBP">GBP — British Pound</option>
+                <option value="NGN">NGN — Nigerian Naira</option>
+                <option value="GHS">GHS — Ghanaian Cedi</option>
+                <option value="KES">KES — Kenyan Shilling</option>
+                <option value="ZAR">ZAR — South African Rand</option>
+                <option value="AED">AED — UAE Dirham</option>
+                <option value="CAD">CAD — Canadian Dollar</option>
+                <option value="AUD">AUD — Australian Dollar</option>
+                <option value="SGD">SGD — Singapore Dollar</option>
+                <option value="INR">INR — Indian Rupee</option>
+                <option value="JPY">JPY — Japanese Yen</option>
+                <option value="CNY">CNY — Chinese Yuan</option>
+                <option value="CHF">CHF — Swiss Franc</option>
+              </Select>
             </Field>
             <Field label="Authorised share capital (optional)">
               <Input type="number" value={org.authorised_share_capital ?? ""} onChange={e => setOrg(o => ({ ...o, authorised_share_capital: parseFloat(e.target.value) || undefined }))} placeholder="e.g. 10000000" />
