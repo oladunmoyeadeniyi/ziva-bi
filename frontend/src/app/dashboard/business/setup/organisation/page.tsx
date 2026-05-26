@@ -11,7 +11,7 @@
  * Route: /dashboard/business/setup/organisation
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -236,7 +236,7 @@ export default function OrganisationPage() {
   const [newNode, setNewNode] = useState({ node_type: "", name: "", code: "", parent_id: "", cost_center_code: "", entity_code: "" });
   const [addingNode, setAddingNode] = useState(false);
   const [editNode, setEditNode] = useState<OrgNode | null>(null);
-  const [editForm, setEditForm] = useState({ node_type: "", name: "", code: "", cost_center_code: "", entity_code: "" });
+  const [editForm, setEditForm] = useState({ node_type: "", name: "", code: "", cost_center_code: "", entity_code: "", parent_id: undefined as string | undefined });
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -370,6 +370,7 @@ export default function OrganisationPage() {
       code: node.code,
       cost_center_code: node.cost_center_code ?? "",
       entity_code: node.entity_code ?? "",
+      parent_id: node.parent_id ?? undefined,
     });
   };
 
@@ -385,6 +386,7 @@ export default function OrganisationPage() {
           node_type: editForm.node_type,
           cost_center_code: editForm.cost_center_code || undefined,
           entity_code: editForm.entity_code || undefined,
+          parent_id: editForm.parent_id || undefined,
         },
       });
       setEditNode(null);
@@ -415,11 +417,17 @@ export default function OrganisationPage() {
     }
   };
 
-  // Flatten tree for parent dropdown
-  const flattenTree = (items: OrgNode[]): OrgNode[] =>
-    items.flatMap(n => [n, ...flattenTree(n.children ?? [])]);
-
-  const flatNodes = flattenTree(nodes);
+  const flatNodes = useMemo(() => {
+    const result: OrgNode[] = [];
+    const flatten = (list: OrgNode[]) => {
+      for (const n of list) {
+        result.push(n);
+        if (n.children?.length) flatten(n.children);
+      }
+    };
+    flatten(nodes);
+    return result;
+  }, [nodes]);
 
   return (
     <div className="p-8 max-w-4xl">
@@ -690,6 +698,21 @@ export default function OrganisationPage() {
                     <Input value={editForm.code} disabled className="bg-gray-100 text-gray-500 cursor-not-allowed" />
                     <p className="text-xs text-gray-400 mt-1">Code cannot be changed after creation.</p>
                   </div>
+                  <Field label="Parent node">
+                    <Select
+                      value={editForm.parent_id ?? ""}
+                      onChange={e => setEditForm(f => ({ ...f, parent_id: e.target.value || undefined }))}
+                    >
+                      <option value="">— Top level —</option>
+                      {flatNodes
+                        .filter(n => n.id !== editNode?.id)
+                        .map(n => (
+                          <option key={n.id} value={n.id}>
+                            {n.name} ({n.code})
+                          </option>
+                        ))}
+                    </Select>
+                  </Field>
                   {editForm.node_type === "Cost center" && (
                     <Field label="Cost center code">
                       <Input value={editForm.cost_center_code} onChange={e => setEditForm(f => ({ ...f, cost_center_code: e.target.value }))} />

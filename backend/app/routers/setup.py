@@ -839,17 +839,31 @@ async def upload_org_structure(
     try:
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
-        ws = wb.active
-        for row in ws.iter_rows(min_row=3, values_only=True):
+        # Try "Org Structure" sheet first, fall back to active
+        ws = wb["Org Structure"] if "Org Structure" in wb.sheetnames else wb.active
+
+        VALID_NODE_TYPES = {"Legal entity", "Division / Business unit", "Department", "Cost center"}
+
+        for row in ws.iter_rows(min_row=2, values_only=True):
             if not any(row):
                 continue
+            # Skip header rows and note rows
+            first_cell = str(row[0]).strip() if row[0] else ""
+            if first_cell.startswith("↑"):
+                continue
+            if first_cell.lower() in ("node type*", "node type *", "node type"):
+                continue
+            if first_cell not in VALID_NODE_TYPES:
+                # Could be an instruction row — skip silently if name/code also empty
+                if not row[1] and not row[2]:
+                    continue
             rows.append({
-                "node_type":        str(row[0]).strip() if row[0] else "",
+                "node_type":        first_cell,
                 "name":             str(row[1]).strip() if row[1] else "",
                 "code":             str(row[2]).strip() if row[2] else "",
                 "parent_code":      str(row[3]).strip() if row[3] else None,
                 "cost_center_code": str(row[4]).strip() if row[4] else None,
-                "entity_code":      str(row[5]).strip() if len(row) > 5 and row[5] else None,
+                "entity_code":      str(row[5]).strip() if row[5] else None,
             })
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
@@ -864,28 +878,21 @@ async def upload_org_structure(
     )
     existing_map = {n.code: n for n in existing_result.scalars().all()}
 
-    for row_num, row in enumerate(rows, start=3):
+    # Pass 1: upsert all nodes without parent assignment
+    code_to_row = {}
+    for row_num, row in enumerate(rows, start=2):
         if not row["node_type"] or row["node_type"] not in VALID_TYPES:
             errors.append({"row": row_num, "reason": f"Invalid Node Type: '{row['node_type']}'"})
             continue
         if not row["name"] or not row["code"]:
             errors.append({"row": row_num, "reason": "Name and Code are required."})
             continue
-
-        # Resolve parent
-        parent_id = None
-        if row["parent_code"]:
-            parent = existing_map.get(row["parent_code"])
-            if not parent:
-                errors.append({"row": row_num, "reason": f"Parent code '{row['parent_code']}' not found."})
-                continue
-            parent_id = parent.id
+        code_to_row[row["code"]] = (row_num, row)
 
         if row["code"] in existing_map:
             node = existing_map[row["code"]]
             node.name = row["name"]
             node.node_type = row["node_type"]
-            node.parent_id = parent_id
             node.cost_center_code = row["cost_center_code"]
             node.entity_code = row["entity_code"]
             node.is_active = True
@@ -896,13 +903,28 @@ async def upload_org_structure(
                 node_type=row["node_type"],
                 name=row["name"],
                 code=row["code"],
-                parent_id=parent_id,
+                parent_id=None,  # set in pass 2
                 cost_center_code=row["cost_center_code"],
                 entity_code=row["entity_code"],
             )
             db.add(node)
             existing_map[row["code"]] = node
             imported += 1
+
+    # Flush so all nodes have IDs
+    await db.flush()
+
+    # Pass 2: assign parent_id now that all nodes exist
+    for row_num, row in code_to_row.values():
+        if not row["parent_code"]:
+            continue
+        node = existing_map.get(row["code"])
+        parent = existing_map.get(row["parent_code"])
+        if not parent:
+            errors.append({"row": row_num, "reason": f"Parent code '{row['parent_code']}' not found."})
+            continue
+        if node:
+            node.parent_id = parent.id
 
     await db.commit()
     return OrgStructureUploadResult(imported=imported, updated=updated, errors=errors)
