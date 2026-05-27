@@ -88,7 +88,6 @@ interface OrgConfiguration {
   // Governance
   use_audit_trail: boolean;
   use_multilevel_auth: boolean;
-  auth_levels?: Array<{ role: string; min_amount: number | "" }>;
 }
 
 interface OrgNode {
@@ -608,10 +607,6 @@ export default function OrganisationPage() {
     tax_items: [],
     use_audit_trail: true,
     use_multilevel_auth: false,
-    auth_levels: [
-      { role: "", min_amount: "" },
-      { role: "", min_amount: "" },
-    ],
   };
 
   const [config, setConfig] = useState<OrgConfiguration>(DEFAULT_CONFIG);
@@ -1883,10 +1878,17 @@ export default function OrganisationPage() {
                         <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{group.title}</span>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-400">
-                            {group.items.filter(i => {
-                              const saved = config.tax_items.find(t => t.id === i.id);
-                              return saved ? saved.checked : i.checked;
-                            }).length} of {group.items.length} selected
+                            {(() => {
+                              const jurisdictionChecked = group.items.filter(i => {
+                                const saved = config.tax_items.find(t => t.id === i.id);
+                                return saved ? saved.checked : i.checked;
+                              }).length;
+                              const customChecked = config.tax_items.filter(t => t.custom && t.category === group.title && t.checked).length;
+                              const totalCustom = config.tax_items.filter(t => t.custom && t.category === group.title).length;
+                              const total = group.items.length + totalCustom;
+                              const checked = jurisdictionChecked + customChecked;
+                              return `${checked} of ${total} selected`;
+                            })()}
                           </span>
                           <i className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-gray-400`} style={{ fontSize: 13 }} />
                         </div>
@@ -1923,6 +1925,42 @@ export default function OrganisationPage() {
                               </div>
                             );
                           })}
+                          {/* Custom items for this group */}
+                          {config.tax_items
+                            .filter(t => t.custom && (t.category === group.title))
+                            .map(item => (
+                              <div key={item.id} className="flex items-start gap-2.5 px-4 py-2.5 bg-blue-50">
+                                <input
+                                  type="checkbox"
+                                  className="w-3.5 h-3.5 cursor-pointer accent-blue-600 mt-0.5 flex-shrink-0"
+                                  checked={item.checked}
+                                  onChange={e => {
+                                    setConfig(c => ({
+                                      ...c,
+                                      tax_items: c.tax_items.map(t =>
+                                        t.id === item.id ? { ...t, checked: e.target.checked } : t
+                                      ),
+                                    }));
+                                  }}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-xs font-medium text-gray-900">{item.name}</p>
+                                    <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">Custom</span>
+                                  </div>
+                                  <p className="text-[11px] text-gray-500">{item.desc}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfig(c => ({ ...c, tax_items: c.tax_items.filter(t => t.id !== item.id) }))}
+                                  className="text-red-400 hover:text-red-600 p-0.5 flex-shrink-0"
+                                  title="Remove"
+                                >
+                                  <i className="ti ti-x" style={{ fontSize: 12 }} />
+                                </button>
+                              </div>
+                            ))
+                          }
                         </div>
                       )}
                     </div>
@@ -1930,18 +1968,25 @@ export default function OrganisationPage() {
                 });
               })()}
 
-              {/* Custom taxes group — renders items added via the form below */}
-              {config.tax_items.filter(t => t.custom).length > 0 && (() => {
-                const customByCategory = config.tax_items
-                  .filter(t => t.custom)
-                  .reduce((acc, item) => {
-                    const cat = item.category ?? "Custom taxes";
-                    if (!acc[cat]) acc[cat] = [];
-                    acc[cat].push(item);
-                    return acc;
-                  }, {} as Record<string, TaxItem[]>);
+              {/* New custom categories only — custom taxes assigned to a category not in the jurisdiction profile */}
+              {(() => {
+                const countryCode2 = (org.country && TAX_PROFILES[org.country]) ? org.country : "XX";
+                const existingGroupTitles = new Set(
+                  (TAX_PROFILES[countryCode2] ?? TAX_PROFILES["XX"]).map(g => g.title)
+                );
+                const newCategoryItems = config.tax_items.filter(
+                  t => t.custom && t.category && !existingGroupTitles.has(t.category)
+                );
+                if (newCategoryItems.length === 0) return null;
 
-                return Object.entries(customByCategory).map(([category, items]) => {
+                const byCategory = newCategoryItems.reduce((acc, item) => {
+                  const cat = item.category ?? "Custom taxes";
+                  if (!acc[cat]) acc[cat] = [];
+                  acc[cat].push(item);
+                  return acc;
+                }, {} as Record<string, TaxItem[]>);
+
+                return Object.entries(byCategory).map(([category, items]) => {
                   const isCollapsed = collapsedTaxGroups.has(`custom_${category}`);
                   return (
                     <div key={`custom_${category}`} className="border border-blue-200 rounded-md overflow-hidden">
@@ -1955,37 +2000,29 @@ export default function OrganisationPage() {
                           <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">Custom</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-blue-500">{items.filter(i => i.checked).length} of {items.length} selected</span>
+                          <span className="text-xs text-blue-500">
+                            {items.filter(i => i.checked).length} of {items.length} selected
+                          </span>
                           <i className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-blue-400`} style={{ fontSize: 13 }} />
                         </div>
                       </button>
                       {!isCollapsed && (
                         <div className="divide-y divide-blue-50">
                           {items.map(item => (
-                            <div key={item.id} className="flex items-start gap-2.5 px-4 py-2.5">
-                              <input
-                                type="checkbox"
-                                className="w-3.5 h-3.5 cursor-pointer accent-blue-600 mt-0.5 flex-shrink-0"
+                            <div key={item.id} className="flex items-start gap-2.5 px-4 py-2.5 bg-blue-50">
+                              <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer accent-blue-600 mt-0.5 flex-shrink-0"
                                 checked={item.checked}
-                                onChange={e => {
-                                  setConfig(c => ({
-                                    ...c,
-                                    tax_items: c.tax_items.map(t =>
-                                      t.id === item.id ? { ...t, checked: e.target.checked } : t
-                                    ),
-                                  }));
-                                }}
-                              />
+                                onChange={e => setConfig(c => ({
+                                  ...c,
+                                  tax_items: c.tax_items.map(t => t.id === item.id ? { ...t, checked: e.target.checked } : t),
+                                }))} />
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-medium text-gray-900">{item.name}</p>
                                 <p className="text-[11px] text-gray-500">{item.desc}</p>
                               </div>
-                              <button
-                                type="button"
+                              <button type="button"
                                 onClick={() => setConfig(c => ({ ...c, tax_items: c.tax_items.filter(t => t.id !== item.id) }))}
-                                className="text-red-400 hover:text-red-600 p-0.5 flex-shrink-0"
-                                title="Remove custom tax"
-                              >
+                                className="text-red-400 hover:text-red-600 p-0.5 flex-shrink-0" title="Remove">
                                 <i className="ti ti-x" style={{ fontSize: 12 }} />
                               </button>
                             </div>
@@ -2097,32 +2134,13 @@ export default function OrganisationPage() {
                   <p className="text-sm font-medium text-gray-900">Multi-level payment authorisation</p>
                   <p className="text-xs text-gray-500 mt-0.5">Require sequential approval by multiple authorisers on payments above defined thresholds. Number of levels configurable up to 5.</p>
                   {config.use_multilevel_auth && (
-                    <div className="mt-3 space-y-2">
-                      <p className="text-xs text-gray-500 mb-2">Define each authorisation level. Levels are sequential — Level 1 approves first.</p>
-                      {(config.auth_levels ?? []).map((level, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-medium flex items-center justify-center flex-shrink-0">{i + 1}</div>
-                          <Input placeholder="Role or person (e.g. Finance Manager)" value={level.role}
-                            onChange={e => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.map((l, idx) => idx === i ? { ...l, role: e.target.value } : l) }))} />
-                          <Input type="number" placeholder="Min amount" style={{ width: 140 }} value={level.min_amount}
-                            onChange={e => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.map((l, idx) => idx === i ? { ...l, min_amount: parseInt(e.target.value) || "" } : l) }))} />
-                          {(config.auth_levels?.length ?? 0) > 1 && (
-                            <button type="button"
-                              onClick={() => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.filter((_, idx) => idx !== i) }))}
-                              className="text-red-400 hover:text-red-600 p-1">
-                              <i className="ti ti-x" style={{ fontSize: 13 }} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                      {(config.auth_levels?.length ?? 0) < 5 && (
-                        <button type="button"
-                          onClick={() => setConfig(c => ({ ...c, auth_levels: [...(c.auth_levels ?? []), { role: "", min_amount: "" }] }))}
-                          className="text-xs text-blue-600 hover:text-blue-700 mt-1">
-                          + Add level
-                        </button>
-                      )}
-                      <p className="text-xs text-gray-400 mt-1">Full workflow configuration is done in Approval workflows. This enables the feature globally.</p>
+                    <div className="mt-2 flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-100 rounded-md">
+                      <i className="ti ti-info-circle text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                      <p className="text-xs text-blue-700">
+                        Multi-level payment authorisation is enabled. Configure the number of levels, approver roles,
+                        and thresholds in <span className="font-medium">Approval workflows</span> — approvers are assigned
+                        from your employee and roles data.
+                      </p>
                     </div>
                   )}
                 </div>
