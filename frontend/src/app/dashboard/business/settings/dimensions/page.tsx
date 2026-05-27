@@ -3,10 +3,8 @@
 /**
  * Dimensions management — /dashboard/business/settings/dimensions
  *
- * M8.2 Fixes: 3-tab layout.
- *   Tab 1 — Dimension setup (add/edit/reorder dimensions)
- *   Tab 2 — Master data / values (links to dimension values sub-pages)
- *   Tab 3 — Not using dimensions? (mark as not applicable)
+ * M8.2 Rebuild: card-based layout with value sources, hybrid statistical
+ * order support, collapsible cards, and inline add/edit forms.
  *
  * Tenant Admin only.
  */
@@ -24,6 +22,9 @@ interface Dimension {
   is_required: boolean;
   is_active: boolean;
   sort_order: number;
+  value_source: "manual" | "org_structure" | "employee_master" | "customer_category" | "hybrid" | "product_master";
+  description?: string;
+  icon?: string;
 }
 
 function generateCode(name: string): string {
@@ -31,6 +32,35 @@ function generateCode(name: string): string {
 }
 
 type Tab = "setup" | "values";
+
+const SOURCE_LABELS: Record<string, string> = {
+  manual: "Manual",
+  org_structure: "Auto — org structure",
+  employee_master: "Auto — employee master",
+  customer_category: "Manual (future: customer master)",
+  hybrid: "Hybrid — 3 sources",
+  product_master: "Auto — product master (future)",
+};
+
+const SOURCE_COLORS: Record<string, string> = {
+  manual: "bg-gray-100 text-gray-600",
+  org_structure: "bg-green-50 text-green-700",
+  employee_master: "bg-blue-50 text-blue-700",
+  customer_category: "bg-amber-50 text-amber-700",
+  hybrid: "bg-blue-50 text-blue-700",
+  product_master: "bg-amber-50 text-amber-700",
+};
+
+const DIM_ICONS: Record<string, string> = {
+  cost_center: "building-community",
+  material: "barcode",
+  statistical_order: "git-branch",
+  real_order: "git-commit",
+  project: "clipboard-list",
+  brand: "award",
+  region: "map-pin",
+  channel: "arrows-split",
+};
 
 export default function DimensionsPage() {
   const { user, accessToken } = useAuth();
@@ -46,12 +76,10 @@ export default function DimensionsPage() {
   const [addName, setAddName] = useState("");
   const [addCode, setAddCode] = useState("");
   const [addRequired, setAddRequired] = useState(false);
+  const [addSource, setAddSource] = useState<string>("manual");
+  const [addDescription, setAddDescription] = useState<string>("");
   const [addingDim, setAddingDim] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-
-  // Not applicable state
-  const [confirming, setConfirming] = useState(false);
-  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // Edit state
   const [editId, setEditId] = useState<string | null>(null);
@@ -60,12 +88,25 @@ export default function DimensionsPage() {
   const [editRequired, setEditRequired] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Card expand / values tab state
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [selectedDimForValues, setSelectedDimForValues] = useState<string>("");
+  const [valuesSubTab, setValuesSubTab] = useState<"auto" | "customer" | "manual">("auto");
+
   useEffect(() => {
     if (!user) return;
     if (!user.is_tenant_admin && !user.is_super_admin) {
       router.replace("/dashboard/business");
     }
   }, [user, router]);
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const load = async () => {
     if (!accessToken) return;
@@ -93,9 +134,12 @@ export default function DimensionsPage() {
           name: addName.trim(),
           code: addCode.trim() || undefined,
           is_required: addRequired,
+          value_source: addSource,
+          description: addDescription.trim() || undefined,
         }),
       });
-      setAddName(""); setAddCode(""); setAddRequired(false); setShowAdd(false);
+      setAddName(""); setAddCode(""); setAddRequired(false);
+      setAddSource("manual"); setAddDescription(""); setShowAdd(false);
       await load();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create dimension.");
@@ -159,322 +203,432 @@ export default function DimensionsPage() {
     } catch {}
   };
 
-  const handleConfirmNotApplicable = async () => {
-    if (!accessToken) return;
-    setConfirming(true);
-    setConfirmError(null);
-    try {
-      await apiFetch("/api/setup/dimensions/not-applicable", {
-        method: "POST",
-        token: accessToken,
-      });
-      router.push("/dashboard/business/settings/chart-of-accounts");
-    } catch (e) {
-      setConfirmError(e instanceof Error ? e.message : "Failed to save.");
-    } finally {
-      setConfirming(false);
-    }
-  };
-
   const activeDims = dimensions.filter((d) => d.is_active);
 
-  if (isLoading) {
-    return (
-      <div className="px-6 py-8 space-y-3">
-        <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
-        <div className="h-48 bg-gray-100 rounded-xl animate-pulse" />
-      </div>
-    );
-  }
-
-  const TABS: { key: Tab; label: string }[] = [
-    { key: "setup", label: "Dimension setup" },
-    { key: "values", label: "Master data / values" },
-  ];
-
   return (
-    <div className="px-6 py-8 max-w-3xl">
-      <button
-        type="button"
-        onClick={() => router.push("/dashboard/business/setup")}
-        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
-      >
+    <div className="px-6 py-6 max-w-3xl">
+
+      {/* Back button */}
+      <button type="button" onClick={() => router.push("/dashboard/business/setup")}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-bold text-gray-900 mb-1">Financial Dimensions</h1>
+
+      <h1 className="text-xl font-semibold text-gray-900 mb-1">Financial Dimensions</h1>
       <p className="text-sm text-gray-500 mb-5">
-        Define dimensions your organisation uses for analytical coding (e.g. Cost Center, IO, Brand).
+        Define dimensions your organisation uses for analytical coding (e.g. Cost Center, Material, Brand).
       </p>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 mb-6">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setActiveTab(tab.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab.key
-                ? "border-blue-600 text-blue-600"
+      <div className="flex gap-0 border-b border-gray-200 mb-5">
+        {(["setup", "values"] as Tab[]).map(t => (
+          <button key={t} type="button" onClick={() => setActiveTab(t)}
+            className={`px-4 py-2 text-sm border-b-2 transition-colors ${
+              activeTab === t
+                ? "border-blue-600 text-gray-900 font-medium"
                 : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {tab.label}
+            }`}>
+            {t === "setup" ? "Dimension setup" : "Master data / values"}
           </button>
         ))}
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-red-400 font-bold">×</button>
-        </div>
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
       )}
 
-      {/* Tab 2 — Master data / values */}
-      {activeTab === "values" && (
-        <div>
-          {activeDims.length === 0 ? (
-            <p className="text-sm text-gray-500">No dimensions configured. Go to Dimension setup to add dimensions first.</p>
-          ) : (
-            <div className="space-y-2">
-              {activeDims.map((dim) => (
-                <Link
-                  key={dim.id}
-                  href={`/dashboard/business/settings/dimensions/${dim.id}/values`}
-                  className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-sm transition-all"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{dim.name}</p>
-                    <p className="text-xs text-gray-400 font-mono">{dim.code}</p>
-                  </div>
-                  <i className="ti ti-arrow-right text-gray-400" style={{ fontSize: 14 }} />
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 1 — Dimension setup */}
+      {/* ── SETUP TAB ── */}
       {activeTab === "setup" && (
-        <>
-          {/* Setup sequence note */}
-          <div className="mb-5 flex items-start gap-2.5 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <i className="ti ti-info-circle text-blue-500 shrink-0 mt-0.5" style={{ fontSize: 15 }} />
-            <p className="text-sm text-blue-800">
-              Configure dimensions before uploading your Chart of Accounts. The CoA template will include one column per dimension configured here.
-            </p>
-          </div>
-
-          <div className="flex justify-end mb-4">
-            <button
-              type="button"
-              onClick={() => { setShowAdd(true); setEditId(null); }}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              + Add Dimension
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs text-gray-500">Configure dimensions before uploading your Chart of Accounts. Active dimensions appear as columns in the CoA template.</p>
+            <button type="button" onClick={() => setShowAdd(v => !v)}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50 flex-shrink-0 ml-4">
+              <i className="ti ti-plus" style={{ fontSize: 13 }} />
+              Add dimension
             </button>
           </div>
 
           {/* Add form */}
           {showAdd && (
-            <div className="mb-5 p-4 border border-blue-200 bg-blue-50 rounded-xl">
-              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-3">New Dimension</p>
-              {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <p className="text-sm font-medium text-gray-800 mb-3">New dimension</p>
+              <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Name <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    value={addName}
-                    onChange={(e) => { setAddName(e.target.value); setAddCode(generateCode(e.target.value)); }}
-                    placeholder="e.g. Cost Center"
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+                  <input type="text" value={addName}
+                    onChange={e => { setAddName(e.target.value); setAddCode(generateCode(e.target.value)); }}
+                    placeholder="e.g. Region, Brand, Channel"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Code</label>
-                  <input
-                    type="text"
-                    value={addCode}
-                    onChange={(e) => setAddCode(e.target.value)}
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Code *</label>
+                  <input type="text" value={addCode} onChange={e => setAddCode(e.target.value)}
                     placeholder="auto-generated"
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               </div>
-              <div className="flex items-center gap-3 mb-3">
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={addRequired}
-                    onChange={(e) => setAddRequired(e.target.checked)}
-                    className="accent-blue-600"
-                  />
-                  Required by default on all expense lines
-                </label>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Value source</label>
+                  <select value={addSource} onChange={e => setAddSource(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="manual">Manual — enter or upload values</option>
+                    <option value="org_structure">Auto — from org structure</option>
+                    <option value="employee_master">Auto — from employee master</option>
+                    <option value="hybrid">Hybrid — employee + customer + manual</option>
+                    <option value="product_master">Auto — from product master (future)</option>
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {addSource === "manual" && "Values entered manually or uploaded in bulk."}
+                    {addSource === "org_structure" && "Values auto-synced from Organisation → Structure."}
+                    {addSource === "employee_master" && "Values auto-synced from employee master."}
+                    {addSource === "hybrid" && "Employee codes auto-synced + customer categories + manual codes."}
+                    {addSource === "product_master" && "Will auto-sync from product master once Inventory is active."}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Default requirement</label>
+                  <select value={addRequired ? "required" : "optional"}
+                    onChange={e => setAddRequired(e.target.value === "required")}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="required">Required where applicable</option>
+                    <option value="optional">Optional</option>
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">GL-level override set on Chart of Accounts.</p>
+                </div>
               </div>
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Description (optional)</label>
+                <input type="text" value={addDescription} onChange={e => setAddDescription(e.target.value)}
+                  placeholder="What does this dimension represent?"
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleAdd}
-                  disabled={addingDim || !addName.trim()}
-                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60"
-                >
-                  {addingDim ? "Adding…" : "Add"}
+                <button type="button" onClick={handleAdd} disabled={addingDim || !addName.trim()}
+                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60">
+                  {addingDim ? "Adding…" : "Save dimension"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowAdd(false); setAddName(""); setAddCode(""); setAddError(null); }}
-                  className="px-4 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
-                >
+                <button type="button"
+                  onClick={() => { setShowAdd(false); setAddName(""); setAddCode(""); setAddError(null); setAddDescription(""); }}
+                  className="px-4 py-1.5 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50">
                   Cancel
                 </button>
               </div>
             </div>
           )}
 
-          {/* Dimensions table */}
-          {activeDims.length === 0 ? (
+          {/* Dimension cards */}
+          {isLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />)}
+            </div>
+          ) : activeDims.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-              <p className="text-sm font-medium text-gray-600 mb-1">No dimensions configured</p>
-              <p className="text-xs text-gray-400">Add dimensions to define what employees must fill in per expense line.</p>
+              <i className="ti ti-vector text-gray-300" style={{ fontSize: 32 }} />
+              <p className="text-sm font-medium text-gray-600 mt-2 mb-1">No dimensions configured</p>
+              <p className="text-xs text-gray-400">Add dimensions to enable analytical coding on transactions.</p>
             </div>
           ) : (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-100">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Code</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Required</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {activeDims.map((dim, idx) => (
-                    <tr key={dim.id} className="hover:bg-gray-50">
-                      {editId === dim.id ? (
-                        <>
-                          <td className="px-4 py-2" colSpan={3}>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                              <input
-                                type="text"
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                              <input
-                                type="text"
-                                value={editCode}
-                                onChange={(e) => setEditCode(e.target.value)}
-                                className="px-2 py-1 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
+            <div className="space-y-2">
+              {activeDims.map((dim, idx) => {
+                const isExpanded = expandedIds.has(dim.id);
+                const iconName = DIM_ICONS[dim.code] ?? "vector";
+                const isHybrid = dim.value_source === "hybrid";
+                const isAuto = ["org_structure", "employee_master"].includes(dim.value_source ?? "");
+
+                return (
+                  <div key={dim.id}
+                    className={`border rounded-xl overflow-hidden transition-colors ${
+                      dim.is_active ? "border-blue-300 bg-white" : "border-gray-200 bg-gray-50 opacity-60"
+                    }`}>
+
+                    {/* Card header */}
+                    <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50"
+                      onClick={() => toggleExpand(dim.id)}>
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                        dim.is_active ? "bg-blue-50" : "bg-gray-100"
+                      }`}>
+                        <i className={`ti ti-${iconName}`} style={{ fontSize: 15, color: dim.is_active ? "#378ADD" : "#9CA3AF" }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-gray-900">{dim.name}</p>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                            SOURCE_COLORS[dim.value_source ?? "manual"]
+                          }`}>
+                            {SOURCE_LABELS[dim.value_source ?? "manual"]}
+                          </span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                            dim.is_required ? "bg-red-50 text-red-600" : "bg-gray-100 text-gray-500"
+                          }`}>
+                            {dim.is_required ? "Required" : "Optional"}
+                          </span>
+                          <span className="text-[10px] font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                            {dim.code}
+                          </span>
+                        </div>
+                        {dim.description && (
+                          <p className="text-xs text-gray-500 mt-0.5 truncate">{dim.description}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {/* Active toggle */}
+                        <label className="relative w-8 h-4 cursor-pointer" onClick={e => e.stopPropagation()}
+                          aria-label={`Toggle ${dim.name}`}>
+                          <input type="checkbox" className="sr-only" checked={dim.is_active}
+                            onChange={() => handleDelete(dim.id, dim.name)} />
+                          <span className={`absolute inset-0 rounded-full transition-colors ${
+                            dim.is_active ? "bg-blue-500" : "bg-gray-300"
+                          }`} />
+                          <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${
+                            dim.is_active ? "translate-x-4" : ""
+                          }`} />
+                        </label>
+                        <i className={`ti ti-chevron-${isExpanded ? "down" : "right"} text-gray-400`}
+                          style={{ fontSize: 13 }} />
+                      </div>
+                    </div>
+
+                    {/* Expanded body */}
+                    {isExpanded && (
+                      <div className="px-4 pb-4 border-t border-gray-100">
+
+                        {/* Auto-sync note */}
+                        {isAuto && (
+                          <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mt-3 mb-2">
+                            <i className="ti ti-refresh text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                            <p className="text-xs text-blue-700">
+                              {dim.value_source === "org_structure"
+                                ? "Values auto-synced from Organisation → Structure. Edit cost centers there."
+                                : "Values auto-synced from the employee master."}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Hybrid sub-sources */}
+                        {isHybrid && (
+                          <div className="mt-3 mb-2 space-y-1.5">
+                            <p className="text-xs font-medium text-gray-500 mb-2">Value sources:</p>
+                            <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
+                              <i className="ti ti-refresh text-blue-600" style={{ fontSize: 13 }} />
+                              <div className="flex-1"><p className="text-xs font-medium text-gray-900">Employee codes — auto-synced</p></div>
+                              <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">Live</span>
                             </div>
-                            <label className="flex items-center gap-2 text-xs text-gray-700">
-                              <input
-                                type="checkbox"
-                                checked={editRequired}
-                                onChange={(e) => setEditRequired(e.target.checked)}
-                                className="accent-blue-600"
-                              />
+                            <div className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-md">
+                              <i className="ti ti-users-group text-amber-600" style={{ fontSize: 13 }} />
+                              <div className="flex-1"><p className="text-xs font-medium text-gray-900">Customer category codes — manual now, auto-synced when AR active</p></div>
+                              <span className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium border border-amber-200">Manual now</span>
+                            </div>
+                            <div className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-md">
+                              <i className="ti ti-pencil text-gray-500" style={{ fontSize: 13 }} />
+                              <div className="flex-1"><p className="text-xs font-medium text-gray-900">Manual codes — campaigns, vehicles, assets, etc.</p></div>
+                              <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">Manual</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Manual upload buttons */}
+                        {(dim.value_source === "manual" || dim.value_source === "product_master" || isHybrid) && (
+                          <div className="flex gap-2 mt-3">
+                            <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">
+                              + Add value manually
+                            </button>
+                            <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                              <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
+                            </button>
+                            <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                              <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Edit inline */}
+                        {editId === dim.id ? (
+                          <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                            <div className="grid grid-cols-2 gap-2 mb-2">
+                              <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
+                                className="px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                              <input type="text" value={editCode} onChange={e => setEditCode(e.target.value)}
+                                className="px-2 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
+                            <label className="flex items-center gap-2 text-xs text-gray-700 mb-2">
+                              <input type="checkbox" checked={editRequired} onChange={e => setEditRequired(e.target.checked)} className="accent-blue-600" />
                               Required by default
                             </label>
-                          </td>
-                          <td className="px-4 py-2 text-right">
-                            <div className="flex gap-2 justify-end">
-                              <button
-                                onClick={() => handleEdit(dim.id)}
-                                disabled={savingEdit}
-                                className="text-xs text-white bg-blue-600 px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-60"
-                              >
-                                {savingEdit ? "…" : "Save"}
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => handleEdit(dim.id)} disabled={savingEdit}
+                                className="text-xs text-white bg-blue-600 px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-60">
+                                {savingEdit ? "Saving…" : "Save"}
                               </button>
-                              <button
-                                onClick={() => setEditId(null)}
-                                className="text-xs text-gray-700 bg-gray-100 px-2 py-1 rounded hover:bg-gray-200"
-                              >
+                              <button type="button" onClick={() => setEditId(null)}
+                                className="text-xs text-gray-700 bg-gray-100 px-3 py-1 rounded hover:bg-gray-200">
                                 Cancel
                               </button>
                             </div>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{dim.name}</td>
-                          <td className="px-4 py-3">
-                            <span className="text-xs font-mono text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
-                              {dim.code}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {dim.is_required ? (
-                              <span className="text-xs font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
-                                Required
-                              </span>
-                            ) : (
-                              <span className="text-xs text-gray-400">Optional</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2 justify-end">
-                              <button
-                                type="button"
-                                onClick={() => handleMoveUp(dim, idx)}
-                                disabled={idx === 0}
-                                className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-30"
-                                title="Move up"
-                              >
-                                ↑
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3 mt-3 pt-2 border-t border-gray-100">
+                            <button type="button"
+                              onClick={e => { e.stopPropagation(); setEditId(dim.id); setEditName(dim.name); setEditCode(dim.code); setEditRequired(dim.is_required); }}
+                              className="text-xs text-gray-500 hover:text-gray-800 flex items-center gap-1">
+                              <i className="ti ti-edit" style={{ fontSize: 12 }} /> Edit
+                            </button>
+                            <button type="button"
+                              onClick={() => { setActiveTab("values"); setSelectedDimForValues(dim.id); }}
+                              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                              <i className="ti ti-list" style={{ fontSize: 12 }} /> View values
+                            </button>
+                            <div className="flex items-center gap-1 ml-auto text-xs text-gray-400">
+                              <button type="button" onClick={() => handleMoveUp(dim, idx)} disabled={idx === 0}
+                                className="p-0.5 hover:text-gray-700 disabled:opacity-30" title="Move up">
+                                <i className="ti ti-arrow-up" style={{ fontSize: 12 }} />
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleMoveDown(dim, idx)}
-                                disabled={idx === activeDims.length - 1}
-                                className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-30"
-                                title="Move down"
-                              >
-                                ↓
-                              </button>
-                              <Link
-                                href={`/dashboard/business/settings/dimensions/${dim.id}/values`}
-                                className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                              >
-                                Values →
-                              </Link>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditId(dim.id);
-                                  setEditName(dim.name);
-                                  setEditCode(dim.code);
-                                  setEditRequired(dim.is_required);
-                                  setShowAdd(false);
-                                }}
-                                className="text-xs text-gray-600 hover:text-gray-900 font-medium"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(dim.id, dim.name)}
-                                className="text-xs text-red-500 hover:text-red-700 font-medium"
-                              >
-                                Deactivate
+                              <button type="button" onClick={() => handleMoveDown(dim, idx)} disabled={idx === activeDims.length - 1}
+                                className="p-0.5 hover:text-gray-700 disabled:opacity-30" title="Move down">
+                                <i className="ti ti-arrow-down" style={{ fontSize: 12 }} />
                               </button>
                             </div>
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          </div>
+                        )}
+
+                        {/* GL note */}
+                        <div className="flex items-start gap-2 p-2 bg-gray-50 rounded mt-3 border border-gray-100">
+                          <i className="ti ti-table text-gray-400 flex-shrink-0 mt-0.5" style={{ fontSize: 12 }} />
+                          <p className="text-[11px] text-gray-500">GL-level applicability — which GL accounts require this dimension — is configured on the <strong className="font-medium">Chart of Accounts</strong> page per account.</p>
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
-        </>
+
+          <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-start gap-2">
+            <i className="ti ti-info-circle text-gray-400 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+            <p className="text-xs text-gray-500">Dimension requirement per GL account is set on the <strong className="font-medium">Chart of Accounts</strong> page. A dimension marked &quot;Required&quot; here is required where applicable — the CoA controls exactly which accounts it applies to.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── VALUES TAB ── */}
+      {activeTab === "values" && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <label className="text-sm font-medium text-gray-600">Dimension:</label>
+            <select value={selectedDimForValues}
+              onChange={e => { setSelectedDimForValues(e.target.value); setValuesSubTab("auto"); }}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 max-w-xs">
+              <option value="">— Select dimension —</option>
+              {activeDims.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {!selectedDimForValues ? (
+            <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+              <i className="ti ti-table text-gray-300" style={{ fontSize: 32 }} />
+              <p className="text-sm text-gray-500 mt-2">Select a dimension above to manage its values.</p>
+            </div>
+          ) : (() => {
+            const dim = activeDims.find(d => d.id === selectedDimForValues);
+            if (!dim) return null;
+
+            if (dim.value_source === "org_structure") {
+              return (
+                <div>
+                  <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-4">
+                    <i className="ti ti-refresh text-blue-600 flex-shrink-0" style={{ fontSize: 13 }} />
+                    <p className="text-xs text-blue-700">Read-only — values are auto-synced from Organisation → Structure. Edit cost centers there.</p>
+                  </div>
+                  <Link href="/dashboard/business/setup/organisation"
+                    className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                    <i className="ti ti-arrow-right" style={{ fontSize: 13 }} />
+                    Go to Organisation → Structure
+                  </Link>
+                </div>
+              );
+            }
+
+            if (dim.value_source === "hybrid") {
+              return (
+                <div>
+                  <div className="flex gap-0 border-b border-gray-200 mb-4">
+                    {(["auto", "customer", "manual"] as const).map(st => (
+                      <button key={st} type="button" onClick={() => setValuesSubTab(st)}
+                        className={`px-3 py-2 text-sm border-b-2 transition-colors ${
+                          valuesSubTab === st
+                            ? "border-blue-600 text-gray-900 font-medium"
+                            : "border-transparent text-gray-500 hover:text-gray-700"
+                        }`}>
+                        {st === "auto" ? "Employee codes" : st === "customer" ? "Customer categories" : "Manual codes"}
+                      </button>
+                    ))}
+                  </div>
+                  {valuesSubTab === "auto" && (
+                    <div>
+                      <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-3">
+                        <i className="ti ti-refresh text-blue-600 flex-shrink-0" style={{ fontSize: 13 }} />
+                        <p className="text-xs text-blue-700">Auto-synced from employee master. Manage employees on the Employees page.</p>
+                      </div>
+                      <Link href="/dashboard/business/settings/employees"
+                        className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                        <i className="ti ti-arrow-right" style={{ fontSize: 13 }} />
+                        Go to Employees
+                      </Link>
+                    </div>
+                  )}
+                  {valuesSubTab === "customer" && (
+                    <div>
+                      <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg mb-3">
+                        <i className="ti ti-alert-triangle text-amber-600 flex-shrink-0" style={{ fontSize: 13 }} />
+                        <p className="text-xs text-amber-700">Customer category codes are managed manually until the Accounts Receivable module is active, when they will auto-sync from the customer master.</p>
+                      </div>
+                      <div className="flex gap-2 mb-3">
+                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add category</button>
+                      </div>
+                      <p className="text-xs text-gray-400 italic">No customer categories added yet. Add categories like: Key Account, Distributor, Modern Trade, HoReCa, Retail.</p>
+                    </div>
+                  )}
+                  {valuesSubTab === "manual" && (
+                    <div>
+                      <div className="flex gap-2 mb-3">
+                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add code</button>
+                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                          <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
+                        </button>
+                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                          <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-400 italic">No manual codes added yet. Add non-employee statistical orders like campaigns, vehicles, hubs, funds.</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <div>
+                <div className="flex gap-2 mb-3">
+                  <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add value</button>
+                  <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                    <i className="ti ti-download" style={{ fontSize: 11 }} /> Download template
+                  </button>
+                  <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                    <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 italic">No values configured yet for {dim.name}.</p>
+              </div>
+            );
+          })()}
+        </div>
       )}
     </div>
   );

@@ -206,6 +206,9 @@ async def create_dimension(
         name=data.name,
         code=code,
         is_required=data.is_required,
+        value_source=data.value_source,
+        description=data.description,
+        icon=data.icon,
     )
     db.add(dim)
     await db.flush()

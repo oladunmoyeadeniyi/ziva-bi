@@ -28,6 +28,9 @@ class DimensionCreate(BaseModel):
     code: str | None = None  # auto-generated from name if not provided
     is_required: bool = False
     accepted_value_types: str | None = None  # comma-separated type tags
+    value_source: Optional[str] = "manual"
+    description: Optional[str] = None
+    icon: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -57,6 +60,9 @@ class DimensionUpdate(BaseModel):
     is_active: bool | None = None
     sort_order: int | None = None
     accepted_value_types: str | None = None
+    value_source: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
 
     @field_validator("code")
     @classmethod
@@ -87,6 +93,9 @@ class DimensionResponse(BaseModel):
     sort_order: int
     created_at: datetime
     accepted_value_types: str | None = None
+    value_source: Optional[str] = "manual"
+    description: Optional[str] = None
+    icon: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -104,6 +113,9 @@ class DimensionResponse(BaseModel):
             sort_order=dim.sort_order,
             created_at=dim.created_at,
             accepted_value_types=dim.accepted_value_types,
+            value_source=dim.value_source,
+            description=dim.description,
+            icon=dim.icon,
         )
 
 
