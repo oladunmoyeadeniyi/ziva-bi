@@ -292,12 +292,16 @@ async def get_progress(
     org = org_result.scalar_one_or_none()
     org_config = org.org_configuration if org and org.org_configuration else {}
     use_multi_currency = org_config.get("use_multi_currency", True)
-    # Secondary check: if org_configuration explicitly disables dimensions, honour it
-    # (covers existing tenants where tenant.dimensions_not_applicable may not yet be synced)
-    if not dims_not_applicable and org_config:
+    # Sync with org_configuration — org_configuration is the source of truth
+    if org_config:
         use_dimensions = org_config.get("use_dimensions")
         if use_dimensions is False:
+            # Explicitly turned off — hide Dimensions
             dims_not_applicable = True
+        elif use_dimensions is True:
+            # Explicitly turned on — show Dimensions regardless of tenant flag
+            dims_not_applicable = False
+        # If use_dimensions is None (not set), fall back to tenant flag as-is
     org_complete = bool(org and org.legal_name and org.functional_currency)
 
     # Check modules (at least 1 active)
