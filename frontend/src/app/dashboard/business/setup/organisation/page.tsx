@@ -48,7 +48,7 @@ interface OrgConfig {
   fiscal_year_name_format?: string;
   period_closing_frequency?: string;
   // Branding
-  branding?: { logo_url?: string; primary_colour?: string; button_style?: string };
+  branding?: BrandingConfig;
 }
 
 interface OrgNode {
@@ -73,6 +73,28 @@ interface FiscalPeriod {
   status: "open" | "current" | "closed";
 }
 
+interface BrandingTheme {
+  id: string;
+  name: string;
+  primary: string;
+  secondary: string;
+  accent: string;
+  sidebar: string;
+  font_family: string;
+  font_size: string;
+  button_style: string;
+  card_radius: string;
+  email_header_bg: string;
+  email_sender_name: string;
+  logo_url: string;
+  favicon_url: string;
+}
+
+interface BrandingConfig {
+  active_theme_id: string;
+  themes: BrandingTheme[];
+}
+
 const COMPANY_TYPES = [
   "Private Limited (Ltd)", "Public Limited (PLC)", "Partnership",
   "Sole Trader", "NGO / Non-profit", "Government / Public sector", "Other",
@@ -91,6 +113,15 @@ const MONTHS = [
   "July","August","September","October","November","December",
 ];
 const NODE_TYPES = ["Legal entity", "Division / Business unit", "Department", "Cost center"];
+
+const PRESET_THEMES: Omit<BrandingTheme, "id">[] = [
+  { name: "Corporate Blue",  primary: "#2563EB", secondary: "#64748B", accent: "#F59E0B", sidebar: "#1E293B", font_family: "Inter",          font_size: "default", button_style: "rounded", card_radius: "medium", email_header_bg: "#1E293B", email_sender_name: "", logo_url: "", favicon_url: "" },
+  { name: "Forest Green",    primary: "#16A34A", secondary: "#4B7B5E", accent: "#F97316", sidebar: "#14532D", font_family: "Inter",          font_size: "default", button_style: "rounded", card_radius: "medium", email_header_bg: "#14532D", email_sender_name: "", logo_url: "", favicon_url: "" },
+  { name: "Midnight Dark",   primary: "#8B5CF6", secondary: "#6D6D8A", accent: "#EC4899", sidebar: "#0F0F0F", font_family: "Inter",          font_size: "default", button_style: "pill",    card_radius: "large",  email_header_bg: "#0F0F0F", email_sender_name: "", logo_url: "", favicon_url: "" },
+  { name: "Classic Red",     primary: "#DC2626", secondary: "#78716C", accent: "#FBBF24", sidebar: "#1C1917", font_family: "Inter",          font_size: "default", button_style: "rounded", card_radius: "medium", email_header_bg: "#1C1917", email_sender_name: "", logo_url: "", favicon_url: "" },
+  { name: "Ocean Teal",      primary: "#0D9488", secondary: "#4B7B78", accent: "#F59E0B", sidebar: "#134E4A", font_family: "DM Sans",        font_size: "default", button_style: "rounded", card_radius: "large",  email_header_bg: "#134E4A", email_sender_name: "", logo_url: "", favicon_url: "" },
+  { name: "Slate Modern",    primary: "#475569", secondary: "#94A3B8", accent: "#06B6D4", sidebar: "#1E293B", font_family: "IBM Plex Sans",  font_size: "default", button_style: "square",  card_radius: "sharp",  email_header_bg: "#1E293B", email_sender_name: "", logo_url: "", favicon_url: "" },
+];
 
 // ── Small shared components ────────────────────────────────────────────────────
 
@@ -241,6 +272,42 @@ export default function OrganisationPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const [uploadResult, setUploadResult] = useState<{ imported: number; updated: number; errors: Array<{ row: number; reason: string }> } | null>(null);
+
+  type BrandingSubTab = "themes" | "controls" | "preview";
+  const [brandingTab, setBrandingTab] = useState<BrandingSubTab>("themes");
+
+  function getDefaultTheme(): BrandingTheme {
+    return {
+      id: crypto.randomUUID(),
+      name: "My Theme",
+      primary: "#2563EB",
+      secondary: "#64748B",
+      accent: "#F59E0B",
+      sidebar: "#1E293B",
+      font_family: "Inter",
+      font_size: "default",
+      button_style: "rounded",
+      card_radius: "medium",
+      email_header_bg: "#1E293B",
+      email_sender_name: org.legal_name ?? "",
+      logo_url: "",
+      favicon_url: "",
+    };
+  }
+
+  function getLuminance(hex: string): number {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const toLinear = (c: number) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+  }
+
+  function getButtonTextColor(hex: string): string {
+    return getLuminance(hex) > 0.179 ? "#1a1a1a" : "#ffffff";
+  }
+
+  const [editTheme, setEditTheme] = useState<BrandingTheme>(getDefaultTheme);
 
   // Load org config
   useEffect(() => {
@@ -742,25 +809,469 @@ export default function OrganisationPage() {
 
       {/* ── Branding tab ─────────────────────────────────────────────────────── */}
       {tab === "branding" && (
-        <div className="space-y-4 max-w-md">
-          <Field label="Logo URL">
-            <Input value={org.branding?.logo_url ?? ""} onChange={e => setOrg(o => ({ ...o, branding: { ...o.branding, logo_url: e.target.value } }))} placeholder="https://..." />
-          </Field>
-          <Field label="Primary colour (hex)">
-            <Input value={org.branding?.primary_colour ?? ""} onChange={e => setOrg(o => ({ ...o, branding: { ...o.branding, primary_colour: e.target.value } }))} placeholder="#2563EB" />
-          </Field>
-          <Field label="Button style">
-            <Select value={org.branding?.button_style ?? ""} onChange={e => setOrg(o => ({ ...o, branding: { ...o.branding, button_style: e.target.value } }))}>
-              <option value="">Default</option>
-              <option value="rounded">Rounded</option>
-              <option value="pill">Pill</option>
-              <option value="square">Square</option>
-            </Select>
-          </Field>
-          <button type="button" onClick={() => save({ branding: org.branding })} disabled={saving}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
-            {saving ? "Saving…" : saved ? "✓ Saved" : "Save branding"}
-          </button>
+        <div className="space-y-0">
+
+          {/* Sub-tab bar */}
+          <div className="flex gap-0 border-b border-gray-200 mb-5">
+            {(["themes", "controls", "preview"] as BrandingSubTab[]).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setBrandingTab(t)}
+                className={`px-4 py-2 text-sm border-b-2 transition-colors ${
+                  brandingTab === t
+                    ? "border-blue-600 text-gray-900 font-medium"
+                    : "border-transparent text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {t === "themes" ? "Themes" : t === "controls" ? "Branding controls" : "Preview"}
+              </button>
+            ))}
+          </div>
+
+          {/* ── THEMES sub-tab ── */}
+          {brandingTab === "themes" && (
+            <div className="space-y-5">
+
+              {/* Active theme */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Active theme</p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-10 h-10 rounded-md flex-shrink-0"
+                      style={{ background: org.branding?.themes?.find(t => t.id === org.branding?.active_theme_id)?.primary ?? "#2563EB" }}
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {org.branding?.themes?.find(t => t.id === org.branding?.active_theme_id)?.name ?? "None set"}
+                      </p>
+                      <p className="text-xs text-gray-500">Currently applied to the portal</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => {
+                      const active = org.branding?.themes?.find(t => t.id === org.branding?.active_theme_id);
+                      if (active) setEditTheme(active);
+                      setBrandingTab("controls");
+                    }} className="text-sm px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">
+                      Edit theme
+                    </button>
+                    <button type="button" onClick={() => setBrandingTab("preview")}
+                      className="text-sm px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">
+                      Preview
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Preset themes */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Preset themes</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {PRESET_THEMES.map((preset, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => {
+                        const newTheme: BrandingTheme = { ...preset, id: crypto.randomUUID() };
+                        setEditTheme(newTheme);
+                        setBrandingTab("controls");
+                      }}
+                      className="text-left p-3 border border-gray-200 rounded-md hover:border-blue-400 transition-colors"
+                    >
+                      <div className="flex gap-1 mb-2">
+                        <div className="w-4 h-4 rounded-sm" style={{ background: preset.primary }} />
+                        <div className="w-4 h-4 rounded-sm" style={{ background: preset.sidebar }} />
+                        <div className="w-4 h-4 rounded-sm" style={{ background: preset.accent }} />
+                      </div>
+                      <p className="text-xs font-medium text-gray-800">{preset.name}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Saved themes */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                    Saved themes <span className="font-normal normal-case">({(org.branding?.themes ?? []).length} of 10)</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditTheme(getDefaultTheme());
+                      setBrandingTab("controls");
+                    }}
+                    className="text-xs px-2.5 py-1 border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    + New theme
+                  </button>
+                </div>
+                {(org.branding?.themes ?? []).length === 0 ? (
+                  <p className="text-sm text-gray-400 py-2">No saved themes yet. Apply a preset or create a new one.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {(org.branding?.themes ?? []).map(theme => (
+                      <div key={theme.id} className="flex items-center gap-3 p-2.5 border border-gray-200 rounded-md">
+                        <div className="flex gap-1 flex-shrink-0">
+                          <div className="w-3.5 h-3.5 rounded-sm" style={{ background: theme.primary }} />
+                          <div className="w-3.5 h-3.5 rounded-sm" style={{ background: theme.sidebar }} />
+                          <div className="w-3.5 h-3.5 rounded-sm" style={{ background: theme.accent }} />
+                        </div>
+                        <p className="text-sm font-medium text-gray-900 flex-1">{theme.name}</p>
+                        {theme.id === org.branding?.active_theme_id && (
+                          <span className="text-xs px-2 py-0.5 bg-green-50 text-green-700 rounded-full">Active</span>
+                        )}
+                        <div className="flex gap-1">
+                          <button type="button" onClick={() => { setEditTheme(theme); setBrandingTab("controls"); }}
+                            className="text-xs px-2 py-1 border border-gray-200 rounded hover:bg-gray-50">Edit</button>
+                          {theme.id !== org.branding?.active_theme_id && (
+                            <button type="button" onClick={async () => {
+                              const updated = { ...org.branding!, active_theme_id: theme.id };
+                              setOrg(o => ({ ...o, branding: updated }));
+                              await save({ branding: updated });
+                            }} className="text-xs px-2 py-1 border border-gray-200 rounded hover:bg-gray-50">Apply</button>
+                          )}
+                          {theme.id !== org.branding?.active_theme_id && (
+                            <button type="button" onClick={() => {
+                              const updated = { ...org.branding!, themes: org.branding!.themes.filter(t => t.id !== theme.id) };
+                              setOrg(o => ({ ...o, branding: updated }));
+                            }} className="text-xs px-2 py-1 text-red-500 border border-gray-200 rounded hover:bg-red-50">Delete</button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── BRANDING CONTROLS sub-tab ── */}
+          {brandingTab === "controls" && (
+            <div className="space-y-5 max-w-2xl">
+
+              {/* Theme name */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <Field label="Theme name">
+                  <Input value={editTheme.name} onChange={e => setEditTheme(t => ({ ...t, name: e.target.value }))} placeholder="e.g. Corporate Blue" />
+                </Field>
+              </div>
+
+              {/* Logo & Favicon */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Logo & Favicon</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-2">Company logo</label>
+                    <div className="border border-dashed border-gray-300 rounded-md p-5 text-center bg-gray-50 cursor-pointer hover:bg-gray-100">
+                      <p className="text-xs text-gray-500">Drop or click to upload</p>
+                      <p className="text-xs text-gray-400 mt-1">PNG, SVG, WEBP · Max 2MB</p>
+                    </div>
+                    {editTheme.logo_url && (
+                      <p className="text-xs text-gray-500 mt-1 truncate">{editTheme.logo_url}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-2">Favicon</label>
+                    <div className="border border-dashed border-gray-300 rounded-md p-5 text-center bg-gray-50 cursor-pointer hover:bg-gray-100">
+                      <p className="text-xs text-gray-500">Drop or click to upload</p>
+                      <p className="text-xs text-gray-400 mt-1">ICO, PNG · 32×32px</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Colours */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Colours</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {([
+                    ["primary",   "Primary",   "Buttons, links, active states."],
+                    ["secondary", "Secondary", "Secondary actions and muted UI."],
+                    ["accent",    "Accent",    "Badges, highlights, alerts."],
+                    ["sidebar",   "Sidebar",   "Navigation sidebar background."],
+                  ] as [keyof BrandingTheme, string, string][]).map(([key, label, hint]) => (
+                    <div key={key}>
+                      <label className="block text-xs font-medium text-gray-600 mb-1.5">{label}</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={(editTheme[key] as string) || "#000000"}
+                          onChange={e => setEditTheme(t => ({ ...t, [key]: e.target.value }))}
+                          className="w-9 h-9 rounded-md border border-gray-300 cursor-pointer p-0.5"
+                        />
+                        <input
+                          type="text"
+                          value={(editTheme[key] as string) || ""}
+                          onChange={e => { if (/^#[0-9A-Fa-f]{0,6}$/.test(e.target.value)) setEditTheme(t => ({ ...t, [key]: e.target.value })); }}
+                          className="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-mono"
+                          maxLength={7}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1">{hint}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 p-2.5 bg-blue-50 border border-blue-100 rounded-md">
+                  <p className="text-xs text-blue-700">Button text colour is auto-calculated for WCAG AA contrast — no manual adjustment needed.</p>
+                </div>
+              </div>
+
+              {/* Typography */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Typography</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Interface font">
+                    <Select value={editTheme.font_family} onChange={e => setEditTheme(t => ({ ...t, font_family: e.target.value }))}>
+                      {["Inter", "DM Sans", "Nunito", "Poppins", "Roboto", "Open Sans", "Lato", "IBM Plex Sans"].map(f => (
+                        <option key={f} value={f}>{f}{f === "Inter" ? " (default)" : ""}</option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Base font size">
+                    <Select value={editTheme.font_size} onChange={e => setEditTheme(t => ({ ...t, font_size: e.target.value }))}>
+                      <option value="small">Small (13px)</option>
+                      <option value="default">Default (14px)</option>
+                      <option value="large">Large (16px)</option>
+                    </Select>
+                  </Field>
+                </div>
+              </div>
+
+              {/* Button & corner style */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Button & corner style</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-2">Button style</label>
+                    <div className="flex gap-2">
+                      {(["rounded", "pill", "square"] as const).map(s => (
+                        <button key={s} type="button"
+                          onClick={() => setEditTheme(t => ({ ...t, button_style: s }))}
+                          className={`flex-1 py-1.5 text-xs border capitalize transition-colors ${
+                            editTheme.button_style === s
+                              ? "border-blue-500 bg-blue-50 text-blue-700 font-medium"
+                              : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                          }`}
+                          style={{ borderRadius: s === "rounded" ? 6 : s === "pill" ? 999 : 2 }}
+                        >{s}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-2">Card radius</label>
+                    <div className="flex gap-2">
+                      {(["sharp", "medium", "large"] as const).map(r => (
+                        <button key={r} type="button"
+                          onClick={() => setEditTheme(t => ({ ...t, card_radius: r }))}
+                          className={`flex-1 py-1.5 text-xs border capitalize transition-colors ${
+                            editTheme.card_radius === r
+                              ? "border-blue-500 bg-blue-50 text-blue-700 font-medium"
+                              : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                          }`}
+                          style={{ borderRadius: r === "sharp" ? 2 : r === "medium" ? 6 : 14 }}
+                        >{r}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Email header */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Email header</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Header background</label>
+                    <div className="flex items-center gap-2">
+                      <input type="color" value={editTheme.email_header_bg || "#1E293B"}
+                        onChange={e => setEditTheme(t => ({ ...t, email_header_bg: e.target.value }))}
+                        className="w-9 h-9 rounded-md border border-gray-300 cursor-pointer p-0.5" />
+                      <input type="text" value={editTheme.email_header_bg || ""}
+                        onChange={e => { if (/^#[0-9A-Fa-f]{0,6}$/.test(e.target.value)) setEditTheme(t => ({ ...t, email_header_bg: e.target.value })); }}
+                        className="flex-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-mono" maxLength={7} />
+                    </div>
+                  </div>
+                  <Field label="Email sender name">
+                    <Input value={editTheme.email_sender_name}
+                      onChange={e => setEditTheme(t => ({ ...t, email_sender_name: e.target.value }))}
+                      placeholder="e.g. Acme Finance Team" />
+                  </Field>
+                </div>
+                {/* Email preview */}
+                <div className="mt-3 border border-gray-200 rounded-md overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-3" style={{ background: editTheme.email_header_bg || "#1E293B" }}>
+                    <span className="text-sm font-medium text-white">{editTheme.email_sender_name || "Your Company"}</span>
+                  </div>
+                  <div className="px-4 py-3 bg-gray-50">
+                    <p className="text-sm text-gray-800">Your expense report has been approved.</p>
+                    <p className="text-xs text-gray-500 mt-1">Preview of how system emails will appear.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-between pt-1">
+                <button type="button" onClick={() => setBrandingTab("preview")}
+                  className="text-sm px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+                  Preview
+                </button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setBrandingTab("themes")}
+                    className="text-sm px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button type="button" onClick={async () => {
+                    if ((org.branding?.themes ?? []).length >= 10 &&
+                        !org.branding?.themes?.find(t => t.id === editTheme.id)) {
+                      alert("Maximum 10 themes reached. Delete one first.");
+                      return;
+                    }
+                    const existing = org.branding?.themes ?? [];
+                    const idx = existing.findIndex(t => t.id === editTheme.id);
+                    const updated = idx >= 0
+                      ? existing.map((t, i) => i === idx ? editTheme : t)
+                      : [...existing, editTheme];
+                    const newBranding: BrandingConfig = {
+                      active_theme_id: org.branding?.active_theme_id ?? editTheme.id,
+                      themes: updated,
+                    };
+                    setOrg(o => ({ ...o, branding: newBranding }));
+                    await save({ branding: newBranding });
+                    setBrandingTab("themes");
+                  }} disabled={saving}
+                    className="text-sm px-4 py-2 font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                    {saving ? "Saving…" : "Save theme"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── PREVIEW sub-tab ── */}
+          {brandingTab === "preview" && (
+            <div className="space-y-4">
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                {/* Browser chrome */}
+                <div className="bg-gray-100 border-b border-gray-200 px-3 py-2 flex items-center justify-between">
+                  <p className="text-xs text-gray-500">Portal preview</p>
+                  <div className="flex gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+                  </div>
+                </div>
+                {/* Portal simulation */}
+                <div className="flex" style={{ height: 340 }}>
+                  {/* Sidebar */}
+                  <div className="w-36 flex-shrink-0 py-4"
+                    style={{ background: editTheme.sidebar }}>
+                    <div className="px-3 pb-3 mb-2" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.1)" }}>
+                      <p className="text-xs font-medium text-white">ZivaBI</p>
+                    </div>
+                    <div className="px-0">
+                      <p className="text-xs px-3 mb-1 mt-2" style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: "0.05em" }}>COMMON DATA</p>
+                      <div className="px-3 py-1.5 mb-0.5" style={{ background: "rgba(255,255,255,0.12)" }}>
+                        <p className="text-xs font-medium text-white">Organisation</p>
+                      </div>
+                      <div className="px-3 py-1.5">
+                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Modules</p>
+                      </div>
+                      <p className="text-xs px-3 mb-1 mt-2" style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: "0.05em" }}>FINANCIALS</p>
+                      <div className="px-3 py-1.5">
+                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Dimensions</p>
+                      </div>
+                      <div className="px-3 py-1.5">
+                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Chart of accounts</p>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Main content */}
+                  <div className="flex-1 p-4 overflow-auto bg-gray-50">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Organisation</p>
+                        <p className="text-xs text-gray-500">Configure your company identity</p>
+                      </div>
+                      <button
+                        type="button"
+                        style={{
+                          background: editTheme.primary,
+                          color: getButtonTextColor(editTheme.primary),
+                          borderRadius: editTheme.button_style === "rounded" ? 6 : editTheme.button_style === "pill" ? 999 : 2,
+                          border: "none",
+                          padding: "6px 14px",
+                          fontSize: 12,
+                          cursor: "default",
+                        }}
+                      >Save changes</button>
+                    </div>
+                    <div className="bg-white border border-gray-200 p-3 mb-3"
+                      style={{ borderRadius: editTheme.card_radius === "sharp" ? 2 : editTheme.card_radius === "medium" ? 8 : 16 }}>
+                      <p className="text-xs font-medium text-gray-500 mb-2" style={{ letterSpacing: "0.05em" }}>LEGAL & REGISTRATION</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Legal name</p>
+                          <div className="border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-800">
+                            {org.legal_name || "Acme Corporation"}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">RC number</p>
+                          <div className="border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-800">RC1234567</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="p-2.5 rounded bg-gray-100">
+                        <p className="text-xs text-gray-500">Employees</p>
+                        <p className="text-base font-medium text-gray-900">24</p>
+                      </div>
+                      <div className="p-2.5 rounded bg-gray-100">
+                        <p className="text-xs text-gray-500">Modules</p>
+                        <p className="text-base font-medium text-gray-900">3</p>
+                      </div>
+                      <div className="p-2.5 rounded" style={{ background: editTheme.accent + "33" }}>
+                        <p className="text-xs" style={{ color: editTheme.accent }}>Pending</p>
+                        <p className="text-base font-medium text-gray-900">7</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-md">
+                <p className="text-xs text-blue-700">This is a simulated preview. Full live theming across all pages is planned for a future milestone.</p>
+              </div>
+
+              <div className="flex justify-between">
+                <button type="button" onClick={() => setBrandingTab("controls")}
+                  className="text-sm px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+                  Back to edit
+                </button>
+                <button type="button" onClick={async () => {
+                  const existing = org.branding?.themes ?? [];
+                  const idx = existing.findIndex(t => t.id === editTheme.id);
+                  const updated = idx >= 0
+                    ? existing.map((t, i) => i === idx ? editTheme : t)
+                    : [...existing, editTheme];
+                  const newBranding: BrandingConfig = {
+                    active_theme_id: editTheme.id,
+                    themes: updated,
+                  };
+                  setOrg(o => ({ ...o, branding: newBranding }));
+                  await save({ branding: newBranding });
+                  setBrandingTab("themes");
+                }} disabled={saving}
+                  className="text-sm px-4 py-2 font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  {saving ? "Saving…" : "Save & apply"}
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
