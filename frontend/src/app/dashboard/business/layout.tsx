@@ -106,7 +106,7 @@ export default function BusinessLayout({
     } catch {
       setActiveModules([]);
     }
-  }, [accessToken, isAdmin]);
+  }, [accessToken, isAdmin, pathname]);
 
   useEffect(() => {
     fetchModules();
