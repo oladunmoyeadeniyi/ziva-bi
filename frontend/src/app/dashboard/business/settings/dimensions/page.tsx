@@ -26,6 +26,14 @@ interface OrgNode {
   parent_id?: string;
 }
 
+interface DimensionValue {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  is_active: boolean;
+}
+
 function generateCode(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
@@ -38,7 +46,7 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: "Manual",
   org_structure: "Auto — org structure",
   employee_master: "Auto — employee master",
-  hybrid: "Hybrid — employee + manual",
+  hybrid: "Hybrid — auto + manual",
   customer_order: "Manual now · Auto when AR active",
   product_master: "Auto — product master (future)",
 };
@@ -58,6 +66,11 @@ const DIM_ICONS: Record<string, string> = {
   statistical_order: "git-branch",
   real_order: "git-commit",
   customer_order: "users-group",
+};
+
+const HYBRID_SOURCE_INFO: Record<string, { icon: string; label: string; desc: string }> = {
+  employee_master: { icon: "users", label: "Employee codes", desc: "Auto-synced from employee master" },
+  org_structure: { icon: "building-community", label: "Cost center codes", desc: "Auto-synced from org structure" },
 };
 
 export default function DimensionsPage() {
@@ -81,6 +94,9 @@ export default function DimensionsPage() {
   const [addingDim, setAddingDim] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
+  // Hybrid source selection
+  const [hybridSources, setHybridSources] = useState<Set<string>>(new Set(["employee_master"]));
+
   // Org structure preview for add form
   const [orgNodes, setOrgNodes] = useState<OrgNode[]>([]);
   const [orgNodesLoading, setOrgNodesLoading] = useState(false);
@@ -93,6 +109,15 @@ export default function DimensionsPage() {
   const [editRequired, setEditRequired] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Inline value management
+  const [addValueDimId, setAddValueDimId] = useState<string | null>(null);
+  const [addValueCode, setAddValueCode] = useState("");
+  const [addValueName, setAddValueName] = useState("");
+  const [addValueDesc, setAddValueDesc] = useState("");
+  const [addingValue, setAddingValue] = useState(false);
+  const [addValueError, setAddValueError] = useState<string | null>(null);
+  const [dimValues, setDimValues] = useState<Record<string, DimensionValue[]>>({});
+
   // Values tab
   const [selectedDimForValues, setSelectedDimForValues] = useState<string>("");
   const [valuesSubTab, setValuesSubTab] = useState<ValuesSubTab>("employee");
@@ -100,6 +125,11 @@ export default function DimensionsPage() {
   const load = useCallback(async () => {
     if (!accessToken) return;
     try {
+      // Seed standard dimensions and fix value_source for legacy rows
+      await apiFetch("/api/config/dimensions/seed-standard", {
+        method: "POST",
+        token: accessToken,
+      });
       const data = await apiFetch<Dimension[]>("/api/config/dimensions", {
         token: accessToken,
       });
@@ -120,10 +150,28 @@ export default function DimensionsPage() {
     }
   }, [user, router]);
 
-  const toggleExpand = (id: string) => {
+  const loadDimValues = useCallback(async (dimId: string) => {
+    if (!accessToken) return;
+    try {
+      const vals = await apiFetch<DimensionValue[]>(
+        `/api/config/dimensions/${dimId}/values`,
+        { token: accessToken }
+      );
+      setDimValues(prev => ({ ...prev, [dimId]: vals }));
+    } catch {}
+  }, [accessToken]);
+
+  const toggleExpand = (id: string, dim?: Dimension) => {
     setExpandedIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        if (dim && !["org_structure", "employee_master"].includes(dim.value_source ?? "")) {
+          loadDimValues(id);
+        }
+      }
       return next;
     });
   };
@@ -169,7 +217,11 @@ export default function DimensionsPage() {
           code: addCode.trim() || generateCode(addName),
           is_required: addRequired,
           value_source: addSource,
-          description: addDescription.trim() || undefined,
+          description: addDescription.trim() || (
+            addSource === "hybrid"
+              ? `hybrid:${Array.from(hybridSources).join(",")}`
+              : undefined
+          ),
         }),
       });
       setShowAdd(false);
@@ -250,6 +302,67 @@ export default function DimensionsPage() {
     } catch {}
   };
 
+  const handleAddValue = async (dimId: string) => {
+    if (!accessToken || !addValueCode.trim() || !addValueName.trim()) return;
+    setAddingValue(true);
+    setAddValueError(null);
+    try {
+      await apiFetch(`/api/config/dimensions/${dimId}/values`, {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({
+          code: addValueCode.trim(),
+          name: addValueName.trim(),
+          description: addValueDesc.trim() || undefined,
+        }),
+      });
+      setAddValueDimId(null);
+      setAddValueCode("");
+      setAddValueName("");
+      setAddValueDesc("");
+      await loadDimValues(dimId);
+    } catch (err) {
+      setAddValueError(err instanceof Error ? err.message : "Failed to add value.");
+    } finally {
+      setAddingValue(false);
+    }
+  };
+
+  const handleDownloadTemplate = async (dimId: string) => {
+    if (!accessToken) return;
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const res = await fetch(`${baseUrl}/api/config/dimensions/${dimId}/values/template`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dimension_values_template.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {}
+  };
+
+  const handleBulkUpload = async (dimId: string, file: File) => {
+    if (!accessToken) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      await fetch(`${baseUrl}/api/config/dimensions/${dimId}/values/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: formData,
+      });
+      await loadDimValues(dimId);
+    } catch {
+      setError("Bulk upload failed.");
+    }
+  };
+
   return (
     <div className="px-6 py-6 max-w-3xl">
 
@@ -308,7 +421,7 @@ export default function DimensionsPage() {
                     {[
                       { src: "org_structure", icon: "building-community", label: "Org structure", desc: "Auto-sync cost centers from your org tree" },
                       { src: "employee_master", icon: "users", label: "Employee master", desc: "Auto-sync all active employee codes" },
-                      { src: "hybrid", icon: "git-branch", label: "Hybrid", desc: "Employee codes auto-synced + manual codes" },
+                      { src: "hybrid", icon: "git-branch", label: "Hybrid", desc: "One or more auto-sources + manual codes" },
                       { src: "manual", icon: "pencil", label: "Manual", desc: "Enter values manually or upload in bulk" },
                     ].map(opt => (
                       <button key={opt.src} type="button" onClick={() => pickSource(opt.src)}
@@ -339,10 +452,7 @@ export default function DimensionsPage() {
                   <p className="text-xs font-medium text-gray-600 mb-2">Step 2 — Select data source:</p>
                   <div className="border border-gray-200 rounded-lg overflow-hidden mb-3">
                     <div className="flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50"
-                      onClick={() => {
-                        setAddName("Cost center");
-                        setAddCode("cost_center");
-                      }}>
+                      onClick={() => { setAddName("Cost center"); setAddCode("cost_center"); }}>
                       <input type="radio" name="org-type" checked={addName === "Cost center"} readOnly className="accent-blue-600" />
                       <div>
                         <p className="text-xs font-medium text-gray-900">Cost centers</p>
@@ -353,9 +463,7 @@ export default function DimensionsPage() {
 
                   {addName === "Cost center" && (
                     <div className="mb-3">
-                      <p className="text-xs font-medium text-gray-600 mb-2">
-                        Step 3 — Uncheck any cost centers to exclude:
-                      </p>
+                      <p className="text-xs font-medium text-gray-600 mb-2">Step 3 — Uncheck any cost centers to exclude:</p>
                       {orgNodesLoading ? (
                         <div className="h-24 bg-gray-100 rounded animate-pulse" />
                       ) : orgNodes.length === 0 ? (
@@ -384,9 +492,7 @@ export default function DimensionsPage() {
                           ))}
                         </div>
                       )}
-                      <p className="text-xs text-gray-400 mt-1">
-                        {selectedOrgNodes.size} of {orgNodes.length} selected
-                      </p>
+                      <p className="text-xs text-gray-400 mt-1">{selectedOrgNodes.size} of {orgNodes.length} selected</p>
                     </div>
                   )}
 
@@ -394,8 +500,7 @@ export default function DimensionsPage() {
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setAddStep("source")}
                       className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd}
-                      disabled={addingDim || !addName}
+                    <button type="button" onClick={handleAdd} disabled={addingDim || !addName}
                       className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
                       {addingDim ? "Saving…" : "Save dimension"}
                     </button>
@@ -436,13 +541,49 @@ export default function DimensionsPage() {
                 </div>
               )}
 
-              {/* Step 2: Hybrid */}
+              {/* Step 2: Hybrid — user picks which auto-sources to combine */}
               {addStep === "hybrid" && (
                 <div>
                   <p className="text-sm font-medium text-gray-800 mb-1">Hybrid dimension</p>
                   <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mb-3">
                     <i className="ti ti-git-branch text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-blue-700">Employee codes auto-synced from employee master + manual codes you add separately. Both appear together on transactions.</p>
+                    <p className="text-xs text-blue-700">
+                      Hybrid combines one or more auto-synced sources with manually added codes. Manual codes are always included.
+                    </p>
+                  </div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Step 2 — Which auto-sources should this dimension include?</p>
+                  <div className="space-y-2 mb-3">
+                    {[
+                      { key: "employee_master", icon: "users", label: "Employee master", desc: "All active employee codes — auto-synced" },
+                      { key: "org_structure", icon: "building-community", label: "Org structure", desc: "Cost center nodes — auto-synced from org tree" },
+                    ].map(opt => (
+                      <label key={opt.key}
+                        className="flex items-center gap-3 p-2.5 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+                        <input type="checkbox" className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
+                          checked={hybridSources.has(opt.key)}
+                          onChange={e => {
+                            setHybridSources(prev => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(opt.key);
+                              else next.delete(opt.key);
+                              return next;
+                            });
+                          }} />
+                        <i className={`ti ti-${opt.icon} text-blue-500`} style={{ fontSize: 14 }} />
+                        <div>
+                          <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                          <p className="text-xs text-gray-500">{opt.desc}</p>
+                        </div>
+                      </label>
+                    ))}
+                    <div className="flex items-center gap-3 p-2.5 border border-gray-200 rounded-lg bg-gray-50 opacity-60">
+                      <input type="checkbox" checked disabled className="w-3.5 h-3.5 flex-shrink-0" />
+                      <i className="ti ti-pencil text-gray-400" style={{ fontSize: 14 }} />
+                      <div>
+                        <p className="text-xs font-medium text-gray-600">Manual codes</p>
+                        <p className="text-xs text-gray-400">Always included — add campaigns, vehicles, assets etc.</p>
+                      </div>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div>
@@ -459,12 +600,12 @@ export default function DimensionsPage() {
                         className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400 mb-3">After saving, go to Master data / values to add your manual codes (campaigns, vehicles, assets etc.).</p>
                   {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setAddStep("source")}
                       className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd} disabled={addingDim || !addName.trim()}
+                    <button type="button" onClick={handleAdd}
+                      disabled={addingDim || !addName.trim() || hybridSources.size === 0}
                       className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
                       {addingDim ? "Saving…" : "Save dimension"}
                     </button>
@@ -549,6 +690,17 @@ export default function DimensionsPage() {
                 const isOrgAuto = dim.value_source === "org_structure";
                 const isEmpAuto = dim.value_source === "employee_master";
 
+                // Parse hybrid sources from description field
+                const hybridDesc = dim.description ?? "";
+                const parsedHybridSources = isHybrid && hybridDesc.startsWith("hybrid:")
+                  ? hybridDesc.replace("hybrid:", "").split(",")
+                  : isHybrid ? ["employee_master"] : [];
+
+                // Description to show in card header (suppress hybrid: encoding)
+                const displayDesc = dim.description && !dim.description.startsWith("hybrid:")
+                  ? dim.description
+                  : null;
+
                 return (
                   <div key={dim.id}
                     className={`border rounded-xl overflow-hidden ${
@@ -556,7 +708,7 @@ export default function DimensionsPage() {
                     }`}>
 
                     <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50"
-                      onClick={() => toggleExpand(dim.id)}>
+                      onClick={() => toggleExpand(dim.id, dim)}>
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
                         dim.is_active ? "bg-blue-50" : "bg-gray-100"
                       }`}>
@@ -580,8 +732,8 @@ export default function DimensionsPage() {
                             {dim.code}
                           </span>
                         </div>
-                        {dim.description && (
-                          <p className="text-xs text-gray-500 mt-0.5 truncate">{dim.description}</p>
+                        {displayDesc && (
+                          <p className="text-xs text-gray-500 mt-0.5 truncate">{displayDesc}</p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -621,14 +773,25 @@ export default function DimensionsPage() {
 
                         {isHybrid && (
                           <div className="mt-3 mb-2 space-y-1.5">
-                            <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
-                              <i className="ti ti-refresh text-blue-600" style={{ fontSize: 13 }} />
-                              <div className="flex-1"><p className="text-xs font-medium text-gray-900">Employee codes — auto-synced</p></div>
-                              <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">Live</span>
-                            </div>
+                            {parsedHybridSources.map(src => {
+                              const info = HYBRID_SOURCE_INFO[src];
+                              if (!info) return null;
+                              return (
+                                <div key={src} className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
+                                  <i className={`ti ti-${info.icon} text-blue-600`} style={{ fontSize: 13 }} />
+                                  <div className="flex-1">
+                                    <p className="text-xs font-medium text-gray-900">{info.label} — auto-synced</p>
+                                    <p className="text-xs text-gray-500">{info.desc}</p>
+                                  </div>
+                                  <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">Live</span>
+                                </div>
+                              );
+                            })}
                             <div className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-md">
                               <i className="ti ti-pencil text-gray-500" style={{ fontSize: 13 }} />
-                              <div className="flex-1"><p className="text-xs font-medium text-gray-900">Manual codes — campaigns, vehicles, assets etc.</p></div>
+                              <div className="flex-1">
+                                <p className="text-xs font-medium text-gray-900">Manual codes — campaigns, vehicles, assets etc.</p>
+                              </div>
                               <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">Manual</span>
                             </div>
                           </div>
@@ -642,16 +805,88 @@ export default function DimensionsPage() {
                         )}
 
                         {(!isOrgAuto && !isEmpAuto) && (
-                          <div className="flex gap-2 mt-3 mb-2">
-                            <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">
-                              + Add value
-                            </button>
-                            <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
-                              <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
-                            </button>
-                            <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
-                              <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
-                            </button>
+                          <div className="mt-3 mb-2">
+                            {/* Values list */}
+                            {dimValues[dim.id] && dimValues[dim.id].length > 0 && (
+                              <div className="border border-gray-200 rounded-lg overflow-hidden mb-3">
+                                <table className="min-w-full text-xs">
+                                  <thead className="bg-gray-50">
+                                    <tr>
+                                      <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
+                                      <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                                      <th className="px-3 py-2" />
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {dimValues[dim.id].map(val => (
+                                      <tr key={val.id} className="hover:bg-gray-50">
+                                        <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
+                                        <td className="px-3 py-2 text-gray-800">{val.name}</td>
+                                        <td className="px-3 py-2 text-right">
+                                          <button type="button" className="text-red-400 hover:text-red-600">
+                                            <i className="ti ti-x" style={{ fontSize: 12 }} />
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+
+                            {/* Add value inline form */}
+                            {addValueDimId === dim.id ? (
+                              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-2">
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                  <input type="text" value={addValueCode}
+                                    onChange={e => setAddValueCode(e.target.value)}
+                                    placeholder="Code *"
+                                    className="px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                  <input type="text" value={addValueName}
+                                    onChange={e => setAddValueName(e.target.value)}
+                                    placeholder="Name *"
+                                    className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                </div>
+                                <input type="text" value={addValueDesc}
+                                  onChange={e => setAddValueDesc(e.target.value)}
+                                  placeholder="Description (optional)"
+                                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
+                                {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
+                                <div className="flex gap-2">
+                                  <button type="button" onClick={() => handleAddValue(dim.id)}
+                                    disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
+                                    className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
+                                    {addingValue ? "Adding…" : "Add"}
+                                  </button>
+                                  <button type="button"
+                                    onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
+                                    className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button type="button"
+                                  onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
+                                  className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">
+                                  + Add value
+                                </button>
+                                <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
+                                  className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                                  <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
+                                </button>
+                                <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
+                                  <i className="ti ti-upload" style={{ fontSize: 11 }} /> Upload
+                                  <input type="file" accept=".xlsx,.csv" className="hidden"
+                                    onChange={e => {
+                                      const file = e.target.files?.[0];
+                                      if (file) handleBulkUpload(dim.id, file);
+                                      e.target.value = "";
+                                    }} />
+                                </label>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -782,7 +1017,7 @@ export default function DimensionsPage() {
                             ? "border-blue-600 text-gray-900 font-medium"
                             : "border-transparent text-gray-500 hover:text-gray-700"
                         }`}>
-                        {st === "employee" ? "Employee codes (auto)" : "Manual codes"}
+                        {st === "employee" ? "Auto-synced codes" : "Manual codes"}
                       </button>
                     ))}
                   </div>
@@ -790,7 +1025,7 @@ export default function DimensionsPage() {
                     <div>
                       <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-3">
                         <i className="ti ti-refresh text-blue-600 flex-shrink-0" style={{ fontSize: 13 }} />
-                        <p className="text-xs text-blue-700">Auto-synced from employee master. Manage employees on the Employees page.</p>
+                        <p className="text-xs text-blue-700">Auto-synced from configured sources. Manage employees on the Employees page.</p>
                       </div>
                       <Link href="/dashboard/business/settings/employees"
                         className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
@@ -802,15 +1037,72 @@ export default function DimensionsPage() {
                   {valuesSubTab === "manual" && (
                     <div>
                       <div className="flex gap-2 mb-3">
-                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add code</button>
-                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                        <button type="button"
+                          onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
+                          className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add code</button>
+                        <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
+                          className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
                           <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
                         </button>
-                        <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
-                          <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
-                        </button>
+                        <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
+                          <i className="ti ti-upload" style={{ fontSize: 11 }} /> Upload
+                          <input type="file" accept=".xlsx,.csv" className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0];
+                              if (file) handleBulkUpload(dim.id, file);
+                              e.target.value = "";
+                            }} />
+                        </label>
                       </div>
-                      <p className="text-xs text-gray-400 italic">No manual codes yet. Add non-employee codes like campaigns, vehicles, hubs, funds.</p>
+                      {addValueDimId === dim.id && (
+                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-3">
+                          <div className="grid grid-cols-2 gap-2 mb-2">
+                            <input type="text" value={addValueCode}
+                              onChange={e => setAddValueCode(e.target.value)}
+                              placeholder="Code *"
+                              className="px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <input type="text" value={addValueName}
+                              onChange={e => setAddValueName(e.target.value)}
+                              placeholder="Name *"
+                              className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                          </div>
+                          {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => handleAddValue(dim.id)}
+                              disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
+                              className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
+                              {addingValue ? "Adding…" : "Add"}
+                            </button>
+                            <button type="button"
+                              onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
+                              className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {dimValues[dim.id] && dimValues[dim.id].length > 0 ? (
+                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                          <table className="min-w-full text-xs">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
+                                <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {dimValues[dim.id].map(val => (
+                                <tr key={val.id} className="hover:bg-gray-50">
+                                  <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
+                                  <td className="px-3 py-2 text-gray-800">{val.name}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400 italic">No manual codes yet. Add non-employee codes like campaigns, vehicles, hubs, funds.</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -820,15 +1112,76 @@ export default function DimensionsPage() {
             return (
               <div>
                 <div className="flex gap-2 mb-3">
-                  <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add value</button>
-                  <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                  <button type="button"
+                    onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
+                    className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add value</button>
+                  <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
+                    className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
                     <i className="ti ti-download" style={{ fontSize: 11 }} /> Download template
                   </button>
-                  <button type="button" className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                  <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
                     <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
-                  </button>
+                    <input type="file" accept=".xlsx,.csv" className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (file) handleBulkUpload(dim.id, file);
+                        e.target.value = "";
+                      }} />
+                  </label>
                 </div>
-                <p className="text-xs text-gray-400 italic">No values configured yet for {dim.name}.</p>
+                {addValueDimId === dim.id && (
+                  <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-3">
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <input type="text" value={addValueCode}
+                        onChange={e => setAddValueCode(e.target.value)}
+                        placeholder="Code *"
+                        className="px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      <input type="text" value={addValueName}
+                        onChange={e => setAddValueName(e.target.value)}
+                        placeholder="Name *"
+                        className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <input type="text" value={addValueDesc}
+                      onChange={e => setAddValueDesc(e.target.value)}
+                      placeholder="Description (optional)"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
+                    {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => handleAddValue(dim.id)}
+                        disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
+                        className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
+                        {addingValue ? "Adding…" : "Add"}
+                      </button>
+                      <button type="button"
+                        onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
+                        className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {dimValues[dim.id] && dimValues[dim.id].length > 0 ? (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {dimValues[dim.id].map(val => (
+                          <tr key={val.id} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
+                            <td className="px-3 py-2 text-gray-800">{val.name}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 italic">No values configured yet for {dim.name}.</p>
+                )}
               </div>
             );
           })()}

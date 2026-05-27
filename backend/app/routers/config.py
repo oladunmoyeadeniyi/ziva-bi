@@ -162,6 +162,119 @@ async def _parse_upload(file: UploadFile) -> tuple[list[str], list[list[str]]]:
 # DIMENSIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Standard dimensions seeded for every new tenant on first Dimensions page visit
+STANDARD_DIMENSIONS = [
+    {
+        "name": "Cost center",
+        "code": "cost_center",
+        "is_required": True,
+        "value_source": "org_structure",
+        "description": "Tracks costs by organisational cost center. Auto-synced from org structure.",
+        "icon": "building-community",
+        "sort_order": 1,
+    },
+    {
+        "name": "Material / Product (SKU)",
+        "code": "material",
+        "is_required": False,
+        "value_source": "product_master",
+        "description": "Tags transactions with product or SKU codes. Auto-syncs from product master when Inventory is active.",
+        "icon": "barcode",
+        "sort_order": 2,
+    },
+    {
+        "name": "Statistical internal order",
+        "code": "statistical_order",
+        "is_required": False,
+        "value_source": "hybrid",
+        "description": "Employee codes auto-synced + manual codes for campaigns, vehicles, assets etc.",
+        "icon": "git-branch",
+        "sort_order": 3,
+    },
+    {
+        "name": "Real internal order",
+        "code": "real_order",
+        "is_required": False,
+        "value_source": "manual",
+        "description": "Tracks actual costs by project or initiative.",
+        "icon": "git-commit",
+        "sort_order": 4,
+    },
+    {
+        "name": "Customer order",
+        "code": "customer_order",
+        "is_required": False,
+        "value_source": "customer_order",
+        "description": "Customer categories/segments. Manual now, auto-syncs from customer master when AR is active.",
+        "icon": "users-group",
+        "sort_order": 5,
+    },
+]
+
+# Correct value_source for dimensions created before the value_source column existed
+_SOURCE_FIXES = {
+    "cost_center": "org_structure",
+    "material": "product_master",
+    "statistical_order": "hybrid",
+    "statistical_internal_order": "hybrid",
+    "real_order": "manual",
+    "real_statistical_order": "manual",
+    "real_internal_order": "manual",
+    "customer_order": "customer_order",
+}
+
+
+@router.post("/dimensions/seed-standard", status_code=200)
+async def seed_standard_dimensions(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Seed the 5 standard dimensions for a tenant if they don't exist yet.
+
+    Also fixes value_source for dimensions created before the value_source column
+    was added (which defaulted to 'manual'). Idempotent — safe to call on every
+    page load.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    seeded = 0
+    fixed = 0
+
+    existing_result = await db.execute(
+        select(TenantDimension).where(TenantDimension.tenant_id == tenant_id)
+    )
+    existing_dims = existing_result.scalars().all()
+    existing_codes = {d.code for d in existing_dims}
+
+    # Fix existing dimensions that have a wrong value_source
+    for dim in existing_dims:
+        correct_source = _SOURCE_FIXES.get(dim.code)
+        if correct_source and (not dim.value_source or (dim.value_source == "manual" and correct_source != "manual")):
+            dim.value_source = correct_source
+            fixed += 1
+
+    # Seed missing standard dimensions
+    for std in STANDARD_DIMENSIONS:
+        if std["code"] not in existing_codes:
+            db.add(TenantDimension(
+                tenant_id=tenant_id,
+                name=std["name"],
+                code=std["code"],
+                is_required=std["is_required"],
+                value_source=std["value_source"],
+                description=std["description"],
+                icon=std["icon"],
+                sort_order=std["sort_order"],
+                is_active=True,
+            ))
+            seeded += 1
+
+    await db.commit()
+    return {"seeded": seeded, "fixed": fixed}
+
+
 @router.get("/dimensions/org-structure-preview")
 async def get_org_structure_preview(
     current_user: CurrentUser = Depends(require_auth),
@@ -494,19 +607,18 @@ async def download_dimension_values_template(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """
-    Download an .xlsx upload template for dimension values.
+    Download a blank XLSX template for bulk uploading dimension values.
 
-    Generates a template pre-populated with the dimension name in the filename,
-    with example row and column instructions. Columns: code, name, value_type,
-    valid_from, valid_to, sort_order.
+    Columns: Code (required), Name (required), Description (optional).
+    Includes a sample row in italic grey so users can see the expected format.
     """
+    _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
-    dim = await _get_dimension_or_404(dimension_id, tenant_id, db)
+    await _get_dimension_or_404(dimension_id, tenant_id, db)
 
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Font, PatternFill
-        from openpyxl.utils import get_column_letter
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
 
@@ -514,51 +626,32 @@ async def download_dimension_values_template(
     ws = wb.active
     ws.title = "Values"
 
-    headers = ["code*", "name*", "value_type", "valid_from (dd/mm/yyyy)", "valid_to (dd/mm/yyyy)", "sort_order"]
-    header_fill = PatternFill("solid", fgColor="2563EB")
-    req_fill = PatternFill("solid", fgColor="DBEAFE")
-    opt_fill = PatternFill("solid", fgColor="F3F4F6")
-    header_font = Font(bold=True, color="FFFFFF")
-    instr_font = Font(italic=True, color="6B7280", size=9)
-
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
-        cell.font = header_font
-        cell.fill = header_fill if col_idx <= 2 else opt_fill
-        if col_idx <= 2:
-            cell.font = Font(bold=True, color="FFFFFF")
-        else:
-            cell.font = Font(bold=True, color="374151")
+    headers = ["Code *", "Name *", "Description"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1E3A5F")
         cell.alignment = Alignment(horizontal="center")
-        ws.column_dimensions[get_column_letter(col_idx)].width = 24
 
-    instructions = [
-        "Unique code e.g. NG_FIN",
-        "Display name e.g. Nigeria Finance",
-        "Optional value type for filtering",
-        "Optional — start date for this value",
-        "Optional — end date (leave blank = no expiry)",
-        "Optional — display order (default 0)",
-    ]
-    for col_idx, instr in enumerate(instructions, start=1):
-        cell = ws.cell(row=2, column=col_idx, value=instr)
-        cell.font = instr_font
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 30
+    ws.column_dimensions["C"].width = 40
 
-    example = ["NG_FIN", "Nigeria Finance", "cost_center", "01/01/2026", "", "1"]
-    for col_idx, val in enumerate(example, start=1):
-        ws.cell(row=3, column=col_idx, value=val)
+    sample_font = Font(name="Arial", size=10, italic=True, color="888888")
+    ws.cell(row=2, column=1, value="CC-001").font = sample_font
+    ws.cell(row=2, column=2, value="Example value name").font = sample_font
+    ws.cell(row=2, column=3, value="Optional description").font = sample_font
+
+    ws.freeze_panes = "A2"
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
 
-    safe_name = dim.name.replace(" ", "_").lower()
-    filename = f"{safe_name}_values_template.xlsx"
-
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": "attachment; filename=dimension_values_template.xlsx"},
     )
 
 
