@@ -282,6 +282,8 @@ class TenantOrgConfig(Base):
     period_closing_frequency: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Branding stored as JSONB
     branding: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Configuration tab — financial features, tax applicability, governance
+    org_configuration: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

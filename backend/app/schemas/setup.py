@@ -62,6 +62,8 @@ class OrgIdentityUpdate(BaseModel):
     parent_company_name: Optional[str] = None
     reporting_currency: Optional[str] = None
     authorised_share_capital: Optional[float] = None
+    # Configuration tab
+    org_configuration: Optional[dict] = None
 
 
 class FiscalYearUpdate(BaseModel):
@@ -119,6 +121,8 @@ class OrgConfigResponse(BaseModel):
     period_closing_frequency: Optional[str] = None
     # Branding
     branding: Optional[dict] = None
+    # Configuration tab
+    org_configuration: Optional[dict] = None
 
 
 # ── Org Structure ─────────────────────────────────────────────────────────────
