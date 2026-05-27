@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -82,6 +83,7 @@ const inputCls =
 
 export default function TaxPage() {
   const { accessToken } = useAuth();
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("vat");
   const [config, setConfig] = useState<TaxConfig>({});
   const [saving, setSaving] = useState(false);
@@ -140,6 +142,14 @@ export default function TaxPage() {
 
   return (
     <div className="p-8 max-w-3xl">
+      <button
+        type="button"
+        onClick={() => router.push("/dashboard/business/setup")}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+        Setup dashboard
+      </button>
       <h1 className="text-xl font-semibold text-gray-900 mb-1">Tax & statutory</h1>
       <p className="text-sm text-gray-500 mb-6">
         Configure VAT, WHT, PAYE, and other statutory levies for this tenant.

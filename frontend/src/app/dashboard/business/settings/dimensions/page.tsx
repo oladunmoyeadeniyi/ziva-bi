@@ -30,7 +30,7 @@ function generateCode(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
 
-type Tab = "setup" | "values" | "not-applicable";
+type Tab = "setup" | "values";
 
 export default function DimensionsPage() {
   const { user, accessToken } = useAuth();
@@ -190,11 +190,18 @@ export default function DimensionsPage() {
   const TABS: { key: Tab; label: string }[] = [
     { key: "setup", label: "Dimension setup" },
     { key: "values", label: "Master data / values" },
-    { key: "not-applicable", label: "Not using dimensions?" },
   ];
 
   return (
     <div className="px-6 py-8 max-w-3xl">
+      <button
+        type="button"
+        onClick={() => router.push("/dashboard/business/setup")}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+        Setup dashboard
+      </button>
       <h1 className="text-xl font-bold text-gray-900 mb-1">Financial Dimensions</h1>
       <p className="text-sm text-gray-500 mb-5">
         Define dimensions your organisation uses for analytical coding (e.g. Cost Center, IO, Brand).
@@ -222,29 +229,6 @@ export default function DimensionsPage() {
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
           <span>{error}</span>
           <button onClick={() => setError(null)} className="text-red-400 font-bold">×</button>
-        </div>
-      )}
-
-      {/* Tab 3 — Not using dimensions? */}
-      {activeTab === "not-applicable" && (
-        <div className="flex flex-col items-center text-center py-10">
-          <i className="ti ti-circle-off text-gray-300 mb-4" style={{ fontSize: 28 }} />
-          <h2 className="text-base font-semibold text-gray-800 mb-2">
-            This company does not use analytical dimensions
-          </h2>
-          <p className="text-sm text-gray-500 max-w-sm mb-6">
-            Dimension fields will be hidden on all expense forms, AP invoices, and other transaction entries.
-            The CoA template will not include dimension columns. You can enable dimensions at any time.
-          </p>
-          {confirmError && <p className="text-sm text-red-600 mb-3">{confirmError}</p>}
-          <button
-            type="button"
-            disabled={confirming}
-            onClick={handleConfirmNotApplicable}
-            className="px-5 py-2.5 text-sm font-medium text-white bg-gray-800 rounded-lg hover:bg-gray-900 disabled:opacity-60"
-          >
-            {confirming ? "Saving…" : "Confirm — no dimensions"}
-          </button>
         </div>
       )}
 

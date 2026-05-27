@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -277,6 +278,7 @@ function ModuleCard({
 
 export default function ModuleActivationPage() {
   const { accessToken } = useAuth();
+  const router = useRouter();
   const [modules, setModules] = useState<ModuleState[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
@@ -328,6 +330,14 @@ export default function ModuleActivationPage() {
       {/* Left panel */}
       <div className="w-[40%] border-r border-gray-200 flex flex-col overflow-hidden">
         <div className="p-4 border-b border-gray-100">
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard/business/setup")}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
+          >
+            <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+            Setup dashboard
+          </button>
           <h1 className="text-base font-semibold text-gray-900">Module activation</h1>
           <p className="text-xs text-gray-500 mt-0.5">
             Activate modules your organisation will use. Only active modules appear in Module Setup.

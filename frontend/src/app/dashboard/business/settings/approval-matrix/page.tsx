@@ -106,6 +106,14 @@ export default function ApprovalMatrixPage() {
 
   return (
     <div className="px-4 sm:px-6 py-8 max-w-2xl mx-auto">
+      <button
+        type="button"
+        onClick={() => router.push("/dashboard/business/setup")}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+        Setup dashboard
+      </button>
       <div className="mb-6">
         <h1 className="text-xl font-bold text-gray-900">Approval Matrix</h1>
         <p className="mt-0.5 text-sm text-gray-500">

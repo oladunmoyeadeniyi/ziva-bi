@@ -368,6 +368,14 @@ export default function ChartOfAccountsPage() {
 
   return (
     <div className="px-6 py-8 max-w-5xl">
+      <button
+        type="button"
+        onClick={() => router.push("/dashboard/business/setup")}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+        Setup dashboard
+      </button>
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-xl font-bold text-gray-900">Chart of Accounts</h1>
         <div className="flex gap-2 flex-wrap justify-end">
