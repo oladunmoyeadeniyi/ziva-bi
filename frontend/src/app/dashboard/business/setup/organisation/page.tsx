@@ -62,6 +62,7 @@ interface TaxItem {
   checked: boolean;
   tag?: "new" | "changed";
   custom?: boolean;
+  category?: string;
 }
 
 interface TaxGroup {
@@ -615,6 +616,8 @@ export default function OrganisationPage() {
 
   const [config, setConfig] = useState<OrgConfiguration>(DEFAULT_CONFIG);
   const [customTaxInput, setCustomTaxInput] = useState("");
+  const [customTaxCategory, setCustomTaxCategory] = useState<string>("Indirect taxes");
+  const [customTaxNewCategory, setCustomTaxNewCategory] = useState<string>("");
 
   // Load org config
   useEffect(() => {
@@ -1835,7 +1838,7 @@ export default function OrganisationPage() {
                   onChange={e => {
                     setConfig(c => ({ ...c, is_tax_haven: e.target.checked }));
                     if (e.target.checked) {
-                      const countryCode = org.country ?? "XX";
+                      const countryCode = (org.country && TAX_PROFILES[org.country]) ? org.country : "XX";
                       const groups = getTaxGroupsForItems(config.tax_items, countryCode);
                       setCollapsedTaxGroups(new Set(groups.map(g => g.title)));
                     } else {
@@ -1866,7 +1869,7 @@ export default function OrganisationPage() {
 
               {/* Tax groups — collapsible */}
               {(() => {
-                const countryCode = org.country ?? "XX";
+                const countryCode = (org.country && TAX_PROFILES[org.country]) ? org.country : "XX";
                 const groups = getTaxGroupsForItems(config.tax_items, countryCode);
                 return groups.map(group => {
                   const isCollapsed = collapsedTaxGroups.has(group.title);
@@ -1927,26 +1930,132 @@ export default function OrganisationPage() {
                 });
               })()}
 
+              {/* Custom taxes group — renders items added via the form below */}
+              {config.tax_items.filter(t => t.custom).length > 0 && (() => {
+                const customByCategory = config.tax_items
+                  .filter(t => t.custom)
+                  .reduce((acc, item) => {
+                    const cat = item.category ?? "Custom taxes";
+                    if (!acc[cat]) acc[cat] = [];
+                    acc[cat].push(item);
+                    return acc;
+                  }, {} as Record<string, TaxItem[]>);
+
+                return Object.entries(customByCategory).map(([category, items]) => {
+                  const isCollapsed = collapsedTaxGroups.has(`custom_${category}`);
+                  return (
+                    <div key={`custom_${category}`} className="border border-blue-200 rounded-md overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => toggleTaxGroup(`custom_${category}`)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">{category}</span>
+                          <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">Custom</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-blue-500">{items.filter(i => i.checked).length} of {items.length} selected</span>
+                          <i className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-blue-400`} style={{ fontSize: 13 }} />
+                        </div>
+                      </button>
+                      {!isCollapsed && (
+                        <div className="divide-y divide-blue-50">
+                          {items.map(item => (
+                            <div key={item.id} className="flex items-start gap-2.5 px-4 py-2.5">
+                              <input
+                                type="checkbox"
+                                className="w-3.5 h-3.5 cursor-pointer accent-blue-600 mt-0.5 flex-shrink-0"
+                                checked={item.checked}
+                                onChange={e => {
+                                  setConfig(c => ({
+                                    ...c,
+                                    tax_items: c.tax_items.map(t =>
+                                      t.id === item.id ? { ...t, checked: e.target.checked } : t
+                                    ),
+                                  }));
+                                }}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-gray-900">{item.name}</p>
+                                <p className="text-[11px] text-gray-500">{item.desc}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setConfig(c => ({ ...c, tax_items: c.tax_items.filter(t => t.id !== item.id) }))}
+                                className="text-red-400 hover:text-red-600 p-0.5 flex-shrink-0"
+                                title="Remove custom tax"
+                              >
+                                <i className="ti ti-x" style={{ fontSize: 12 }} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+
               {/* Custom tax */}
-              <div className="flex gap-2">
-                <input type="text" value={customTaxInput} onChange={e => setCustomTaxInput(e.target.value)}
-                  placeholder="Add a custom tax not listed above..."
-                  className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <button type="button" onClick={() => {
-                  if (!customTaxInput.trim()) return;
-                  const newItem: TaxItem = {
-                    id: `custom_${Date.now()}`,
-                    name: customTaxInput.trim(),
-                    desc: "Custom tax — configure rate and details on Tax & statutory page.",
-                    rate: "",
-                    checked: true,
-                    custom: true,
-                  };
-                  setConfig(c => ({ ...c, tax_items: [...c.tax_items, newItem] }));
-                  setCustomTaxInput("");
-                }} className="px-3 py-1.5 text-xs border border-gray-300 rounded-md hover:bg-gray-50">
-                  + Add
-                </button>
+              <div className="border border-gray-200 rounded-md p-3 bg-gray-50 space-y-2">
+                <p className="text-xs font-medium text-gray-600">Add a custom tax</p>
+                <input
+                  type="text"
+                  value={customTaxInput}
+                  onChange={e => setCustomTaxInput(e.target.value)}
+                  placeholder="Tax name (e.g. Tourism levy, Excise on plastics)"
+                  className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <select
+                      value={customTaxCategory}
+                      onChange={e => setCustomTaxCategory(e.target.value)}
+                      className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="Indirect taxes">Indirect taxes</option>
+                      <option value="Direct taxes">Direct taxes</option>
+                      <option value="Employment & payroll">Employment &amp; payroll</option>
+                      <option value="Sector-specific & other">Sector-specific &amp; other</option>
+                      <option value="__new__">+ Create new category</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!customTaxInput.trim()) return;
+                      const category = customTaxCategory === "__new__"
+                        ? (customTaxNewCategory.trim() || "Other")
+                        : customTaxCategory;
+                      const newItem: TaxItem = {
+                        id: `custom_${Date.now()}`,
+                        name: customTaxInput.trim(),
+                        desc: `Custom tax — ${category}. Configure rate and details on Tax & statutory page.`,
+                        rate: "",
+                        checked: true,
+                        custom: true,
+                        category,
+                      };
+                      setConfig(c => ({ ...c, tax_items: [...c.tax_items, newItem] }));
+                      setCustomTaxInput("");
+                      setCustomTaxNewCategory("");
+                      setCustomTaxCategory("Indirect taxes");
+                    }}
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
+                  >
+                    + Add
+                  </button>
+                </div>
+                {customTaxCategory === "__new__" && (
+                  <input
+                    type="text"
+                    value={customTaxNewCategory}
+                    onChange={e => setCustomTaxNewCategory(e.target.value)}
+                    placeholder="New category name (e.g. Environmental levies)"
+                    className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                )}
               </div>
 
               <p className="text-xs text-gray-400 pl-2 border-l-2 border-amber-300">
