@@ -5,11 +5,12 @@ Registered at prefix /api/config.
 
 Endpoints:
   Dimensions:
-    GET    /api/config/dimensions                      List tenant dimensions
-    POST   /api/config/dimensions                      Create dimension
-    PATCH  /api/config/dimensions/{id}                 Update dimension
-    DELETE /api/config/dimensions/{id}                 Soft delete (is_active=false)
-    POST   /api/config/dimensions/{id}/reorder         Update sort_order
+    GET    /api/config/dimensions                              List tenant dimensions
+    GET    /api/config/dimensions/org-structure-preview        Cost center nodes for add form
+    POST   /api/config/dimensions                              Create dimension
+    PATCH  /api/config/dimensions/{id}                         Update dimension
+    DELETE /api/config/dimensions/{id}                         Soft delete (is_active=false)
+    POST   /api/config/dimensions/{id}/reorder                 Update sort_order
 
   Dimension Values:
     GET    /api/config/dimensions/{id}/values          List values for a dimension
@@ -65,6 +66,7 @@ from app.models.master_data import (
     GLDimensionRequirement,
     TenantDimension,
 )
+from app.models.setup import OrgStructureNode
 from app.schemas.config import (
     BulkActionRequest,
     BulkActionResult,
@@ -159,6 +161,42 @@ async def _parse_upload(file: UploadFile) -> tuple[list[str], list[list[str]]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # DIMENSIONS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/dimensions/org-structure-preview")
+async def get_org_structure_preview(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """
+    Return cost center nodes from the org structure for the dimension add form checklist.
+
+    Used by the frontend when the user picks 'Org structure' as the value source for
+    a new dimension, so they can see and optionally exclude specific cost centers.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(OrgStructureNode)
+        .where(
+            OrgStructureNode.tenant_id == tenant_id,
+            OrgStructureNode.node_type == "Cost center",
+            OrgStructureNode.is_active.is_(True),
+        )
+        .order_by(OrgStructureNode.sort_order)
+    )
+    nodes = result.scalars().all()
+    return [
+        {
+            "id": str(n.id),
+            "name": n.name,
+            "code": n.code,
+            "cost_center_code": n.cost_center_code,
+            "parent_id": str(n.parent_id) if n.parent_id else None,
+        }
+        for n in nodes
+    ]
+
 
 @router.get("/dimensions", response_model=list[DimensionResponse])
 async def list_dimensions(
