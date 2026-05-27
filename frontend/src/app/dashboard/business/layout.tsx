@@ -194,7 +194,7 @@ export default function BusinessLayout({
   const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role;
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
 
       {/* Implementation Mode banner — 36px, amber, consultant only */}
       {isConsultant && (
@@ -271,7 +271,7 @@ export default function BusinessLayout({
       {/* Body: sidebar + content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar — 240px, scrolls independently */}
-        <nav className="w-60 shrink-0 bg-gray-50 border-r border-gray-200 py-2 flex flex-col overflow-y-auto">
+        <nav className="w-60 shrink-0 bg-gray-50 border-r border-gray-200 py-2 flex flex-col overflow-y-auto h-full">
 
           {/* User-facing items */}
           {!isExclusivelyAdmin && (
