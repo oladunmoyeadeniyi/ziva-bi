@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
 type Tab = "identity" | "structure" | "branding" | "config";
+type ConfigSubTab = "fiscal" | "features" | "tax" | "governance";
 
 interface OrgConfig {
   tenant_id: string;
@@ -579,6 +580,18 @@ export default function OrganisationPage() {
   }
 
   const [editTheme, setEditTheme] = useState<BrandingTheme>(getDefaultTheme);
+
+  const [configTab, setConfigTab] = useState<ConfigSubTab>("fiscal");
+  const [collapsedTaxGroups, setCollapsedTaxGroups] = useState<Set<string>>(new Set());
+
+  const toggleTaxGroup = (title: string) => {
+    setCollapsedTaxGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+  };
 
   const DEFAULT_CONFIG: OrgConfiguration = {
     use_dimensions: false,
@@ -1581,359 +1594,445 @@ export default function OrganisationPage() {
 
       {/* ── Configuration tab ────────────────────────────────────────────────── */}
       {tab === "config" && (
-        <div className="space-y-5 max-w-2xl">
+        <div className="space-y-0">
 
-          {/* ── FISCAL YEAR ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Fiscal year</p>
-            <div className="grid grid-cols-2 gap-4 mb-3">
-              <Field label="Start month">
-                <Select value={org.fiscal_year_start_month ?? ""} onChange={e => setOrg(o => ({ ...o, fiscal_year_start_month: parseInt(e.target.value) || undefined }))}>
-                  <option value="">— Select —</option>
-                  {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-                </Select>
-              </Field>
-              <Field label="Start day">
-                <Input type="number" min={1} max={31} value={org.fiscal_year_start_day ?? ""} onChange={e => setOrg(o => ({ ...o, fiscal_year_start_day: parseInt(e.target.value) || undefined }))} placeholder="1" />
-              </Field>
-              <Field label="Year name format">
-                <Select value={org.fiscal_year_name_format ?? ""} onChange={e => setOrg(o => ({ ...o, fiscal_year_name_format: e.target.value }))}>
-                  <option value="">— Select —</option>
-                  {FY_FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
-                </Select>
-              </Field>
-              <Field label="Period closing frequency">
-                <Select value={org.period_closing_frequency ?? ""} onChange={e => setOrg(o => ({ ...o, period_closing_frequency: e.target.value }))}>
-                  <option value="">— Select —</option>
-                  {PERIOD_FREQS.map(f => <option key={f} value={f}>{f}</option>)}
-                </Select>
-              </Field>
+          {/* Sub-tab bar */}
+          <div className="flex gap-0 border-b border-gray-200 mb-5">
+            {([
+              { key: "fiscal",     label: "Fiscal year" },
+              { key: "features",   label: "Financial features" },
+              { key: "tax",        label: "Tax applicability" },
+              { key: "governance", label: "Governance" },
+            ] as { key: ConfigSubTab; label: string }[]).map(t => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setConfigTab(t.key)}
+                className={`px-4 py-2 text-sm border-b-2 transition-colors ${
+                  configTab === t.key
+                    ? "border-blue-600 text-gray-900 font-medium"
+                    : "border-transparent text-gray-500 hover:text-gray-700"
+                }`}
+              >{t.label}</button>
+            ))}
+          </div>
+
+          {/* ── FISCAL YEAR sub-tab ── */}
+          {configTab === "fiscal" && (
+            <div className="space-y-4 max-w-xl">
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Start month">
+                  <Select value={org.fiscal_year_start_month ?? ""} onChange={e => setOrg(o => ({ ...o, fiscal_year_start_month: parseInt(e.target.value) || undefined }))}>
+                    <option value="">— Select —</option>
+                    {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Start day">
+                  <Input type="number" min={1} max={31} value={org.fiscal_year_start_day ?? ""} onChange={e => setOrg(o => ({ ...o, fiscal_year_start_day: parseInt(e.target.value) || undefined }))} placeholder="1" />
+                </Field>
+                <Field label="Year name format">
+                  <Select value={org.fiscal_year_name_format ?? ""} onChange={e => setOrg(o => ({ ...o, fiscal_year_name_format: e.target.value }))}>
+                    <option value="">— Select —</option>
+                    {FY_FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Period closing frequency">
+                  <Select value={org.period_closing_frequency ?? ""} onChange={e => setOrg(o => ({ ...o, period_closing_frequency: e.target.value }))}>
+                    <option value="">— Select —</option>
+                    {PERIOD_FREQS.map(f => <option key={f} value={f}>{f}</option>)}
+                  </Select>
+                </Field>
+              </div>
+              <p className="text-xs text-gray-400 italic">Period closing frequency controls when periods are formally closed. It does not restrict report generation.</p>
+              <button type="button" onClick={() => save({
+                fiscal_year_start_month: org.fiscal_year_start_month,
+                fiscal_year_start_day: org.fiscal_year_start_day,
+                fiscal_year_name_format: org.fiscal_year_name_format,
+                period_closing_frequency: org.period_closing_frequency,
+              })} disabled={saving} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                {saving ? "Saving…" : saved ? "✓ Saved" : "Save fiscal year settings"}
+              </button>
+
+              <div className="pt-4 border-t border-gray-200">
+                <p className="text-sm font-medium text-gray-800 mb-3">Generate fiscal periods</p>
+                <div className="flex items-center gap-3">
+                  <input type="text" value={genLabel} onChange={e => setGenLabel(e.target.value)} placeholder="e.g. FY2026"
+                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <button type="button" onClick={generatePeriods} disabled={generating || !org.fiscal_year_start_month}
+                    className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-white bg-gray-800 hover:bg-gray-700 rounded-md disabled:opacity-50">
+                    <i className="ti ti-refresh" style={{ fontSize: 14 }} />
+                    {generating ? "Generating…" : `Generate periods for ${genLabel}`}
+                  </button>
+                </div>
+                {!org.fiscal_year_start_month && <p className="mt-1 text-xs text-amber-600">Set start month and save first.</p>}
+              </div>
+              {periods.length > 0 && (
+                <div className="overflow-auto rounded-lg border border-gray-200">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>{["Period name","Opens","Closes","Status"].map(h => (
+                        <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {periods.map(p => (
+                        <tr key={p.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 font-medium text-gray-800">{p.period_name}</td>
+                          <td className="px-4 py-2 text-gray-600">{p.start_date}</td>
+                          <td className="px-4 py-2 text-gray-600">{p.end_date}</td>
+                          <td className="px-4 py-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              p.status === "current" ? "bg-blue-100 text-blue-700" :
+                              p.status === "closed" ? "bg-gray-100 text-gray-500" : "bg-green-100 text-green-700"
+                            }`}>{p.status.charAt(0).toUpperCase() + p.status.slice(1)}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-            <p className="text-xs text-gray-400 italic mb-3">Period closing frequency controls when periods are formally closed. It does not restrict report generation.</p>
-            <button type="button" onClick={() => save({
-              fiscal_year_start_month: org.fiscal_year_start_month,
-              fiscal_year_start_day: org.fiscal_year_start_day,
-              fiscal_year_name_format: org.fiscal_year_name_format,
-              period_closing_frequency: org.period_closing_frequency,
-            })} disabled={saving} className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
-              {saving ? "Saving…" : saved ? "✓ Saved" : "Save fiscal year settings"}
-            </button>
+          )}
 
-            {/* Generate periods */}
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <p className="text-sm font-medium text-gray-700 mb-2">Generate fiscal periods</p>
-              <div className="flex items-center gap-3">
-                <input type="text" value={genLabel} onChange={e => setGenLabel(e.target.value)} placeholder="e.g. FY2026"
-                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <button type="button" onClick={generatePeriods} disabled={generating || !org.fiscal_year_start_month}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-white bg-gray-800 hover:bg-gray-700 rounded-md disabled:opacity-50">
-                  <i className="ti ti-refresh" style={{ fontSize: 14 }} />
-                  {generating ? "Generating…" : `Generate periods for ${genLabel}`}
+          {/* ── FINANCIAL FEATURES sub-tab ── */}
+          {configTab === "features" && (
+            <div className="space-y-0 max-w-2xl">
+
+              {/* Dimensions */}
+              <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Analytical dimensions <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
+                  <p className="text-xs text-gray-500 mt-0.5">Tag transactions with additional context — cost center, project, brand, or region — to slice and filter reports beyond just the GL account.</p>
+                  {config.use_dimensions && (
+                    <p className="text-xs text-blue-600 mt-1.5">Dimensions page is now visible in the sidebar. Configure dimension types and values there before uploading your Chart of Accounts.</p>
+                  )}
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_dimensions}
+                    onChange={e => setConfig(c => ({ ...c, use_dimensions: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_dimensions ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_dimensions ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              {/* Multi-currency */}
+              <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Multi-currency <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
+                  <p className="text-xs text-gray-500 mt-0.5">Enable if your organisation transacts in foreign currencies. Unlocks the Currencies & FX setup page.</p>
+                  {config.use_multi_currency && (
+                    <div className="mt-2 grid grid-cols-2 gap-3">
+                      <Field label="FX rate source">
+                        <Select value={config.fx_rate_source ?? "Manual entry"} onChange={e => setConfig(c => ({ ...c, fx_rate_source: e.target.value }))}>
+                          {["Manual entry","Central bank feed","Custom API"].map(o => <option key={o}>{o}</option>)}
+                        </Select>
+                      </Field>
+                      <Field label="Rate update frequency">
+                        <Select value={config.fx_update_frequency ?? "Daily"} onChange={e => setConfig(c => ({ ...c, fx_update_frequency: e.target.value }))}>
+                          {["Daily","Weekly","Monthly"].map(o => <option key={o}>{o}</option>)}
+                        </Select>
+                      </Field>
+                    </div>
+                  )}
+                  {config.use_multi_currency && (
+                    <p className="text-xs text-blue-600 mt-1.5">Currencies & FX page is now visible in the sidebar.</p>
+                  )}
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_multi_currency}
+                    onChange={e => setConfig(c => ({ ...c, use_multi_currency: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multi_currency ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multi_currency ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              {/* Intercompany */}
+              <div className="flex items-start justify-between gap-4 py-4">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Intercompany transactions</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Enable if this entity transacts with other entities in the same group. Required for intercompany eliminations in consolidated reports.</p>
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_intercompany}
+                    onChange={e => setConfig(c => ({ ...c, use_intercompany: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_intercompany ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_intercompany ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              {/* Inventory costing */}
+              <div className="flex items-start justify-between gap-4 py-4 border-t border-gray-100">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Inventory costing method <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded ml-1">Required for inventory</span></p>
+                  <p className="text-xs text-gray-500 mt-0.5">Choose how inventory cost is calculated. This is a one-time irreversible decision (IAS 2) — locked after go-live.</p>
+                  {config.use_inventory_costing && (
+                    <div className="mt-2">
+                      <Field label="Costing method">
+                        <Select value={config.inventory_costing_method ?? ""} onChange={e => setConfig(c => ({ ...c, inventory_costing_method: e.target.value }))}>
+                          <option>Weighted average cost (AVCO)</option>
+                          <option>First in, first out (FIFO)</option>
+                          <option>Standard cost</option>
+                        </Select>
+                      </Field>
+                      <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                        <i className="ti ti-lock" style={{ fontSize: 12 }} /> Cannot be changed after go-live.
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_inventory_costing}
+                    onChange={e => setConfig(c => ({ ...c, use_inventory_costing: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_inventory_costing ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_inventory_costing ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              {/* Budget control */}
+              <div className="flex items-start justify-between gap-4 py-4 border-t border-gray-100">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Budget control</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Control what happens when a transaction exceeds the approved budget for a cost center or GL account.</p>
+                  {config.use_budget_control && (
+                    <div className="mt-2">
+                      <Field label="When budget is exceeded">
+                        <Select value={config.budget_exceeded_action ?? ""} onChange={e => setConfig(c => ({ ...c, budget_exceeded_action: e.target.value }))}>
+                          <option>Show warning, allow posting</option>
+                          <option>Block posting — hard stop</option>
+                          <option>Require approval to override</option>
+                        </Select>
+                      </Field>
+                    </div>
+                  )}
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_budget_control}
+                    onChange={e => setConfig(c => ({ ...c, use_budget_control: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_budget_control ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_budget_control ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              <div className="pt-4 flex justify-end">
+                <button type="button" onClick={() => save({ org_configuration: config })} disabled={saving}
+                  className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  {saving ? "Saving…" : saved ? "✓ Saved" : "Save features"}
                 </button>
               </div>
-              {!org.fiscal_year_start_month && <p className="mt-1 text-xs text-amber-600">Set start month and save first.</p>}
             </div>
-            {periods.length > 0 && (
-              <div className="mt-3 overflow-auto rounded-lg border border-gray-200">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>{["Period name","Opens","Closes","Status"].map(h => (
-                      <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                    ))}</tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {periods.map(p => (
-                      <tr key={p.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 font-medium text-gray-800">{p.period_name}</td>
-                        <td className="px-4 py-2 text-gray-600">{p.start_date}</td>
-                        <td className="px-4 py-2 text-gray-600">{p.end_date}</td>
-                        <td className="px-4 py-2">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                            p.status === "current" ? "bg-blue-100 text-blue-700" :
-                            p.status === "closed" ? "bg-gray-100 text-gray-500" : "bg-green-100 text-green-700"
-                          }`}>{p.status.charAt(0).toUpperCase() + p.status.slice(1)}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          )}
 
-          {/* ── FINANCIAL FEATURES ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Financial features</p>
+          {/* ── TAX APPLICABILITY sub-tab ── */}
+          {configTab === "tax" && (
+            <div className="space-y-4 max-w-2xl">
+              <p className="text-xs text-gray-500">Select every tax that applies to your organisation. Only selected taxes will appear in Tax & statutory setup.</p>
 
-            {/* Dimensions */}
-            <div className="flex items-start justify-between gap-4 py-3 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Analytical dimensions <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Tag transactions with additional context — cost center, project, brand, or region — to slice and filter reports beyond just the GL account.</p>
-                {config.use_dimensions && (
-                  <p className="text-xs text-blue-600 mt-1">You will configure dimension types and values on the Dimensions page. The CoA template will include one column per dimension.</p>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_dimensions} onChange={e => setConfig(c => ({ ...c, use_dimensions: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_dimensions ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_dimensions ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Multi-currency */}
-            <div className="flex items-start justify-between gap-4 py-3 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Multi-currency <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Enable if your organisation transacts in foreign currencies. Unlocks the Currencies & FX setup page.</p>
-                {config.use_multi_currency && (
-                  <div className="mt-2 grid grid-cols-2 gap-3">
-                    <Field label="FX rate source">
-                      <Select value={config.fx_rate_source ?? "Manual entry"} onChange={e => setConfig(c => ({ ...c, fx_rate_source: e.target.value }))}>
-                        {["Manual entry", "Central bank feed", "Custom API"].map(o => <option key={o}>{o}</option>)}
-                      </Select>
-                    </Field>
-                    <Field label="Rate update frequency">
-                      <Select value={config.fx_update_frequency ?? "Daily"} onChange={e => setConfig(c => ({ ...c, fx_update_frequency: e.target.value }))}>
-                        {["Daily", "Weekly", "Monthly"].map(o => <option key={o}>{o}</option>)}
-                      </Select>
-                    </Field>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_multi_currency} onChange={e => setConfig(c => ({ ...c, use_multi_currency: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multi_currency ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multi_currency ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Intercompany */}
-            <div className="flex items-start justify-between gap-4 py-3">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Intercompany transactions</p>
-                <p className="text-xs text-gray-500 mt-0.5">Enable if this entity transacts with other entities in the same group. Required for intercompany eliminations in consolidated reports.</p>
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_intercompany} onChange={e => setConfig(c => ({ ...c, use_intercompany: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_intercompany ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_intercompany ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-          </div>
-
-          {/* ── OPERATIONS & COSTING ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Operations & costing</p>
-
-            {/* Inventory costing */}
-            <div className="flex items-start justify-between gap-4 py-3 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Inventory costing method <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded ml-1">Required for inventory</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Choose how inventory cost is calculated. This is a one-time irreversible decision (IAS 2) — locked after go-live.</p>
-                {config.use_inventory_costing && (
-                  <div className="mt-2">
-                    <Field label="Costing method">
-                      <Select value={config.inventory_costing_method ?? ""} onChange={e => setConfig(c => ({ ...c, inventory_costing_method: e.target.value }))}>
-                        <option>Weighted average cost (AVCO)</option>
-                        <option>First in, first out (FIFO)</option>
-                        <option>Standard cost</option>
-                      </Select>
-                    </Field>
-                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <i className="ti ti-lock" style={{ fontSize: 12 }} /> Cannot be changed after go-live.
-                    </p>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_inventory_costing} onChange={e => setConfig(c => ({ ...c, use_inventory_costing: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_inventory_costing ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_inventory_costing ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Budget control */}
-            <div className="flex items-start justify-between gap-4 py-3">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Budget control</p>
-                <p className="text-xs text-gray-500 mt-0.5">Control what happens when a transaction exceeds the approved budget for a cost center or GL account.</p>
-                {config.use_budget_control && (
-                  <div className="mt-2">
-                    <Field label="When budget is exceeded">
-                      <Select value={config.budget_exceeded_action ?? ""} onChange={e => setConfig(c => ({ ...c, budget_exceeded_action: e.target.value }))}>
-                        <option>Show warning, allow posting</option>
-                        <option>Block posting — hard stop</option>
-                        <option>Require approval to override</option>
-                      </Select>
-                    </Field>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_budget_control} onChange={e => setConfig(c => ({ ...c, use_budget_control: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_budget_control ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_budget_control ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-          </div>
-
-          {/* ── TAX APPLICABILITY ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Tax applicability</p>
-            <p className="text-xs text-gray-500 mb-3">Select every tax that applies to your organisation. Only selected taxes will appear in Tax & statutory setup.</p>
-
-            {/* Zero-tax haven */}
-            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-md border border-gray-200 mb-3">
-              <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer accent-blue-600" checked={config.is_tax_haven}
-                onChange={e => setConfig(c => ({ ...c, is_tax_haven: e.target.checked }))} />
-              <div>
-                <p className="text-sm font-medium text-gray-900">Zero-tax / tax haven jurisdiction</p>
-                <p className="text-xs text-gray-500">e.g. UAE (pre-June 2023), Cayman Islands, BVI, Isle of Man. Corporate income tax not applicable.</p>
-              </div>
-            </div>
-
-            {/* Jurisdiction note */}
-            <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mb-3">
-              <i className="ti ti-map-pin text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-              <p className="text-xs text-blue-700">
-                Showing taxes for {org.country ? (TAX_PROFILES[org.country] ? org.country : "your jurisdiction") : "your jurisdiction"} — pre-populated based on your registered country. Add or remove as needed.
-              </p>
-            </div>
-
-            {/* Tax groups */}
-            {(() => {
-              const countryCode = org.country ?? "XX";
-              const groups = getTaxGroupsForItems(config.tax_items, countryCode);
-              return groups.map(group => (
-                <div key={group.title} className="mb-4">
-                  <p className="text-xs font-medium text-gray-500 mb-1 pb-1 border-b border-gray-100">{group.title}</p>
-                  {group.items.map(item => (
-                    <div key={item.id} className="flex items-start gap-2.5 py-2 border-b border-gray-50 last:border-0">
-                      <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer accent-blue-600 mt-0.5 flex-shrink-0"
-                        checked={item.checked}
-                        onChange={e => {
-                          setConfig(c => ({
-                            ...c,
-                            tax_items: c.tax_items.map(t =>
-                              t.id === item.id ? { ...t, checked: e.target.checked } : t
-                            ).concat(
-                              c.tax_items.find(t => t.id === item.id)
-                                ? []
-                                : [{ ...item, checked: e.target.checked }]
-                            ),
-                          }));
-                        }}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-gray-900">
-                          {item.name}
-                          {item.tag === "new" && <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded ml-1.5">New</span>}
-                          {item.tag === "changed" && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-1.5">Updated</span>}
-                        </p>
-                        <p className="text-[11px] text-gray-500">{item.desc}</p>
-                        {item.rate && <p className="text-[11px] text-blue-600 mt-0.5">{item.rate}</p>}
-                      </div>
-                    </div>
-                  ))}
+              {/* Zero-tax haven */}
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-md border border-gray-200">
+                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer accent-blue-600"
+                  checked={config.is_tax_haven}
+                  onChange={e => {
+                    setConfig(c => ({ ...c, is_tax_haven: e.target.checked }));
+                    if (e.target.checked) {
+                      const countryCode = org.country ?? "XX";
+                      const groups = getTaxGroupsForItems(config.tax_items, countryCode);
+                      setCollapsedTaxGroups(new Set(groups.map(g => g.title)));
+                    } else {
+                      setCollapsedTaxGroups(new Set());
+                    }
+                  }}
+                />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Zero-tax / tax haven jurisdiction</p>
+                  <p className="text-xs text-gray-500">e.g. UAE (pre-June 2023), Cayman Islands, BVI, Isle of Man. Corporate income tax not applicable.</p>
                 </div>
-              ));
-            })()}
-
-            {/* Custom tax */}
-            <div className="flex gap-2 mt-2">
-              <input type="text" value={customTaxInput} onChange={e => setCustomTaxInput(e.target.value)}
-                placeholder="Add a custom tax not listed above..."
-                className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <button type="button" onClick={() => {
-                if (!customTaxInput.trim()) return;
-                const newItem: TaxItem = {
-                  id: `custom_${Date.now()}`,
-                  name: customTaxInput.trim(),
-                  desc: "Custom tax — configure rate and details on Tax & statutory page.",
-                  rate: "",
-                  checked: true,
-                  custom: true,
-                };
-                setConfig(c => ({ ...c, tax_items: [...c.tax_items, newItem] }));
-                setCustomTaxInput("");
-              }} className="px-3 py-1.5 text-xs border border-gray-300 rounded-md hover:bg-gray-50">
-                + Add
-              </button>
-            </div>
-
-            <p className="text-xs text-gray-400 mt-3 pl-2 border-l-2 border-amber-300">
-              Tax information is provided for guidance only. Always verify with your tax adviser.
-              Ziva BI updates jurisdiction profiles as laws change, and your admin can add, remove,
-              or adjust applicable taxes at any time.
-            </p>
-          </div>
-
-          {/* ── GOVERNANCE & AUTHORISATION ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Governance & authorisation</p>
-
-            {/* Audit trail */}
-            <div className="flex items-start justify-between gap-4 py-3 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Full audit trail</p>
-                <p className="text-xs text-gray-500 mt-0.5">Log every create, edit, and delete action against a user, timestamp, and IP. Required for SOX, ISO 27001, and most enterprise compliance frameworks.</p>
               </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_audit_trail} onChange={e => setConfig(c => ({ ...c, use_audit_trail: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_audit_trail ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_audit_trail ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
 
-            {/* Multi-level auth */}
-            <div className="flex items-start justify-between gap-4 py-3">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Multi-level payment authorisation</p>
-                <p className="text-xs text-gray-500 mt-0.5">Require sequential approval by multiple authorisers on payments above defined thresholds. Number of levels configurable.</p>
-                {config.use_multilevel_auth && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-xs text-gray-500">Define each authorisation level. Levels are sequential.</p>
-                    {(config.auth_levels ?? []).map((level, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-medium flex items-center justify-center flex-shrink-0">{i + 1}</div>
-                        <Input placeholder="Role or person (e.g. Finance Manager)" value={level.role}
-                          onChange={e => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.map((l, idx) => idx === i ? { ...l, role: e.target.value } : l) }))} />
-                        <Input type="number" placeholder="Min amount" style={{ width: 140 }} value={level.min_amount}
-                          onChange={e => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.map((l, idx) => idx === i ? { ...l, min_amount: parseInt(e.target.value) || "" } : l) }))} />
-                        {(config.auth_levels?.length ?? 0) > 1 && (
-                          <button type="button" onClick={() => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.filter((_, idx) => idx !== i) }))}
-                            className="text-red-400 hover:text-red-600 p-1">
-                            <i className="ti ti-x" style={{ fontSize: 13 }} />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                    {(config.auth_levels?.length ?? 0) < 5 && (
-                      <button type="button" onClick={() => setConfig(c => ({ ...c, auth_levels: [...(c.auth_levels ?? []), { role: "", min_amount: "" }] }))}
-                        className="text-xs text-blue-600 hover:text-blue-700 mt-1">
-                        + Add level
+              {config.is_tax_haven && (
+                <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md">
+                  <i className="ti ti-info-circle text-amber-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                  <p className="text-xs text-amber-700">Zero-tax jurisdiction selected. Tax groups are collapsed below — expand any group to select specific taxes that may still apply (e.g. VAT, customs duty, employment taxes).</p>
+                </div>
+              )}
+
+              {/* Jurisdiction note */}
+              <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md">
+                <i className="ti ti-map-pin text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                <p className="text-xs text-blue-700">
+                  Showing taxes for your registered country — pre-populated based on your country setting in Identity. Add or remove as needed.
+                </p>
+              </div>
+
+              {/* Tax groups — collapsible */}
+              {(() => {
+                const countryCode = org.country ?? "XX";
+                const groups = getTaxGroupsForItems(config.tax_items, countryCode);
+                return groups.map(group => {
+                  const isCollapsed = collapsedTaxGroups.has(group.title);
+                  return (
+                    <div key={group.title} className="border border-gray-200 rounded-md overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => toggleTaxGroup(group.title)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-left"
+                      >
+                        <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{group.title}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">
+                            {group.items.filter(i => {
+                              const saved = config.tax_items.find(t => t.id === i.id);
+                              return saved ? saved.checked : i.checked;
+                            }).length} of {group.items.length} selected
+                          </span>
+                          <i className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-gray-400`} style={{ fontSize: 13 }} />
+                        </div>
                       </button>
-                    )}
-                    <p className="text-xs text-gray-400 mt-1">Full workflow configuration is done in Approval workflows. This enables the feature globally.</p>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_multilevel_auth} onChange={e => setConfig(c => ({ ...c, use_multilevel_auth: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multilevel_auth ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multilevel_auth ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-          </div>
 
-          {/* Save configuration */}
-          <div className="flex justify-end pt-1">
-            <button type="button" onClick={() => save({ org_configuration: config })} disabled={saving}
-              className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
-              {saving ? "Saving…" : saved ? "✓ Saved" : "Save configuration"}
-            </button>
-          </div>
+                      {!isCollapsed && (
+                        <div className="divide-y divide-gray-50">
+                          {group.items.map(item => {
+                            const savedItem = config.tax_items.find(t => t.id === item.id);
+                            const isChecked = savedItem ? savedItem.checked : item.checked;
+                            return (
+                              <div key={item.id} className="flex items-start gap-2.5 px-4 py-2.5">
+                                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer accent-blue-600 mt-0.5 flex-shrink-0"
+                                  checked={isChecked}
+                                  onChange={e => {
+                                    setConfig(c => {
+                                      const existing = c.tax_items.find(t => t.id === item.id);
+                                      if (existing) {
+                                        return { ...c, tax_items: c.tax_items.map(t => t.id === item.id ? { ...t, checked: e.target.checked } : t) };
+                                      }
+                                      return { ...c, tax_items: [...c.tax_items, { ...item, checked: e.target.checked }] };
+                                    });
+                                  }}
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-gray-900">
+                                    {item.name}
+                                    {item.tag === "new" && <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded ml-1.5">New</span>}
+                                    {item.tag === "changed" && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-1.5">Updated</span>}
+                                  </p>
+                                  <p className="text-[11px] text-gray-500">{item.desc}</p>
+                                  {item.rate && <p className="text-[11px] text-blue-600 mt-0.5">{item.rate}</p>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+
+              {/* Custom tax */}
+              <div className="flex gap-2">
+                <input type="text" value={customTaxInput} onChange={e => setCustomTaxInput(e.target.value)}
+                  placeholder="Add a custom tax not listed above..."
+                  className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <button type="button" onClick={() => {
+                  if (!customTaxInput.trim()) return;
+                  const newItem: TaxItem = {
+                    id: `custom_${Date.now()}`,
+                    name: customTaxInput.trim(),
+                    desc: "Custom tax — configure rate and details on Tax & statutory page.",
+                    rate: "",
+                    checked: true,
+                    custom: true,
+                  };
+                  setConfig(c => ({ ...c, tax_items: [...c.tax_items, newItem] }));
+                  setCustomTaxInput("");
+                }} className="px-3 py-1.5 text-xs border border-gray-300 rounded-md hover:bg-gray-50">
+                  + Add
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-400 pl-2 border-l-2 border-amber-300">
+                Tax information is provided for guidance only. Always verify with your tax adviser.
+                Ziva BI updates jurisdiction profiles as laws change, and your admin can add, remove,
+                or adjust applicable taxes at any time.
+              </p>
+
+              <div className="flex justify-end pt-1">
+                <button type="button" onClick={() => save({ org_configuration: config })} disabled={saving}
+                  className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  {saving ? "Saving…" : saved ? "✓ Saved" : "Save tax settings"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── GOVERNANCE sub-tab ── */}
+          {configTab === "governance" && (
+            <div className="space-y-0 max-w-2xl">
+
+              {/* Audit trail */}
+              <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Full audit trail</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Log every create, edit, and delete action against a user, timestamp, and IP address. Required for SOX, ISO 27001, and most enterprise compliance frameworks.</p>
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_audit_trail}
+                    onChange={e => setConfig(c => ({ ...c, use_audit_trail: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_audit_trail ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_audit_trail ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              {/* Multi-level auth */}
+              <div className="flex items-start justify-between gap-4 py-4">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Multi-level payment authorisation</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Require sequential approval by multiple authorisers on payments above defined thresholds. Number of levels configurable up to 5.</p>
+                  {config.use_multilevel_auth && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-gray-500 mb-2">Define each authorisation level. Levels are sequential — Level 1 approves first.</p>
+                      {(config.auth_levels ?? []).map((level, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-medium flex items-center justify-center flex-shrink-0">{i + 1}</div>
+                          <Input placeholder="Role or person (e.g. Finance Manager)" value={level.role}
+                            onChange={e => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.map((l, idx) => idx === i ? { ...l, role: e.target.value } : l) }))} />
+                          <Input type="number" placeholder="Min amount" style={{ width: 140 }} value={level.min_amount}
+                            onChange={e => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.map((l, idx) => idx === i ? { ...l, min_amount: parseInt(e.target.value) || "" } : l) }))} />
+                          {(config.auth_levels?.length ?? 0) > 1 && (
+                            <button type="button"
+                              onClick={() => setConfig(c => ({ ...c, auth_levels: c.auth_levels?.filter((_, idx) => idx !== i) }))}
+                              className="text-red-400 hover:text-red-600 p-1">
+                              <i className="ti ti-x" style={{ fontSize: 13 }} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {(config.auth_levels?.length ?? 0) < 5 && (
+                        <button type="button"
+                          onClick={() => setConfig(c => ({ ...c, auth_levels: [...(c.auth_levels ?? []), { role: "", min_amount: "" }] }))}
+                          className="text-xs text-blue-600 hover:text-blue-700 mt-1">
+                          + Add level
+                        </button>
+                      )}
+                      <p className="text-xs text-gray-400 mt-1">Full workflow configuration is done in Approval workflows. This enables the feature globally.</p>
+                    </div>
+                  )}
+                </div>
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                  <input type="checkbox" className="sr-only" checked={config.use_multilevel_auth}
+                    onChange={e => setConfig(c => ({ ...c, use_multilevel_auth: e.target.checked }))} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multilevel_auth ? "bg-blue-600" : "bg-gray-300"}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multilevel_auth ? "translate-x-4" : ""}`} />
+                </label>
+              </div>
+
+              <div className="pt-4 flex justify-end border-t border-gray-100">
+                <button type="button" onClick={() => save({ org_configuration: config })} disabled={saving}
+                  className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  {saving ? "Saving…" : saved ? "✓ Saved" : "Save governance settings"}
+                </button>
+              </div>
+            </div>
+          )}
 
         </div>
       )}

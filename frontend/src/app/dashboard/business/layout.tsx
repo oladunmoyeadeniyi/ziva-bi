@@ -82,6 +82,7 @@ export default function BusinessLayout({
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [activeModules, setActiveModules] = useState<ModuleState[] | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
+  const [orgConfig, setOrgConfig] = useState<{ use_dimensions?: boolean; use_multi_currency?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isAdmin = user?.is_tenant_admin || user?.is_super_admin;
@@ -128,6 +129,23 @@ export default function BusinessLayout({
   useEffect(() => {
     fetchCompanyName();
   }, [fetchCompanyName]);
+
+  // Fetch org configuration to conditionally show/hide sidebar links
+  const fetchOrgConfig = useCallback(async () => {
+    if (!accessToken || !isAdmin) return;
+    try {
+      const data = await apiFetch<{ org_configuration?: { use_dimensions?: boolean; use_multi_currency?: boolean } }>(
+        "/api/setup/org", { token: accessToken }
+      );
+      if (data.org_configuration) setOrgConfig(data.org_configuration);
+    } catch {
+      // silently fail
+    }
+  }, [accessToken, isAdmin, pathname]);
+
+  useEffect(() => {
+    fetchOrgConfig();
+  }, [fetchOrgConfig]);
 
   // Close dropdown on click-away
   useEffect(() => {
@@ -301,10 +319,14 @@ export default function BusinessLayout({
               {/* FINANCIALS */}
               <div className="px-2">
                 <SectionLabel label="Financials" />
-                <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
+                {orgConfig?.use_dimensions && (
+                  <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
+                )}
                 <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
                 <NavLink href="/dashboard/business/settings/expense-categories" label="Expense categories" icon="sitemap" />
-                <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />
+                {orgConfig?.use_multi_currency && (
+                  <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />
+                )}
                 <NavLink href="/dashboard/business/setup/tax" label="Tax & statutory" icon="receipt-tax" />
               </div>
 
