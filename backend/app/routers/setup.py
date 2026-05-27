@@ -290,6 +290,14 @@ async def get_progress(
         select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
     )
     org = org_result.scalar_one_or_none()
+    org_config = org.org_configuration if org and org.org_configuration else {}
+    use_multi_currency = org_config.get("use_multi_currency", True)
+    # Secondary check: if org_configuration explicitly disables dimensions, honour it
+    # (covers existing tenants where tenant.dimensions_not_applicable may not yet be synced)
+    if not dims_not_applicable and org_config:
+        use_dimensions = org_config.get("use_dimensions")
+        if use_dimensions is False:
+            dims_not_applicable = True
     org_complete = bool(org and org.legal_name and org.functional_currency)
 
     # Check modules (at least 1 active)
@@ -449,10 +457,12 @@ async def get_progress(
            f"{emp_count:,} employee(s) loaded" if employees_complete else ("Requires CoA first" if employees_locked else "No employees loaded"),
            "/dashboard/business/settings/employees",
            locked=employees_locked),
-        _s("currencies", "Currencies & FX", currencies_complete,
-           f"Functional: {org.functional_currency}" if currencies_complete else ("Requires Organisation first" if currencies_locked else "Not configured"),
-           "/dashboard/business/setup/currencies", blocking=False,
-           locked=currencies_locked),
+        *([
+            _s("currencies", "Currencies & FX", currencies_complete,
+               f"Functional: {org.functional_currency}" if currencies_complete else ("Requires Organisation first" if currencies_locked else "Not configured"),
+               "/dashboard/business/setup/currencies", blocking=False,
+               locked=currencies_locked),
+        ] if use_multi_currency else []),
         _s("tax", "Tax & statutory", tax_complete,
            "Tax rules configured" if tax_complete else ("Requires Organisation first" if tax_locked else "Not configured"),
            "/dashboard/business/setup/tax",
@@ -522,6 +532,16 @@ async def patch_org(
             continue
         if hasattr(org, field):
             setattr(org, field, value)
+
+    # Sync dimensions toggle with tenant.dimensions_not_applicable
+    org_config_update = update_data.get("org_configuration")
+    if org_config_update is not None:
+        use_dims = org_config_update.get("use_dimensions")
+        if use_dims is not None:
+            tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+            tenant = tenant_result.scalar_one_or_none()
+            if tenant:
+                tenant.dimensions_not_applicable = not use_dims
 
     await db.commit()
     await db.refresh(org)
