@@ -158,6 +158,10 @@ export default function DimensionsPage() {
   // Edit display name
   const [editDisplayName, setEditDisplayName] = useState("");
 
+  // Delete confirmation modal
+  const [deleteConfirmDim, setDeleteConfirmDim] = useState<Dimension | null>(null);
+  const [deletingDim, setDeletingDim] = useState(false);
+
   const load = useCallback(async () => {
     if (!accessToken) return;
     try {
@@ -321,17 +325,25 @@ export default function DimensionsPage() {
     }
   };
 
-  const handleHardDelete = async (dim: Dimension) => {
-    if (!accessToken) return;
-    if (!confirm(`Permanently delete "${dim.name}" and all its values? This cannot be undone.`)) return;
+  const handleHardDelete = (dim: Dimension) => {
+    setDeleteConfirmDim(dim);
+  };
+
+  const confirmHardDelete = async () => {
+    if (!accessToken || !deleteConfirmDim) return;
+    setDeletingDim(true);
     try {
-      await apiFetch(`/api/config/dimensions/${dim.id}/permanent`, {
+      await apiFetch(`/api/config/dimensions/${deleteConfirmDim.id}/permanent`, {
         method: "DELETE",
         token: accessToken,
       });
+      setDeleteConfirmDim(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete dimension.");
+      setDeleteConfirmDim(null);
+    } finally {
+      setDeletingDim(false);
     }
   };
 
@@ -1221,6 +1233,63 @@ export default function DimensionsPage() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirmDim && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !deletingDim && setDeleteConfirmDim(null)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                <i className="ti ti-trash text-red-500" style={{ fontSize: 18 }} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900 mb-1">
+                  Delete &quot;{deleteConfirmDim.display_name || deleteConfirmDim.name}&quot;?
+                </p>
+                <p className="text-xs text-gray-500">
+                  This will permanently delete this dimension and all its values.
+                  This cannot be undone.
+                </p>
+                {STANDARD_CODES.has(deleteConfirmDim.code) && (
+                  <p className="text-xs text-blue-600 mt-2">
+                    <i className="ti ti-info-circle" style={{ fontSize: 12, verticalAlign: -1 }} /> This is a standard dimension. If needed, it will be recreated automatically on next page load.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmDim(null)}
+                disabled={deletingDim}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmHardDelete}
+                disabled={deletingDim}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
+                {deletingDim ? (
+                  <>
+                    <i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <i className="ti ti-trash" style={{ fontSize: 14 }} />
+                    Delete permanently
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
