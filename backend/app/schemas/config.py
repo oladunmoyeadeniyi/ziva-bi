@@ -229,6 +229,10 @@ class CoACreate(BaseModel):
     tb_mapping: str | None = None
     group_account_number: str | None = None
     group_account_name: str | None = None
+    account_classification: Optional[str] = None
+    is_foreign_currency: Optional[bool] = False
+    foreign_currency_code: Optional[str] = None
+    revalue_at_period_end: Optional[bool] = False
 
     @field_validator("gl_number")
     @classmethod
@@ -275,6 +279,10 @@ class CoAUpdate(BaseModel):
     tb_mapping: str | None = None
     group_account_number: str | None = None
     group_account_name: str | None = None
+    account_classification: Optional[str] = None
+    is_foreign_currency: Optional[bool] = None
+    foreign_currency_code: Optional[str] = None
+    revalue_at_period_end: Optional[bool] = None
 
     @field_validator("account_type")
     @classmethod
@@ -374,6 +382,10 @@ class CoAListItem(BaseModel):
     is_active: bool
     gl_group: str | None = None
     gl_subgroup: str | None = None
+    account_classification: Optional[str] = None
+    is_foreign_currency: Optional[bool] = False
+    foreign_currency_code: Optional[str] = None
+    revalue_at_period_end: Optional[bool] = False
 
     model_config = {"from_attributes": True}
 
@@ -389,6 +401,10 @@ class CoAListItem(BaseModel):
             is_active=g.is_active,
             gl_group=g.gl_group,
             gl_subgroup=g.gl_subgroup,
+            account_classification=g.account_classification,
+            is_foreign_currency=g.is_foreign_currency or False,
+            foreign_currency_code=g.foreign_currency_code,
+            revalue_at_period_end=g.revalue_at_period_end or False,
         )
 
 

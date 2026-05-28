@@ -1309,6 +1309,10 @@ async def create_coa(
         gl_number=data.gl_number,
         gl_name=data.gl_name,
         account_type=data.account_type,
+        account_classification=data.account_classification,
+        is_foreign_currency=data.is_foreign_currency or False,
+        foreign_currency_code=data.foreign_currency_code,
+        revalue_at_period_end=data.revalue_at_period_end or False,
     )
     db.add(gl)
     await db.flush()
@@ -1859,6 +1863,31 @@ async def bulk_action_categories(
 
     await db.flush()
     return BulkActionResult(action=data.action, affected=affected, skipped=len(data.ids) - affected)
+
+
+@router.get("/coa/{gl_id}/dimensions")
+async def get_coa_dimensions(
+    gl_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Return saved dimension requirements for a GL account."""
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(GLDimensionRequirement).where(
+            GLDimensionRequirement.gl_id == gl_id,
+            GLDimensionRequirement.tenant_id == tenant_id,
+        )
+    )
+    reqs = result.scalars().all()
+    return [
+        {
+            "dimension_id": str(r.dimension_id),
+            "requirement": r.requirement,
+        }
+        for r in reqs
+    ]
 
 
 @router.patch("/coa/{gl_id}/dimensions", response_model=CoAResponse)

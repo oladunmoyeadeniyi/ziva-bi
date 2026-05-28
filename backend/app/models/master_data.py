@@ -193,6 +193,21 @@ class ChartOfAccount(Base):
     group_account_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     group_account_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    # M8.3: account classification (drives Tax Engine, AP, AR, Payroll, Fixed Assets, Reporting)
+    account_classification: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    # M8.3: foreign currency fields
+    is_foreign_currency: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=True
+    )
+    foreign_currency_code: Mapped[Optional[str]] = mapped_column(
+        String(10), nullable=True
+    )
+    revalue_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=True
+    )
+
     # M8.2: consultant can lock this GL account from Power Admin modification
     locked_by_implementation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

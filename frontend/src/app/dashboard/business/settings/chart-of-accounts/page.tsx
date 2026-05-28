@@ -29,14 +29,60 @@ interface GLAccount {
   tb_mapping?: string;
   group_account_number?: string;
   group_account_name?: string;
+  account_classification?: string;
+  is_foreign_currency?: boolean;
+  foreign_currency_code?: string;
+  revalue_at_period_end?: boolean;
 }
 
 interface Dimension {
   id: string;
   name: string;
+  display_name?: string;
   code: string;
   is_active: boolean;
 }
+
+type CoATab = "accounts" | "groups" | "fs_mappings";
+
+const SOCI_CLASSIFICATIONS = [
+  "Revenue — trading",
+  "Revenue — other income",
+  "Revenue — capital gain",
+  "Cost of sales",
+  "Operating expense",
+  "Finance income",
+  "Finance cost",
+  "Tax charge — current",
+  "Tax charge — deferred",
+];
+
+const SOFP_CLASSIFICATIONS = [
+  "Fixed asset — tangible",
+  "Fixed asset — intangible",
+  "Fixed asset — right of use",
+  "Investment",
+  "Inventory",
+  "Trade receivable",
+  "Other receivable",
+  "Prepayment",
+  "Cash and bank",
+  "Trade payable",
+  "Other payable",
+  "Accrual",
+  "Tax payable — current",
+  "Tax payable — deferred",
+  "Borrowing",
+  "Lease liability",
+  "Share capital",
+  "Retained earnings",
+  "Other reserve",
+];
+
+const COMMON_CURRENCIES = [
+  "USD", "EUR", "GBP", "NGN", "GHS", "KES", "ZAR",
+  "AED", "CAD", "AUD", "JPY", "CHF", "CNY", "INR",
+];
 
 interface SheetResult {
   imported: number;
@@ -95,6 +141,10 @@ export default function ChartOfAccountsPage() {
   const [addTbMapping, setAddTbMapping] = useState("");
   const [addGroupAccNum, setAddGroupAccNum] = useState("");
   const [addGroupAccName, setAddGroupAccName] = useState("");
+  const [addClassification, setAddClassification] = useState("");
+  const [addIsForeignCurrency, setAddIsForeignCurrency] = useState(false);
+  const [addForeignCurrencyCode, setAddForeignCurrencyCode] = useState("");
+  const [addRevalueAtPeriodEnd, setAddRevalueAtPeriodEnd] = useState(false);
   const [addingGL, setAddingGL] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
@@ -112,12 +162,24 @@ export default function ChartOfAccountsPage() {
   const [editTbMapping, setEditTbMapping] = useState("");
   const [editGroupAccNum, setEditGroupAccNum] = useState("");
   const [editGroupAccName, setEditGroupAccName] = useState("");
+  const [editClassification, setEditClassification] = useState("");
+  const [editIsForeignCurrency, setEditIsForeignCurrency] = useState(false);
+  const [editForeignCurrencyCode, setEditForeignCurrencyCode] = useState("");
+  const [editRevalueAtPeriodEnd, setEditRevalueAtPeriodEnd] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Dimensions modal
   const [dimGlId, setDimGlId] = useState<string | null>(null);
   const [dimRequirements, setDimRequirements] = useState<Record<string, string>>({});
   const [savingDims, setSavingDims] = useState(false);
+  const [dimModalLoading, setDimModalLoading] = useState(false);
+
+  // Sub-tabs
+  const [coaTab, setCoaTab] = useState<CoATab>("accounts");
+
+  // Deactivate confirmation modal
+  const [deactivateConfirmGl, setDeactivateConfirmGl] = useState<GLAccount | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
 
   // Upload
   const [uploadResult, setUploadResult] = useState<UploadResultType | null>(null);
@@ -183,12 +245,18 @@ export default function ChartOfAccountsPage() {
           tb_mapping: addTbMapping.trim() || null,
           group_account_number: addGroupAccNum.trim() || null,
           group_account_name: addGroupAccName.trim() || null,
+          account_classification: addClassification || null,
+          is_foreign_currency: addIsForeignCurrency,
+          foreign_currency_code: addIsForeignCurrency ? addForeignCurrencyCode || null : null,
+          revalue_at_period_end: addIsForeignCurrency ? addRevalueAtPeriodEnd : false,
         }),
       });
       setAddGL(""); setAddName(""); setAddType("SOCI");
       setAddGroup(""); setAddSubgroup(""); setAddSubSubgroup("");
       setAddFsHead(""); setAddFsNote(""); setAddTbMapping("");
       setAddGroupAccNum(""); setAddGroupAccName("");
+      setAddClassification(""); setAddIsForeignCurrency(false);
+      setAddForeignCurrencyCode(""); setAddRevalueAtPeriodEnd(false);
       setShowAdd(false);
       await load();
     } catch (err) {
@@ -217,6 +285,10 @@ export default function ChartOfAccountsPage() {
           tb_mapping: editTbMapping.trim() || null,
           group_account_number: editGroupAccNum.trim() || null,
           group_account_name: editGroupAccName.trim() || null,
+          account_classification: editClassification || null,
+          is_foreign_currency: editIsForeignCurrency,
+          foreign_currency_code: editIsForeignCurrency ? editForeignCurrencyCode || null : null,
+          revalue_at_period_end: editIsForeignCurrency ? editRevalueAtPeriodEnd : false,
         }),
       });
       setEditId(null);
@@ -228,14 +300,25 @@ export default function ChartOfAccountsPage() {
     }
   };
 
-  const handleDeactivate = async (id: string, glNumber: string) => {
-    if (!accessToken) return;
-    if (!confirm(`Deactivate GL account ${glNumber}?`)) return;
+  const handleDeactivate = (gl: GLAccount) => {
+    setDeactivateConfirmGl(gl);
+  };
+
+  const confirmDeactivate = async () => {
+    if (!accessToken || !deactivateConfirmGl) return;
+    setDeactivating(true);
     try {
-      await apiFetch(`/api/config/coa/${id}`, { method: "DELETE", token: accessToken });
+      await apiFetch(`/api/config/coa/${deactivateConfirmGl.id}`, {
+        method: "DELETE",
+        token: accessToken,
+      });
+      setDeactivateConfirmGl(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to deactivate account.");
+      setDeactivateConfirmGl(null);
+    } finally {
+      setDeactivating(false);
     }
   };
 
@@ -327,11 +410,28 @@ export default function ChartOfAccountsPage() {
     }
   };
 
-  const openDimModal = (gl: GLAccount) => {
+  const openDimModal = async (gl: GLAccount) => {
     setDimGlId(gl.id);
+    setDimModalLoading(true);
     const defaults: Record<string, string> = {};
     dimensions.forEach((d) => { defaults[d.id] = "optional"; });
     setDimRequirements(defaults);
+
+    try {
+      const saved = await apiFetch<{ dimension_id: string; requirement: string }[]>(
+        `/api/config/coa/${gl.id}/dimensions`,
+        { token: accessToken! }
+      );
+      if (saved.length > 0) {
+        const loaded: Record<string, string> = { ...defaults };
+        saved.forEach(r => { loaded[r.dimension_id] = r.requirement; });
+        setDimRequirements(loaded);
+      }
+    } catch {
+      // keep defaults if fetch fails
+    } finally {
+      setDimModalLoading(false);
+    }
   };
 
   const handleSaveDims = async () => {
@@ -436,6 +536,23 @@ export default function ChartOfAccountsPage() {
         </p>
       </div>
 
+      <div className="flex gap-0 border-b border-gray-200 mb-5">
+        {([
+          { key: "accounts",    label: "Accounts" },
+          { key: "groups",      label: "Account groups" },
+          { key: "fs_mappings", label: "FS mappings" },
+        ] as { key: CoATab; label: string }[]).map(t => (
+          <button key={t.key} type="button" onClick={() => setCoaTab(t.key)}
+            className={`px-4 py-2 text-sm border-b-2 transition-colors ${
+              coaTab === t.key
+                ? "border-blue-600 text-gray-900 font-medium"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
           <span>{error}</span>
@@ -457,6 +574,7 @@ export default function ChartOfAccountsPage() {
         </div>
       )}
 
+      {coaTab === "accounts" && (<>
       {/* Search */}
       <div className="flex gap-2 mb-4">
         <input
@@ -642,6 +760,75 @@ export default function ChartOfAccountsPage() {
               </div>
             </div>
 
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 mt-4">Account Classification</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Classification</label>
+                <select
+                  value={addClassification}
+                  onChange={e => setAddClassification(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— Select classification —</option>
+                  <optgroup label="Income statement (SOCI)">
+                    {SOCI_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </optgroup>
+                  <optgroup label="Balance sheet (SOFP)">
+                    {SOFP_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </optgroup>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  Used by all modules to determine how this GL is treated automatically.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Foreign Currency</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="col-span-2 flex items-center gap-3">
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0">
+                  <input type="checkbox" className="sr-only"
+                    checked={addIsForeignCurrency}
+                    onChange={e => setAddIsForeignCurrency(e.target.checked)} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${
+                    addIsForeignCurrency ? "bg-blue-600" : "bg-gray-300"
+                  }`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                    addIsForeignCurrency ? "translate-x-4" : ""
+                  }`} />
+                </label>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Foreign currency account</p>
+                  <p className="text-xs text-gray-500">Enable if this account holds balances in a foreign currency.</p>
+                </div>
+              </div>
+              {addIsForeignCurrency && (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Currency <span className="text-red-500">*</span></label>
+                    <select
+                      value={addForeignCurrencyCode}
+                      onChange={e => setAddForeignCurrencyCode(e.target.value)}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">— Select currency —</option>
+                      {COMMON_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3 pt-5">
+                    <input type="checkbox"
+                      className="w-3.5 h-3.5 accent-blue-600"
+                      checked={addRevalueAtPeriodEnd}
+                      onChange={e => setAddRevalueAtPeriodEnd(e.target.checked)} />
+                    <div>
+                      <p className="text-xs font-medium text-gray-900">Revalue at period end</p>
+                      <p className="text-xs text-gray-400">Apply FX revaluation on period close.</p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="flex gap-3 justify-end mt-2">
               <button type="button" onClick={() => { setShowAdd(false); setAddError(null); }}
                 disabled={addingGL} className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
@@ -732,6 +919,75 @@ export default function ChartOfAccountsPage() {
               </div>
             </div>
 
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 mt-4">Account Classification</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Classification</label>
+                <select
+                  value={editClassification}
+                  onChange={e => setEditClassification(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— Select classification —</option>
+                  <optgroup label="Income statement (SOCI)">
+                    {SOCI_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </optgroup>
+                  <optgroup label="Balance sheet (SOFP)">
+                    {SOFP_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </optgroup>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  Used by all modules to determine how this GL is treated automatically.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Foreign Currency</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="col-span-2 flex items-center gap-3">
+                <label className="relative w-9 h-5 cursor-pointer flex-shrink-0">
+                  <input type="checkbox" className="sr-only"
+                    checked={editIsForeignCurrency}
+                    onChange={e => setEditIsForeignCurrency(e.target.checked)} />
+                  <span className={`absolute inset-0 rounded-full transition-colors ${
+                    editIsForeignCurrency ? "bg-blue-600" : "bg-gray-300"
+                  }`} />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                    editIsForeignCurrency ? "translate-x-4" : ""
+                  }`} />
+                </label>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Foreign currency account</p>
+                  <p className="text-xs text-gray-500">Enable if this account holds balances in a foreign currency.</p>
+                </div>
+              </div>
+              {editIsForeignCurrency && (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Currency <span className="text-red-500">*</span></label>
+                    <select
+                      value={editForeignCurrencyCode}
+                      onChange={e => setEditForeignCurrencyCode(e.target.value)}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">— Select currency —</option>
+                      {COMMON_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3 pt-5">
+                    <input type="checkbox"
+                      className="w-3.5 h-3.5 accent-blue-600"
+                      checked={editRevalueAtPeriodEnd}
+                      onChange={e => setEditRevalueAtPeriodEnd(e.target.checked)} />
+                    <div>
+                      <p className="text-xs font-medium text-gray-900">Revalue at period end</p>
+                      <p className="text-xs text-gray-400">Apply FX revaluation on period close.</p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="flex gap-3 justify-end mt-2">
               <button type="button" onClick={() => setEditId(null)} disabled={savingEdit}
                 className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
@@ -752,13 +1008,15 @@ export default function ChartOfAccountsPage() {
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
             <h2 className="text-base font-semibold text-gray-900 mb-1">Dimension Requirements</h2>
             <p className="text-xs text-gray-500 mb-4">Set whether each dimension is required, optional, or not applicable for this GL account.</p>
-            {dimensions.length === 0 ? (
+            {dimModalLoading ? (
+              <div className="py-4 text-center text-sm text-gray-400">Loading requirements…</div>
+            ) : dimensions.length === 0 ? (
               <p className="text-sm text-gray-400 italic">No dimensions configured yet.</p>
             ) : (
               <div className="space-y-3 max-h-72 overflow-y-auto">
                 {dimensions.map((dim) => (
                   <div key={dim.id} className="flex items-center justify-between">
-                    <span className="text-sm text-gray-700">{dim.name}</span>
+                    <span className="text-sm text-gray-700">{dim.display_name || dim.name}</span>
                     <select
                       value={dimRequirements[dim.id] ?? "optional"}
                       onChange={(e) => setDimRequirements({ ...dimRequirements, [dim.id]: e.target.value })}
@@ -809,6 +1067,7 @@ export default function ChartOfAccountsPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">GL Name</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Group</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Classification</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
               </tr>
@@ -839,6 +1098,9 @@ export default function ChartOfAccountsPage() {
                       {gl.account_type === "PL" ? "SOCI" : gl.account_type === "BS" ? "SOFP" : gl.account_type}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-xs text-gray-500 hidden lg:table-cell">
+                    {gl.account_classification || "—"}
+                  </td>
                   <td className="px-4 py-3">
                     {gl.is_active ? (
                       <span className="text-xs text-green-700 bg-green-50 px-1.5 py-0.5 rounded">Active</span>
@@ -864,6 +1126,10 @@ export default function ChartOfAccountsPage() {
                           setEditTbMapping(gl.tb_mapping ?? "");
                           setEditGroupAccNum(gl.group_account_number ?? "");
                           setEditGroupAccName(gl.group_account_name ?? "");
+                          setEditClassification(gl.account_classification ?? "");
+                          setEditIsForeignCurrency(gl.is_foreign_currency ?? false);
+                          setEditForeignCurrencyCode(gl.foreign_currency_code ?? "");
+                          setEditRevalueAtPeriodEnd(gl.revalue_at_period_end ?? false);
                         }}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                       >
@@ -881,7 +1147,7 @@ export default function ChartOfAccountsPage() {
                       {gl.is_active && (
                         <button
                           type="button"
-                          onClick={() => handleDeactivate(gl.id, gl.gl_number)}
+                          onClick={() => handleDeactivate(gl)}
                           className="text-xs text-red-500 hover:text-red-700 font-medium"
                         >
                           Deactivate
@@ -893,6 +1159,148 @@ export default function ChartOfAccountsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      </>)}
+
+      {coaTab === "groups" && (
+        <div className="max-w-3xl">
+          <p className="text-sm text-gray-500 mb-4">
+            GL groups, subgroups, and sub-subgroups used in your Chart of Accounts.
+            These are defined when adding or editing GL accounts and appear here automatically.
+          </p>
+          {(() => {
+            const groups = new Map<string, Map<string, Set<string>>>();
+            accounts.filter(a => a.is_active && a.gl_group).forEach(a => {
+              if (!groups.has(a.gl_group!)) groups.set(a.gl_group!, new Map());
+              const subMap = groups.get(a.gl_group!)!;
+              if (a.gl_subgroup) {
+                if (!subMap.has(a.gl_subgroup)) subMap.set(a.gl_subgroup, new Set());
+                if (a.gl_sub_subgroup) subMap.get(a.gl_subgroup)!.add(a.gl_sub_subgroup);
+              }
+            });
+
+            if (groups.size === 0) {
+              return (
+                <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                  <i className="ti ti-folder text-gray-300" style={{ fontSize: 32 }} />
+                  <p className="text-sm text-gray-500 mt-2">No GL groups defined yet.</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Add GL group names when creating or editing GL accounts on the Accounts tab.
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-3">
+                {Array.from(groups.entries()).map(([group, subMap]) => (
+                  <div key={group} className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                      <p className="text-sm font-medium text-gray-800">{group}</p>
+                      <p className="text-xs text-gray-400">
+                        {accounts.filter(a => a.gl_group === group && a.is_active).length} GL accounts
+                      </p>
+                    </div>
+                    {subMap.size > 0 && (
+                      <div className="divide-y divide-gray-50">
+                        {Array.from(subMap.entries()).map(([sub, subSubs]) => (
+                          <div key={sub} className="px-4 py-2">
+                            <p className="text-xs font-medium text-gray-700">
+                              <span className="text-gray-300 mr-1.5">└</span>{sub}
+                            </p>
+                            {subSubs.size > 0 && Array.from(subSubs).map(ss => (
+                              <p key={ss} className="text-xs text-gray-500 pl-5 mt-0.5">
+                                <span className="text-gray-200 mr-1.5">└</span>{ss}
+                              </p>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {coaTab === "fs_mappings" && (
+        <div className="max-w-3xl">
+          <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-4">
+            <i className="ti ti-info-circle text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+            <p className="text-xs text-blue-700">
+              FS Head, FS Note, and TB Mapping for each GL account are set on the Accounts tab when editing a GL account.
+              Per-year versioning and audit lock workflow will be available in a future release (Period Management module).
+            </p>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Number</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Name</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Head</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Note</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">TB Mapping</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {accounts
+                  .filter(a => a.is_active && (a.fs_head || a.fs_note || a.tb_mapping))
+                  .map(gl => (
+                    <tr key={gl.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2.5 font-mono text-gray-600">{gl.gl_number}</td>
+                      <td className="px-4 py-2.5 text-gray-800">{gl.gl_name}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{gl.fs_head || "—"}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{gl.fs_note || "—"}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{gl.tb_mapping || "—"}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-400 mt-3">
+            Showing {accounts.filter(a => a.is_active && (a.fs_head || a.fs_note || a.tb_mapping)).length} of {accounts.filter(a => a.is_active).length} active GL accounts with FS mappings configured.
+          </p>
+        </div>
+      )}
+
+      {deactivateConfirmGl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40"
+            onClick={() => !deactivating && setDeactivateConfirmGl(null)} />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0">
+                <i className="ti ti-alert-triangle text-amber-500" style={{ fontSize: 18 }} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900 mb-1">
+                  Deactivate {deactivateConfirmGl.gl_number}?
+                </p>
+                <p className="text-xs text-gray-500">
+                  &quot;{deactivateConfirmGl.gl_name}&quot; will be deactivated and hidden from transaction entry.
+                  Existing posted transactions are not affected.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setDeactivateConfirmGl(null)}
+                disabled={deactivating}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button" onClick={confirmDeactivate} disabled={deactivating}
+                className="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
+                {deactivating
+                  ? <><i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} /> Deactivating…</>
+                  : <><i className="ti ti-eye-off" style={{ fontSize: 14 }} /> Deactivate</>
+                }
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
