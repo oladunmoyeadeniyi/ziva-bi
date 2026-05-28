@@ -993,12 +993,10 @@ export default function DimensionsPage() {
                         className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-white text-gray-600">
                         Reactivate
                       </button>
-                      {!STANDARD_CODES.has(dim.code) && (
-                        <button type="button" onClick={() => handleHardDelete(dim)}
-                          className="text-xs px-2.5 py-1 border border-red-200 rounded hover:bg-red-50 text-red-500">
-                          Delete permanently
-                        </button>
-                      )}
+                      <button type="button" onClick={() => handleHardDelete(dim)}
+                        className="text-xs px-2.5 py-1 border border-red-200 rounded hover:bg-red-50 text-red-500">
+                        Delete permanently
+                      </button>
                     </div>
                   </div>
                 ))}

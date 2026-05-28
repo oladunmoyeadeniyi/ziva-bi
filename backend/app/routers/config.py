@@ -511,11 +511,6 @@ async def hard_delete_dimension(
             detail="Dimension not found."
         )
 
-    if dim.code in STANDARD_DIMENSION_CODES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Standard dimensions cannot be permanently deleted. Use deactivate instead.",
-        )
 
     # Delete all values first (cascade would handle this but being explicit)
     await db.execute(
