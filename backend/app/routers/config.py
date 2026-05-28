@@ -1028,6 +1028,7 @@ async def download_coa_template(
 
     try:
         import openpyxl
+        from openpyxl.comments import Comment
         from openpyxl.styles import Alignment, Font, PatternFill, Protection
         from openpyxl.utils import get_column_letter
         from openpyxl.worksheet.datavalidation import DataValidation
@@ -1097,7 +1098,7 @@ async def download_coa_template(
     mandatory_headers: list[tuple[str, str, bool]] = [
         ("GL Number*", "Unique GL number e.g. 733060", True),
         ("GL Name*", "Full GL description", True),
-        ("Account Type*", "SOCI = P&L / SOFP = Balance Sheet", True),
+        ("Account Type*", "PL = Profit & Loss (SOCI — Statement of Comprehensive Income) | BS = Balance Sheet (SOFP — Statement of Financial Position)", True),
         ("Is Active", "Yes or No", False),
     ]
 
@@ -1146,11 +1147,29 @@ async def download_coa_template(
 
     _write_headers(ws1, [(h[0], h[2]) for h in all_headers])
 
+    # Add comment and data validation to Account Type header cell
+    at_col_idx = header_row.index("Account Type*") + 1  # 1-based
+    at_cell = ws1.cell(row=1, column=at_col_idx)
+    at_comment = Comment(
+        text=(
+            "Accepted values:\n"
+            "  PL  =  Profit & Loss\n"
+            "         (SOCI — Statement of Comprehensive Income)\n\n"
+            "  BS  =  Balance Sheet\n"
+            "         (SOFP — Statement of Financial Position)\n\n"
+            "Both PL/BS and SOCI/SOFP are accepted on upload."
+        ),
+        author="Ziva BI"
+    )
+    at_comment.width = 280
+    at_comment.height = 120
+    at_cell.comment = at_comment
+
     # Example data row (only fill columns present in this template)
     example_map: dict[str, str] = {
         "GL Number*": "733060",
         "GL Name*": "Marketing Expenses — Sponsoring",
-        "Account Type*": "SOCI",
+        "Account Type*": "PL",
         "Is Active": "Yes",
         "GL Group": "PL3 - Marketing",
         "GL Subgroup": "Sponsoring",
@@ -1175,10 +1194,22 @@ async def download_coa_template(
         cell.fill = opt_fill
 
     # Data validations on Sheet 1
-    # Account Type dropdown (always column C)
-    dv_type = DataValidation(type="list", formula1='"SOCI,SOFP"', allow_blank=False, showDropDown=False)
+    # Account Type dropdown — dynamic column, PL/BS values
+    at_col_letter = ws1.cell(row=1, column=at_col_idx).column_letter
+    dv_type = DataValidation(
+        type="list",
+        formula1='"PL,BS"',
+        allow_blank=False,
+        showDropDown=False,
+        showErrorMessage=True,
+        errorTitle="Invalid account type",
+        error="Please enter PL (Profit & Loss) or BS (Balance Sheet).",
+        showInputMessage=True,
+        promptTitle="Account Type",
+        prompt="PL = Profit & Loss (SOCI)\nBS = Balance Sheet (SOFP)",
+    )
+    dv_type.sqref = f"{at_col_letter}4:{at_col_letter}5000"
     ws1.add_data_validation(dv_type)
-    dv_type.sqref = "C4:C10000"
 
     # Is Active dropdown (always column D)
     dv_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
