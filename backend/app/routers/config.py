@@ -427,6 +427,9 @@ async def update_dimension(
     for field, value in update_data.items():
         setattr(dim, field, value)
 
+    if data.dimension_sources is not None:
+        dim.dimension_sources = data.dimension_sources
+
     await db.flush()
     await db.refresh(dim)
     return DimensionResponse.from_orm(dim)
@@ -603,6 +606,8 @@ async def get_dimension_inline_values(
                 "name": node.name,
                 "source": "org_structure",
                 "editable": False,
+                "parent_id": str(node.parent_id) if node.parent_id else None,
+                "node_id": str(node.id),
             })
 
     if "employee_master" in source_types or dim.value_source in ("employee_master", "hybrid"):

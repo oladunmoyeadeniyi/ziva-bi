@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,7 +8,10 @@ import { apiFetch } from "@/lib/api";
 
 interface DimensionSource {
   source_type: string;
-  filter?: { parent_code?: string } | null;
+  filter?: {
+    parent_code?: string;
+    excluded_codes?: string[];
+  } | null;
 }
 
 interface Dimension {
@@ -31,6 +34,14 @@ interface InlineValue {
   name: string;
   source: string;
   editable: boolean;
+  parent_id?: string | null;
+  node_id?: string;
+}
+
+interface CascadeTarget {
+  node: InlineValue;
+  children: InlineValue[];
+  action: "exclude" | "include";
 }
 
 interface OrgNode {
@@ -109,6 +120,7 @@ function DimensionsPage() {
 
   const initialTabParam = (searchParams.get("tab") as Tab) || "setup";
   const initialDimParam = searchParams.get("dim") || "";
+  const initialSubTabParam = searchParams.get("subtab") || "";
 
   const [activeTab, setActiveTab] = useState<Tab>(initialTabParam);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
@@ -150,7 +162,7 @@ function DimensionsPage() {
 
   // Values tab
   const [selectedDimForValues, setSelectedDimForValues] = useState<string>(initialDimParam);
-  const [valuesSubTab, setValuesSubTab] = useState<ValuesSubTab>("manual");
+  const [valuesSubTab, setValuesSubTab] = useState<string>(initialSubTabParam || "org_structure");
 
   // Inline values (merged auto + manual per dimension)
   const [inlineValues, setInlineValues] = useState<Record<string, InlineValue[]>>({});
@@ -166,6 +178,12 @@ function DimensionsPage() {
   const [deleteConfirmDim, setDeleteConfirmDim] = useState<Dimension | null>(null);
   const [deletingDim, setDeletingDim] = useState(false);
 
+  // Cascade exclusion modal
+  const [cascadeModal, setCascadeModal] = useState<CascadeTarget | null>(null);
+  const [cascadeSelectedChildren, setCascadeSelectedChildren] = useState<Set<string>>(new Set());
+  const [cascadeMode, setCascadeMode] = useState<"all" | "parent_only" | "choose" | null>(null);
+  const [savingExclusion, setSavingExclusion] = useState(false);
+
   const load = useCallback(async () => {
     if (!accessToken) return;
     try {
@@ -179,6 +197,9 @@ function DimensionsPage() {
       setDimensions(data);
       if (initialDimParam) {
         loadInlineValues(initialDimParam);
+        if (initialSubTabParam) {
+          setValuesSubTab(initialSubTabParam);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dimensions.");
@@ -443,6 +464,95 @@ function DimensionsPage() {
     } catch {
       setError("Bulk upload failed.");
     }
+  };
+
+  const buildTree = (nodes: InlineValue[]): (InlineValue & { children: InlineValue[] })[] => {
+    const nodeMap = new Map<string, InlineValue & { children: InlineValue[] }>();
+    const roots: (InlineValue & { children: InlineValue[] })[] = [];
+    nodes.forEach(n => nodeMap.set(n.node_id ?? n.id, { ...n, children: [] }));
+    nodes.forEach(n => {
+      const node = nodeMap.get(n.node_id ?? n.id)!;
+      if (n.parent_id && nodeMap.has(n.parent_id)) {
+        nodeMap.get(n.parent_id)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+    return roots;
+  };
+
+  const getExcludedCodes = (dim: Dimension): Set<string> => {
+    const orgSource = (dim.dimension_sources ?? []).find(s => s.source_type === "org_structure");
+    const excluded = orgSource?.filter?.excluded_codes ?? [];
+    return new Set<string>(excluded);
+  };
+
+  const saveExclusions = async (dim: Dimension, excludedCodes: string[]) => {
+    if (!accessToken) return;
+    setSavingExclusion(true);
+    try {
+      const newSources = (dim.dimension_sources ?? []).map(s => {
+        if (s.source_type === "org_structure") {
+          return { ...s, filter: { ...(s.filter ?? {}), excluded_codes: excludedCodes } };
+        }
+        return s;
+      });
+      await apiFetch(`/api/config/dimensions/${dim.id}`, {
+        method: "PATCH",
+        token: accessToken,
+        body: JSON.stringify({ dimension_sources: newSources }),
+      });
+      await load();
+    } catch {
+      setError("Failed to save exclusion.");
+    } finally {
+      setSavingExclusion(false);
+    }
+  };
+
+  const handleNodeCheck = (
+    dim: Dimension,
+    node: InlineValue & { children: (InlineValue & { children: InlineValue[] })[] },
+    allNodes: InlineValue[],
+    currentlyExcluded: Set<string>
+  ) => {
+    const isExcluded = currentlyExcluded.has(node.code);
+    const action: "exclude" | "include" = isExcluded ? "include" : "exclude";
+    const children = allNodes.filter(n => n.parent_id === (node.node_id ?? node.id));
+    if (children.length > 0) {
+      setCascadeModal({ node, children, action });
+      setCascadeMode(null);
+      setCascadeSelectedChildren(new Set(children.map(c => c.code)));
+    } else {
+      const newExcluded = new Set(currentlyExcluded);
+      if (isExcluded) newExcluded.delete(node.code);
+      else newExcluded.add(node.code);
+      saveExclusions(dim, Array.from(newExcluded));
+    }
+  };
+
+  const applyCascade = async (dim: Dimension, currentlyExcluded: Set<string>) => {
+    if (!cascadeModal || !cascadeMode) return;
+    const { node, action } = cascadeModal;
+    const newExcluded = new Set(currentlyExcluded);
+    if (action === "exclude") {
+      newExcluded.add(node.code);
+      if (cascadeMode === "all") {
+        cascadeModal.children.forEach(c => newExcluded.add(c.code));
+      } else if (cascadeMode === "choose") {
+        cascadeSelectedChildren.forEach(code => newExcluded.add(code));
+      }
+    } else {
+      newExcluded.delete(node.code);
+      if (cascadeMode === "all") {
+        cascadeModal.children.forEach(c => newExcluded.delete(c.code));
+      } else if (cascadeMode === "choose") {
+        cascadeSelectedChildren.forEach(code => newExcluded.delete(code));
+      }
+    }
+    await saveExclusions(dim, Array.from(newExcluded));
+    setCascadeModal(null);
+    setCascadeMode(null);
   };
 
   return (
@@ -1042,10 +1152,17 @@ function DimensionsPage() {
               onChange={e => {
                 const newDimId = e.target.value;
                 setSelectedDimForValues(newDimId);
+                setAddValueDimId(null);
+                setAddValueCode("");
+                setAddValueName("");
                 if (newDimId) {
                   const newDim = activeDims.find(d => d.id === newDimId);
-                  const srcs = newDim?.dimension_sources ?? [];
-                  setValuesSubTab(srcs[0]?.source_type ?? "manual");
+                  const newSources = newDim?.dimension_sources ?? [];
+                  const hasOrg = newSources.some(s => s.source_type === "org_structure");
+                  const hasEmp = newSources.some(s => s.source_type === "employee_master");
+                  if (hasOrg) setValuesSubTab("org_structure");
+                  else if (hasEmp) setValuesSubTab("employee_master");
+                  else setValuesSubTab("manual");
                   loadInlineValues(newDimId);
                 }
               }}
@@ -1121,7 +1238,7 @@ function DimensionsPage() {
                     </div>
                     {valuesSubTab === "org_structure" && (() => {
                       const returnUrl = encodeURIComponent(
-                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}`
+                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}&subtab=${valuesSubTab}`
                       );
                       return (
                         <Link href={`/dashboard/business/setup/organisation?tab=structure&returnTo=${returnUrl}`}
@@ -1133,7 +1250,7 @@ function DimensionsPage() {
                     })()}
                     {valuesSubTab === "employee_master" && (() => {
                       const returnUrl = encodeURIComponent(
-                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}`
+                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}&subtab=${valuesSubTab}`
                       );
                       return (
                         <Link href={`/dashboard/business/settings/employees?returnTo=${returnUrl}`}
@@ -1143,7 +1260,94 @@ function DimensionsPage() {
                         </Link>
                       );
                     })()}
-                    {currentVals.length > 0 ? (
+                    {valuesSubTab === "org_structure" ? (() => {
+                      const orgVals = vals.filter(v => v.source === "org_structure");
+                      const excludedCodes = getExcludedCodes(dim);
+                      const tree = buildTree(orgVals);
+
+                      const renderNode = (
+                        node: InlineValue & { children: (InlineValue & { children: InlineValue[] })[] },
+                        depth: number = 0
+                      ): React.ReactNode => {
+                        const isExcluded = excludedCodes.has(node.code);
+                        const hasChildren = node.children.length > 0;
+                        const someChildrenExcluded = hasChildren && node.children.some(c => excludedCodes.has(c.code));
+                        const allChildrenExcluded = hasChildren && node.children.every(c => excludedCodes.has(c.code));
+                        const isIndeterminate = hasChildren && someChildrenExcluded && !allChildrenExcluded && !isExcluded;
+                        return (
+                          <React.Fragment key={node.code}>
+                            <tr className={`hover:bg-gray-50 ${isExcluded ? "opacity-40" : ""}`}>
+                              <td className="px-3 py-2 w-8">
+                                <input
+                                  type="checkbox"
+                                  className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                                  checked={!isExcluded}
+                                  ref={el => { if (el) el.indeterminate = isIndeterminate; }}
+                                  onChange={() => handleNodeCheck(dim, node, orgVals, excludedCodes)}
+                                />
+                              </td>
+                              <td className="px-3 py-2 font-mono text-gray-600 text-xs">
+                                <span style={{ paddingLeft: `${depth * 16}px` }} className="flex items-center gap-1">
+                                  {depth > 0 && <span className="text-gray-300 mr-1">└</span>}
+                                  {node.code}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-gray-800 text-xs">{node.name}</td>
+                              <td className="px-3 py-2 text-xs">
+                                {isExcluded
+                                  ? <span className="text-[10px] bg-red-50 text-red-500 px-1.5 py-0.5 rounded">Excluded</span>
+                                  : <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded">Included</span>
+                                }
+                              </td>
+                            </tr>
+                            {node.children.map(child => renderNode(child as InlineValue & { children: (InlineValue & { children: InlineValue[] })[] }, depth + 1))}
+                          </React.Fragment>
+                        );
+                      };
+
+                      return (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs text-gray-500">
+                              {orgVals.length - excludedCodes.size} of {orgVals.length} cost centers included.
+                              {excludedCodes.size > 0 && (
+                                <button type="button" onClick={() => saveExclusions(dim, [])}
+                                  className="ml-2 text-blue-600 hover:text-blue-800">
+                                  Include all
+                                </button>
+                              )}
+                            </p>
+                            {savingExclusion && (
+                              <span className="text-xs text-gray-400 flex items-center gap-1">
+                                <i className="ti ti-loader-2 animate-spin" style={{ fontSize: 12 }} /> Saving…
+                              </span>
+                            )}
+                          </div>
+                          <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            <table className="min-w-full text-xs">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-3 py-2 w-8">
+                                    <input type="checkbox"
+                                      className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                                      checked={excludedCodes.size === 0}
+                                      ref={el => { if (el) el.indeterminate = excludedCodes.size > 0 && excludedCodes.size < orgVals.length; }}
+                                      onChange={e => saveExclusions(dim, e.target.checked ? [] : orgVals.map(v => v.code))}
+                                    />
+                                  </th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Code</th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Name</th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {tree.map(node => renderNode(node as InlineValue & { children: (InlineValue & { children: InlineValue[] })[] }))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })() : currentVals.length > 0 ? (
                       <div className="border border-gray-200 rounded-lg overflow-hidden">
                         <table className="min-w-full text-xs">
                           <thead className="bg-gray-50">
@@ -1303,6 +1507,118 @@ function DimensionsPage() {
                     <i className="ti ti-trash" style={{ fontSize: 14 }} />
                     Delete permanently
                   </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cascade exclusion modal */}
+      {cascadeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40"
+            onClick={() => !savingExclusion && setCascadeModal(null)} />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+                cascadeModal.action === "exclude" ? "bg-amber-50" : "bg-green-50"
+              }`}>
+                <i className={`ti ${cascadeModal.action === "exclude" ? "ti-minus text-amber-500" : "ti-plus text-green-500"}`}
+                  style={{ fontSize: 18 }} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900 mb-1">
+                  {cascadeModal.action === "exclude" ? "Exclude" : "Reinclude"} &quot;{cascadeModal.node.name}&quot;?
+                </p>
+                <p className="text-xs text-gray-500">
+                  This cost center has {cascadeModal.children.length} child{cascadeModal.children.length !== 1 ? "ren" : ""}.
+                  What would you like to {cascadeModal.action === "exclude" ? "exclude" : "reinclude"}?
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 mb-4">
+              <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                onClick={() => setCascadeMode("all")}>
+                <input type="radio" name="cascade" checked={cascadeMode === "all"}
+                  onChange={() => setCascadeMode("all")} className="accent-blue-600" />
+                <div>
+                  <p className="text-xs font-medium text-gray-900">
+                    {cascadeModal.action === "exclude" ? "Exclude" : "Reinclude"} parent and all children
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {cascadeModal.node.name} + {cascadeModal.children.map(c => c.name).join(", ")}
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                onClick={() => setCascadeMode("parent_only")}>
+                <input type="radio" name="cascade" checked={cascadeMode === "parent_only"}
+                  onChange={() => setCascadeMode("parent_only")} className="accent-blue-600" />
+                <div>
+                  <p className="text-xs font-medium text-gray-900">
+                    {cascadeModal.action === "exclude" ? "Exclude" : "Reinclude"} parent only
+                  </p>
+                  <p className="text-xs text-gray-400">Children are not affected</p>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                onClick={() => setCascadeMode("choose")}>
+                <input type="radio" name="cascade" checked={cascadeMode === "choose"}
+                  onChange={() => setCascadeMode("choose")} className="accent-blue-600" />
+                <div>
+                  <p className="text-xs font-medium text-gray-900">Let me choose specific children</p>
+                </div>
+              </label>
+            </div>
+
+            {cascadeMode === "choose" && (
+              <div className="mb-4 border border-gray-200 rounded-lg overflow-hidden">
+                {cascadeModal.children.map(child => (
+                  <label key={child.code}
+                    className="flex items-center gap-3 px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox"
+                      className="w-3.5 h-3.5 accent-blue-600"
+                      checked={cascadeSelectedChildren.has(child.code)}
+                      onChange={e => {
+                        setCascadeSelectedChildren(prev => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(child.code);
+                          else next.delete(child.code);
+                          return next;
+                        });
+                      }} />
+                    <span className="text-xs font-mono text-gray-500">{child.code}</span>
+                    <span className="text-xs text-gray-800">{child.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setCascadeModal(null)}
+                disabled={savingExclusion}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button"
+                onClick={() => {
+                  const dim = activeDims.find(d => d.id === selectedDimForValues);
+                  if (dim) applyCascade(dim, getExcludedCodes(dim));
+                }}
+                disabled={savingExclusion || !cascadeMode || (cascadeMode === "choose" && cascadeSelectedChildren.size === 0)}
+                className={`px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 flex items-center gap-1.5 ${
+                  cascadeModal.action === "exclude"
+                    ? "bg-amber-500 hover:bg-amber-600"
+                    : "bg-green-600 hover:bg-green-700"
+                }`}>
+                {savingExclusion ? (
+                  <><i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} /> Saving…</>
+                ) : (
+                  cascadeModal.action === "exclude" ? "Confirm exclusion" : "Confirm inclusion"
                 )}
               </button>
             </div>
