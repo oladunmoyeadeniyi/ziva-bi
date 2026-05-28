@@ -323,7 +323,6 @@ export default function BusinessLayout({
                   <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
                 )}
                 <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
-                <NavLink href="/dashboard/business/settings/expense-categories" label="Expense categories" icon="sitemap" />
                 {orgConfig?.use_multi_currency && (
                   <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />
                 )}
