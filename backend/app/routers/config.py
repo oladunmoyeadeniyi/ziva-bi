@@ -70,7 +70,7 @@ from app.models.master_data import (
     GLDimensionRequirement,
     TenantDimension,
 )
-from app.models.setup import OrgStructureNode
+from app.models.setup import OrgStructureNode, TenantOrgConfig
 from app.schemas.config import (
     BulkActionRequest,
     BulkActionResult,
@@ -978,16 +978,22 @@ async def upload_dimension_values(
 
 @router.get("/coa/template")
 async def download_coa_template(
+    include_group: bool = Query(default=True),
+    include_fs: bool = Query(default=True),
+    include_tb: bool = Query(default=True),
+    include_category: bool = Query(default=True),
+    include_classification: bool = Query(default=True),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """
-    Generate and download the full enterprise CoA upload template (.xlsx).
+    Generate and download the CoA upload template (.xlsx).
 
-    Sheet 1 — GL Accounts: identity, hierarchy, FS mappings, group reporting,
-    category mapping, and one dynamic dimension requirement column per active dimension.
-    Sheet 2 — Dimensions Setup: bulk upload dimension values alongside GL accounts.
-    Sheet 3 — Instructions: column-by-column guide with example rows.
+    Column selection is controlled by query parameters. Mandatory columns
+    (GL Number, GL Name, Account Type, Is Active) are always included.
+    Group Account columns only appear for subsidiary/branch tenants.
+    Sheet 1 rows 1-3 are protected with password "ziva".
+    Sheet 2 dimension name column uses a dropdown data validation.
     """
     tenant_id = _require_tenant(current_user)
 
@@ -1004,11 +1010,28 @@ async def download_coa_template(
     tenant_obj = tenant_result.scalar_one_or_none()
     tenant_name = tenant_obj.name if tenant_obj else "Company"
 
+    # Check if tenant is subsidiary — determines if group account columns show
+    org_result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+    is_subsidiary = False
+    if org and org.org_configuration:
+        structure_type = org.org_configuration.get("structure_type", "")
+        is_subsidiary = structure_type.lower() in ("subsidiary", "branch")
+
+    # Override include_group if not subsidiary
+    if not is_subsidiary:
+        include_group_cols = False
+    else:
+        include_group_cols = include_group
+
     try:
         import openpyxl
-        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.styles import Alignment, Font, PatternFill, Protection
         from openpyxl.utils import get_column_letter
         from openpyxl.worksheet.datavalidation import DataValidation
+        from openpyxl.worksheet.protection import SheetProtection
     except ImportError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1044,6 +1067,25 @@ async def download_coa_template(
             if font:
                 cell.font = font
 
+    def _protect_sheet(ws_target) -> None:
+        """Lock header/example/instruction rows (1-3), unlock data rows (4+)."""
+        for row_num in range(1, 4):
+            for cell in ws_target[row_num]:
+                cell.protection = Protection(locked=True)
+        for row in ws_target.iter_rows(min_row=4):
+            for cell in row:
+                cell.protection = Protection(locked=False)
+        ws_target.protection = SheetProtection(
+            sheet=True,
+            password="ziva",
+            selectLockedCells=True,
+            selectUnlockedCells=True,
+            sort=True,
+            autoFilter=True,
+            insertRows=True,
+            deleteRows=True,
+        )
+
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 1 — GL Accounts
     # ══════════════════════════════════════════════════════════════════════════
@@ -1051,93 +1093,113 @@ async def download_coa_template(
     ws1.title = "GL Accounts"
     ws1.freeze_panes = "A2"
 
-    gl_identity_headers: list[tuple[str, bool]] = [
-        ("GL Number*", True),
-        ("GL Name*", True),
-        ("Account Type*", True),   # SOCI / SOFP
-        ("Is Active", False),
+    # Always included (mandatory)
+    mandatory_headers: list[tuple[str, str, bool]] = [
+        ("GL Number*", "Unique GL number e.g. 733060", True),
+        ("GL Name*", "Full GL description", True),
+        ("Account Type*", "SOCI = P&L / SOFP = Balance Sheet", True),
+        ("Is Active", "Yes or No", False),
     ]
-    gl_hierarchy_headers: list[tuple[str, bool]] = [
-        ("GL Group", False),
-        ("GL Subgroup", False),
-        ("GL Sub-subgroup", False),
-    ]
-    fs_headers: list[tuple[str, bool]] = [
-        ("FS Head", False),
-        ("FS Note", False),
-        ("TB Mapping", False),
-    ]
-    group_headers: list[tuple[str, bool]] = [
-        ("Group Account Number", False),
-        ("Group Account Name", False),
-    ]
-    cat_headers: list[tuple[str, bool]] = [
-        ("Category", False),
-        ("Subcategory", False),
-        ("Is Default GL for Subcategory", False),
-    ]
-    dim_req_headers: list[tuple[str, bool]] = [(d.name, False) for d in dimensions]
 
-    all_s1_headers = (
-        gl_identity_headers + gl_hierarchy_headers + fs_headers +
-        group_headers + cat_headers + dim_req_headers
-    )
-    _write_headers(ws1, all_s1_headers)
+    # Optional columns — included based on parameters
+    optional_headers: list[tuple[str, str, bool]] = []
 
-    # Example data row
-    s1_example_base = [
-        "733060", "Marketing Expenses — Sponsoring", "SOCI", "Yes",
-        "PL3 - Marketing", "Sponsoring", "Sport Events",
-        "Operating Expenses", "Note 4 - Marketing", "OPEX",
-        "", "",
-        "Marketing", "Sponsoring", "No",
+    if include_fs:
+        optional_headers.extend([
+            ("GL Group", "Top-level GL grouping", False),
+            ("GL Subgroup", "Second-level grouping", False),
+            ("GL Sub-subgroup", "Third-level (optional)", False),
+            ("FS Head", "Financial statement face line", False),
+            ("FS Note", "FS note reference", False),
+        ])
+
+    if include_tb:
+        optional_headers.append(("TB Mapping", "Trial balance roll-up group", False))
+
+    if include_group_cols:
+        optional_headers.extend([
+            ("Group Account Number", "Parent group GL number (subsidiaries)", False),
+            ("Group Account Name", "Parent group GL name", False),
+        ])
+
+    if include_classification:
+        optional_headers.append(
+            ("Account Classification", "Account classification for module behaviour", False)
+        )
+
+    if include_category:
+        optional_headers.extend([
+            ("Category", "Expense category name", False),
+            ("Subcategory", "Subcategory name", False),
+            ("Is Default GL for Subcategory", "Yes if default GL for subcategory", False),
+        ])
+
+    # Dimension columns — always included
+    dim_headers: list[tuple[str, str, bool]] = [
+        (dim.display_name or dim.name, "Required / Optional / N/A", False)
+        for dim in dimensions
     ]
-    s1_dim_example = ["Optional"] * len(dim_req_headers)
-    _write_row(ws1, 2, s1_example_base + s1_dim_example, font=example_font)
+
+    all_headers = mandatory_headers + optional_headers + dim_headers
+    header_row = [h[0] for h in all_headers]
+    instruction_row = [h[1] for h in all_headers]
+
+    _write_headers(ws1, [(h[0], h[2]) for h in all_headers])
+
+    # Example data row (only fill columns present in this template)
+    example_map: dict[str, str] = {
+        "GL Number*": "733060",
+        "GL Name*": "Marketing Expenses — Sponsoring",
+        "Account Type*": "SOCI",
+        "Is Active": "Yes",
+        "GL Group": "PL3 - Marketing",
+        "GL Subgroup": "Sponsoring",
+        "GL Sub-subgroup": "Sport Events",
+        "FS Head": "Operating Expenses",
+        "FS Note": "Note 4 - Marketing",
+        "TB Mapping": "OPEX",
+        "Group Account Number": "",
+        "Group Account Name": "",
+        "Account Classification": "Operating expense",
+        "Category": "Marketing",
+        "Subcategory": "Sponsoring",
+        "Is Default GL for Subcategory": "No",
+    }
+    example_values = [example_map.get(h, "Optional" if "(Dimension)" not in h else "Optional") for h in header_row]
+    _write_row(ws1, 2, example_values, font=example_font)
 
     # Instruction sub-row
-    s1_instructions = [
-        "Unique GL number e.g. 733060",
-        "Full GL description",
-        "SOCI = P&L / SOFP = Balance Sheet",
-        "Yes or No",
-        "Top-level GL grouping",
-        "Second-level grouping",
-        "Third-level (optional)",
-        "Financial statement face line",
-        "FS note reference",
-        "Trial balance roll-up group",
-        "Parent group GL number (subsidiaries)",
-        "Parent group GL name",
-        "Expense category name",
-        "Subcategory name",
-        "Yes if this is the default GL for subcategory",
-    ]
-    s1_dim_instructions = ["Required / Optional / N/A"] * len(dim_req_headers)
-    all_s1_instructions = s1_instructions + s1_dim_instructions
-    for ci, instr in enumerate(all_s1_instructions, 1):
+    for ci, instr in enumerate(instruction_row, 1):
         cell = ws1.cell(row=3, column=ci, value=instr)
         cell.font = instr_font
         cell.fill = opt_fill
 
     # Data validations on Sheet 1
+    # Account Type dropdown (always column C)
     dv_type = DataValidation(type="list", formula1='"SOCI,SOFP"', allow_blank=False, showDropDown=False)
     ws1.add_data_validation(dv_type)
     dv_type.sqref = "C4:C10000"
 
+    # Is Active dropdown (always column D)
     dv_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
     ws1.add_data_validation(dv_active)
     dv_active.sqref = "D4:D10000"
 
-    dv_default_gl = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
-    ws1.add_data_validation(dv_default_gl)
-    # Column index for "Is Default GL for Subcategory"
-    default_gl_col = len(gl_identity_headers + gl_hierarchy_headers + fs_headers + group_headers + cat_headers)
-    dv_default_gl.sqref = f"{get_column_letter(default_gl_col)}4:{get_column_letter(default_gl_col)}10000"
+    # Is Default GL for Subcategory dropdown (dynamic column)
+    if include_category:
+        try:
+            default_gl_idx = header_row.index("Is Default GL for Subcategory") + 1
+            dv_default_gl = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
+            ws1.add_data_validation(dv_default_gl)
+            col_letter = get_column_letter(default_gl_idx)
+            dv_default_gl.sqref = f"{col_letter}4:{col_letter}10000"
+        except ValueError:
+            pass
 
-    dim_start_col = len(all_s1_headers) - len(dim_req_headers) + 1
-    for i in range(len(dim_req_headers)):
-        col_letter = get_column_letter(dim_start_col + i)
+    # Dimension requirement dropdowns
+    dim_start_idx = len(mandatory_headers) + len(optional_headers) + 1
+    for i in range(len(dim_headers)):
+        col_letter = get_column_letter(dim_start_idx + i)
         dv_dim = DataValidation(
             type="list",
             formula1='"Required,Optional,N/A"',
@@ -1146,6 +1208,9 @@ async def download_coa_template(
         )
         ws1.add_data_validation(dv_dim)
         dv_dim.sqref = f"{col_letter}4:{col_letter}10000"
+
+    # Protect Sheet 1 — lock rows 1-3, unlock data rows
+    _protect_sheet(ws1)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 2 — Dimensions Setup
@@ -1164,8 +1229,9 @@ async def download_coa_template(
     ]
     _write_headers(ws2, s2_headers)
 
+    first_dim_display = (dimensions[0].display_name or dimensions[0].name) if dimensions else "Cost Center"
     s2_example = [
-        dimensions[0].name if dimensions else "Cost Center",
+        first_dim_display,
         "NG_FI",
         "Nigeria Finance",
         "cost_center",
@@ -1193,6 +1259,25 @@ async def download_coa_template(
     ws2.add_data_validation(dv_s2_active)
     dv_s2_active.sqref = "G4:G10000"
 
+    # Dimension name dropdown in Sheet 2, column A
+    if dimensions:
+        dim_names = [dim.display_name or dim.name for dim in dimensions]
+        dim_names_formula = '","'.join(dim_names)
+        dv_dim_name = DataValidation(
+            type="list",
+            formula1=f'"{dim_names_formula}"',
+            allow_blank=False,
+            showDropDown=False,
+            showErrorMessage=True,
+            errorTitle="Invalid dimension",
+            error="Please select a dimension name from the list.",
+        )
+        dv_dim_name.sqref = "A4:A1000"
+        ws2.add_data_validation(dv_dim_name)
+
+    # Protect Sheet 2 — lock rows 1-3, unlock data rows
+    _protect_sheet(ws2)
+
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 3 — Instructions
     # ══════════════════════════════════════════════════════════════════════════
@@ -1212,10 +1297,11 @@ async def download_coa_template(
         ["TB Mapping", "No", "Trial balance grouping this GL rolls up to (e.g. OPEX, CAPEX, Revenue)."],
         ["Group Account Number", "No", "Parent group's equivalent GL number (for subsidiaries reporting to a group)."],
         ["Group Account Name", "No", "Parent group's GL name."],
+        ["Account Classification", "No", "Account classification used by Tax Engine, AP, AR, Payroll, Reporting."],
         ["Category", "No", "Maps this GL to a top-level expense category (e.g. Travel Cost)."],
         ["Subcategory", "No", "Maps this GL to a subcategory (e.g. Hotel)."],
         ["Is Default GL for Subcategory", "No", "Yes if this GL is pre-selected when the subcategory is chosen by an employee."],
-        *[(f"{d.name} (Dimension)", "No", f"Requirement for dimension '{d.name}'. Values: Required / Optional / N/A. Empty = Optional.") for d in dimensions],
+        *[(f"{dim.display_name or dim.name} (Dimension)", "No", f"Requirement for dimension '{dim.display_name or dim.name}'. Values: Required / Optional / N/A. Empty = Optional.") for dim in dimensions],
         ["", "", ""],
         ["--- DIMENSIONS SETUP (Sheet 2) ---", "", ""],
         ["Dimension Name", "Yes", "Must exactly match one of your configured dimension names."],
@@ -1230,6 +1316,7 @@ async def download_coa_template(
         ["Duplicate GL numbers", "", "If a GL number already exists, its record will be updated (not duplicated)."],
         ["Sheet 2 is processed first", "", "Dimension values in Sheet 2 are imported before GL accounts, so category/dimension references in Sheet 1 will resolve correctly."],
         ["Required columns marked *", "", "Required columns have a light blue header. Optional columns have a light grey header."],
+        ["Locked rows", "", "Rows 1-3 (header, example, instructions) are protected. Enter your data from row 4 onwards."],
     ]
     ws3.column_dimensions["A"].width = 35
     ws3.column_dimensions["B"].width = 12

@@ -120,7 +120,25 @@ export default function ChartOfAccountsPage() {
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+  const [isSubsidiary, setIsSubsidiary] = useState(false);
+
+  // Template column selector
+  const [showTemplateOptions, setShowTemplateOptions] = useState(false);
+  const [templateCols, setTemplateCols] = useState({
+    include_group: true,
+    include_fs: true,
+    include_tb: true,
+    include_category: true,
+    include_classification: true,
+  });
+
+  // Multi-column filters
+  const [filterGL, setFilterGL] = useState("");
+  const [filterName, setFilterName] = useState("");
+  const [filterGroup, setFilterGroup] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterClassification, setFilterClassification] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -198,7 +216,7 @@ export default function ChartOfAccountsPage() {
     if (!accessToken) return;
     try {
       const [accs, dims] = await Promise.all([
-        apiFetch<GLAccount[]>(`/api/config/coa?search=${encodeURIComponent(search)}&active_only=false`, { token: accessToken }),
+        apiFetch<GLAccount[]>(`/api/config/coa?active_only=false`, { token: accessToken }),
         apiFetch<Dimension[]>("/api/config/dimensions", { token: accessToken }),
       ]);
       setAccounts(accs);
@@ -209,21 +227,17 @@ export default function ChartOfAccountsPage() {
     } finally {
       setIsLoading(false);
     }
+    // Check subsidiary status
+    try {
+      const orgConfig = await apiFetch<{ org_configuration?: { structure_type?: string } }>(
+        "/api/setup/org", { token: accessToken! }
+      );
+      const structureType = orgConfig.org_configuration?.structure_type ?? "";
+      setIsSubsidiary(["subsidiary", "branch"].includes(structureType.toLowerCase()));
+    } catch {}
   };
 
   useEffect(() => { load(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSearch = async () => {
-    if (!accessToken) return;
-    try {
-      const accs = await apiFetch<GLAccount[]>(
-        `/api/config/coa?search=${encodeURIComponent(search)}&active_only=false`,
-        { token: accessToken }
-      );
-      setAccounts(accs);
-      setSelectedIds(new Set());
-    } catch {}
-  };
 
   const handleAdd = async () => {
     if (!accessToken || !addGL.trim() || !addName.trim()) return;
@@ -349,9 +363,17 @@ export default function ChartOfAccountsPage() {
   const handleDownloadTemplate = async () => {
     if (!accessToken) return;
     setDownloadingTemplate(true);
+    setShowTemplateOptions(false);
     try {
       const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const res = await fetch(`${BASE}/api/config/coa/template`, {
+      const params = new URLSearchParams({
+        include_group: templateCols.include_group.toString(),
+        include_fs: templateCols.include_fs.toString(),
+        include_tb: templateCols.include_tb.toString(),
+        include_category: templateCols.include_category.toString(),
+        include_classification: templateCols.include_classification.toString(),
+      });
+      const res = await fetch(`${BASE}/api/config/coa/template?${params}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!res.ok) throw new Error("Template download failed.");
@@ -383,10 +405,10 @@ export default function ChartOfAccountsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === accounts.length) {
+    if (selectedIds.size === filteredAccounts.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(accounts.map((a) => a.id)));
+      setSelectedIds(new Set(filteredAccounts.map((a) => a.id)));
     }
   };
 
@@ -455,6 +477,23 @@ export default function ChartOfAccountsPage() {
     }
   };
 
+  const filteredAccounts = accounts
+    .filter(a => {
+      if (filterGL && !a.gl_number.toLowerCase().includes(filterGL.toLowerCase())) return false;
+      if (filterName && !a.gl_name.toLowerCase().includes(filterName.toLowerCase())) return false;
+      if (filterGroup && !(a.gl_group ?? "").toLowerCase().includes(filterGroup.toLowerCase())) return false;
+      if (filterType && a.account_type !== filterType) return false;
+      if (filterClassification && !(a.account_classification ?? "").toLowerCase().includes(filterClassification.toLowerCase())) return false;
+      if (filterStatus === "active" && !a.is_active) return false;
+      if (filterStatus === "inactive" && a.is_active) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.is_active && !b.is_active) return -1;
+      if (!a.is_active && b.is_active) return 1;
+      return a.gl_number.localeCompare(b.gl_number);
+    });
+
   if (isLoading) {
     return (
       <div className="px-6 py-8 space-y-3">
@@ -481,11 +520,10 @@ export default function ChartOfAccountsPage() {
         <div className="flex gap-2 flex-wrap justify-end">
           <button
             type="button"
-            onClick={handleDownloadTemplate}
-            disabled={downloadingTemplate}
-            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+            onClick={() => setShowTemplateOptions(true)}
+            className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
           >
-            {downloadingTemplate ? "…" : "Download Template"}
+            Download Template
           </button>
           <button
             type="button"
@@ -575,27 +613,52 @@ export default function ChartOfAccountsPage() {
       )}
 
       {coaTab === "accounts" && (<>
-      {/* Search */}
-      <div className="flex gap-2 mb-4">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          placeholder="Search by GL number or name…"
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="button"
-          onClick={handleSearch}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-        >
-          Search
-        </button>
-        {search && (
-          <button type="button" onClick={() => { setSearch(""); load(); }} className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
-            Clear
-          </button>
+      {/* Filters */}
+      <div className="space-y-2 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+          <input type="text" value={filterGL}
+            onChange={e => setFilterGL(e.target.value)}
+            placeholder="GL number…"
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <input type="text" value={filterName}
+            onChange={e => setFilterName(e.target.value)}
+            placeholder="GL name…"
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <input type="text" value={filterGroup}
+            onChange={e => setFilterGroup(e.target.value)}
+            placeholder="Group…"
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <select value={filterType} onChange={e => setFilterType(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">All types</option>
+            <option value="SOCI">SOCI</option>
+            <option value="SOFP">SOFP</option>
+          </select>
+          <input type="text" value={filterClassification}
+            onChange={e => setFilterClassification(e.target.value)}
+            placeholder="Classification…"
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "all" | "active" | "inactive")}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="all">All statuses</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+          </select>
+        </div>
+        {(filterGL || filterName || filterGroup || filterType || filterClassification || filterStatus !== "all") && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">
+              {filteredAccounts.length} of {accounts.length} accounts
+            </span>
+            <button type="button"
+              onClick={() => {
+                setFilterGL(""); setFilterName(""); setFilterGroup("");
+                setFilterType(""); setFilterClassification(""); setFilterStatus("all");
+              }}
+              className="text-xs text-blue-600 hover:text-blue-800">
+              Clear filters
+            </button>
+          </div>
         )}
       </div>
 
@@ -1058,7 +1121,7 @@ export default function ChartOfAccountsPage() {
                 <th className="px-3 py-3 w-8">
                   <input
                     type="checkbox"
-                    checked={selectedIds.size === accounts.length && accounts.length > 0}
+                    checked={selectedIds.size === filteredAccounts.length && filteredAccounts.length > 0}
                     onChange={toggleSelectAll}
                     className="rounded border-gray-300"
                   />
@@ -1073,7 +1136,7 @@ export default function ChartOfAccountsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {accounts.map((gl) => (
+              {filteredAccounts.map((gl) => (
                 <tr key={gl.id} className={`hover:bg-gray-50 ${!gl.is_active ? "opacity-50" : ""} ${selectedIds.has(gl.id) ? "bg-blue-50" : ""}`}>
                   <td className="px-3 py-3 w-8">
                     <input
@@ -1264,6 +1327,82 @@ export default function ChartOfAccountsPage() {
           <p className="text-xs text-gray-400 mt-3">
             Showing {accounts.filter(a => a.is_active && (a.fs_head || a.fs_note || a.tb_mapping)).length} of {accounts.filter(a => a.is_active).length} active GL accounts with FS mappings configured.
           </p>
+        </div>
+      )}
+
+      {showTemplateOptions && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40"
+            onClick={() => setShowTemplateOptions(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-1">Download CoA Template</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Uncheck columns you don&apos;t need. Mandatory columns are always included.
+            </p>
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2">
+              Always included
+            </p>
+            {["GL Number", "GL Name", "Account Type", "Is Active"].map(col => (
+              <div key={col} className="flex items-center gap-2 py-1.5 opacity-50">
+                <input type="checkbox" checked disabled className="w-3.5 h-3.5 accent-blue-600" />
+                <span className="text-xs text-gray-600">{col}</span>
+                <span className="text-[10px] text-gray-400 ml-auto">Mandatory</span>
+              </div>
+            ))}
+
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2 mt-4">
+              Optional columns
+            </p>
+            {[
+              { key: "include_fs" as const,             label: "GL Hierarchy + FS Mappings",   desc: "GL Group, Subgroup, FS Head, FS Note" },
+              { key: "include_tb" as const,             label: "TB Mapping",                    desc: "Trial balance roll-up group" },
+              { key: "include_classification" as const, label: "Account Classification",         desc: "For module-level behaviour" },
+              { key: "include_category" as const,       label: "Expense Category",               desc: "Category, Subcategory, Default GL" },
+            ].map(opt => (
+              <label key={opt.key}
+                className="flex items-start gap-2 py-1.5 cursor-pointer hover:bg-gray-50 rounded px-1">
+                <input type="checkbox" className="w-3.5 h-3.5 accent-blue-600 mt-0.5 flex-shrink-0"
+                  checked={templateCols[opt.key]}
+                  onChange={e => setTemplateCols(prev => ({ ...prev, [opt.key]: e.target.checked }))} />
+                <div>
+                  <p className="text-xs font-medium text-gray-800">{opt.label}</p>
+                  <p className="text-[11px] text-gray-400">{opt.desc}</p>
+                </div>
+              </label>
+            ))}
+
+            {isSubsidiary && (
+              <label className="flex items-start gap-2 py-1.5 cursor-pointer hover:bg-gray-50 rounded px-1">
+                <input type="checkbox" className="w-3.5 h-3.5 accent-blue-600 mt-0.5 flex-shrink-0"
+                  checked={templateCols.include_group}
+                  onChange={e => setTemplateCols(prev => ({ ...prev, include_group: e.target.checked }))} />
+                <div>
+                  <p className="text-xs font-medium text-gray-800">Group Account Mapping</p>
+                  <p className="text-[11px] text-gray-400">Group Account Number and Name (subsidiary reporting)</p>
+                </div>
+              </label>
+            )}
+
+            <p className="text-[11px] text-gray-400 mt-3 italic">
+              Dimension columns are always included based on your configured dimensions.
+            </p>
+
+            <div className="flex gap-2 justify-end mt-4">
+              <button type="button" onClick={() => setShowTemplateOptions(false)}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="button" onClick={handleDownloadTemplate}
+                disabled={downloadingTemplate}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
+                {downloadingTemplate
+                  ? <><i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} /> Generating…</>
+                  : <><i className="ti ti-download" style={{ fontSize: 14 }} /> Download</>
+                }
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
