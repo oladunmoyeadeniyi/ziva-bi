@@ -1308,6 +1308,37 @@ async def patch_currencies(
     return await get_currencies(current_user=current_user, db=db)
 
 
+@router.post("/currencies/fx-rates")
+async def add_fx_rate(
+    data: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Add a single FX rate entry to the rate history."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+    fx = await _get_or_create_fx(tenant_id, db)
+
+    existing_rates = fx.fx_rates or []
+    new_rate = {
+        "id": str(uuid.uuid4()),
+        "from_currency": data.get("from_currency"),
+        "to_currency": data.get("to_currency"),
+        "rate_type": data.get("rate_type", "mid"),
+        "rate": data.get("rate"),
+        "source": data.get("source", "manual"),
+        "effective_date": data.get("effective_date"),
+        "period": data.get("period"),
+        "entered_by": current_user.email,
+        "entered_at": datetime.utcnow().isoformat(),
+        "proof_required": data.get("proof_required", False),
+        "proof_reference": data.get("proof_reference"),
+    }
+    fx.fx_rates = existing_rates + [new_rate]
+    await db.commit()
+    return new_rate
+
+
 # ── Tax & Statutory ───────────────────────────────────────────────────────────
 
 @router.get("/tax", response_model=TaxConfigResponse)
