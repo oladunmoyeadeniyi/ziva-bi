@@ -6,6 +6,11 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
+interface DimensionSource {
+  source_type: string;
+  filter?: { parent_code?: string } | null;
+}
+
 interface Dimension {
   id: string;
   name: string;
@@ -16,6 +21,7 @@ interface Dimension {
   value_source: string;
   description?: string;
   icon?: string;
+  dimension_sources?: DimensionSource[];
 }
 
 interface OrgNode {
@@ -39,16 +45,32 @@ function generateCode(name: string): string {
 }
 
 type Tab = "setup" | "values";
-type AddStep = "source" | "org" | "employee" | "hybrid" | "manual";
+type AddStep = "name" | "sources" | "review";
 type ValuesSubTab = "employee" | "manual";
+
+const STANDARD_CODES = new Set([
+  "cost_center", "material", "statistical_order", "statistical_internal_order",
+  "real_order", "real_internal_order", "customer_order", "employee",
+  "brand", "region", "channel", "project",
+]);
+
+const STANDARD_OPTIONS = [
+  { value: "material",  icon: "barcode",        name: "Material / Product (SKU)", code: "material",               desc: "Tag transactions with product or SKU codes.",          sources: [{ source_type: "product_master", filter: null }] },
+  { value: "brand",     icon: "award",           name: "Brand",                    code: "brand",                  desc: "Tag costs and revenues by brand.",                     sources: [] },
+  { value: "region",    icon: "map-pin",         name: "Region / Geography",       code: "region",                 desc: "Tag costs by geographical region or zone.",            sources: [] },
+  { value: "channel",   icon: "arrows-split",    name: "Sales channel",            code: "channel",                desc: "Track revenue and costs by sales channel.",            sources: [{ source_type: "org_structure", filter: null }] },
+  { value: "project",   icon: "clipboard-list",  name: "Project",                  code: "project",                desc: "Track costs by project or initiative.",                sources: [] },
+  { value: "employee",  icon: "users",           name: "Employee",                 code: "employee",               desc: "Tag transactions by employee.",                        sources: [{ source_type: "employee_master", filter: null }] },
+];
 
 const SOURCE_LABELS: Record<string, string> = {
   manual: "Manual",
-  org_structure: "Auto — org structure",
-  employee_master: "Auto — employee master",
+  org_structure: "Org structure",
+  employee_master: "Employee master",
   hybrid: "Hybrid — auto + manual",
   customer_order: "Manual now · Auto when AR active",
   product_master: "Auto — product master (future)",
+  customer_master: "Customer master (future)",
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -64,13 +86,10 @@ const DIM_ICONS: Record<string, string> = {
   cost_center: "building-community",
   material: "barcode",
   statistical_order: "git-branch",
+  statistical_internal_order: "git-branch",
   real_order: "git-commit",
+  real_internal_order: "git-commit",
   customer_order: "users-group",
-};
-
-const HYBRID_SOURCE_INFO: Record<string, { icon: string; label: string; desc: string }> = {
-  employee_master: { icon: "users", label: "Employee codes", desc: "Auto-synced from employee master" },
-  org_structure: { icon: "building-community", label: "Cost center codes", desc: "Auto-synced from org structure" },
 };
 
 export default function DimensionsPage() {
@@ -83,24 +102,21 @@ export default function DimensionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  // Add form state
+  // Add form state — 3-step flow
   const [showAdd, setShowAdd] = useState(false);
-  const [addStep, setAddStep] = useState<AddStep>("source");
-  const [addSource, setAddSource] = useState<string>("");
-  const [addName, setAddName] = useState("");
-  const [addCode, setAddCode] = useState("");
-  const [addRequired, setAddRequired] = useState(true);
-  const [addDescription, setAddDescription] = useState("");
-  const [addingDim, setAddingDim] = useState(false);
+  const [addStep, setAddStep] = useState<AddStep>("name");
+  const [addStdValue, setAddStdValue] = useState<string>("");
+  const [addCustomName, setAddCustomName] = useState<string>("");
+  const [addCode, setAddCode] = useState<string>("");
+  const [addDescription, setAddDescription] = useState<string>("");
+  const [addRequired, setAddRequired] = useState<boolean>(true);
+  const [addSources, setAddSources] = useState<DimensionSource[]>([]);
+  const [addOrgFilter, setAddOrgFilter] = useState<string>("");
+  const [addingDim, setAddingDim] = useState<boolean>(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  // Hybrid source selection
-  const [hybridSources, setHybridSources] = useState<Set<string>>(new Set(["employee_master"]));
-
-  // Org structure preview for add form
-  const [orgNodes, setOrgNodes] = useState<OrgNode[]>([]);
-  const [orgNodesLoading, setOrgNodesLoading] = useState(false);
-  const [selectedOrgNodes, setSelectedOrgNodes] = useState<Set<string>>(new Set());
+  // Org structure preview nodes for source scope filter
+  const [orgPreviewNodes, setOrgPreviewNodes] = useState<OrgNode[]>([]);
 
   // Edit state
   const [editId, setEditId] = useState<string | null>(null);
@@ -125,7 +141,6 @@ export default function DimensionsPage() {
   const load = useCallback(async () => {
     if (!accessToken) return;
     try {
-      // Seed standard dimensions and fix value_source for legacy rows
       await apiFetch("/api/config/dimensions/seed-standard", {
         method: "POST",
         token: accessToken,
@@ -176,64 +191,52 @@ export default function DimensionsPage() {
     });
   };
 
-  const pickSource = async (src: string) => {
-    setAddSource(src);
-    if (src === "org_structure") {
-      setAddStep("org");
-      setOrgNodesLoading(true);
-      try {
-        const nodes = await apiFetch<OrgNode[]>(
-          "/api/config/dimensions/org-structure-preview",
-          { token: accessToken! }
-        );
-        setOrgNodes(nodes);
-        setSelectedOrgNodes(new Set(nodes.map(n => n.id)));
-      } catch {
-        setOrgNodes([]);
-      } finally {
-        setOrgNodesLoading(false);
-      }
-    } else if (src === "employee_master") {
-      setAddName("Employee");
-      setAddCode("employee");
-      setAddStep("employee");
-    } else if (src === "hybrid") {
-      setAddStep("hybrid");
-    } else {
-      setAddStep("manual");
-    }
-  };
-
   const handleAdd = async () => {
     if (!accessToken) return;
     setAddingDim(true);
     setAddError(null);
     try {
+      const name = addStdValue === "__custom__"
+        ? addCustomName.trim()
+        : STANDARD_OPTIONS.find(o => o.value === addStdValue)?.name ?? addCustomName.trim();
+
+      const sources = addSources.map(s =>
+        s.source_type === "org_structure" && addOrgFilter
+          ? { ...s, filter: { parent_code: addOrgFilter } }
+          : s
+      );
+
+      const valueSource = sources.length === 0
+        ? "manual"
+        : sources.length === 1
+          ? sources[0].source_type
+          : "hybrid";
+
       await apiFetch("/api/config/dimensions", {
         method: "POST",
         token: accessToken,
         body: JSON.stringify({
-          name: addName.trim(),
-          code: addCode.trim() || generateCode(addName),
+          name,
+          code: addCode.trim() || generateCode(name),
           is_required: addRequired,
-          value_source: addSource,
-          description: addDescription.trim() || (
-            addSource === "hybrid"
-              ? `hybrid:${Array.from(hybridSources).join(",")}`
-              : undefined
-          ),
+          value_source: valueSource,
+          dimension_sources: sources,
+          description: addDescription.trim() || undefined,
         }),
       });
       setShowAdd(false);
-      setAddStep("source");
-      setAddSource("");
-      setAddName("");
+      setAddStep("name");
+      setAddStdValue("");
+      setAddCustomName("");
       setAddCode("");
+      setAddSources([]);
+      setAddOrgFilter("");
       setAddDescription("");
       setAddError(null);
       await load();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to create dimension.");
+      setAddStep("review");
     } finally {
       setAddingDim(false);
     }
@@ -264,17 +267,39 @@ export default function DimensionsPage() {
   const handleToggle = async (dim: Dimension) => {
     if (!accessToken) return;
     try {
-      await apiFetch(`/api/config/dimensions/${dim.id}`, {
-        method: "DELETE",
-        token: accessToken,
-      });
+      if (dim.is_active) {
+        await apiFetch(`/api/config/dimensions/${dim.id}`, {
+          method: "DELETE",
+          token: accessToken,
+        });
+      } else {
+        await apiFetch(`/api/config/dimensions/${dim.id}/reactivate`, {
+          method: "PATCH",
+          token: accessToken,
+        });
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update dimension.");
     }
   };
 
+  const handleHardDelete = async (dim: Dimension) => {
+    if (!accessToken) return;
+    if (!confirm(`Permanently delete "${dim.name}" and all its values? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/api/config/dimensions/${dim.id}/permanent`, {
+        method: "DELETE",
+        token: accessToken,
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete dimension.");
+    }
+  };
+
   const activeDims = dimensions.filter(d => d.is_active);
+  const inactiveDims = dimensions.filter(d => !d.is_active);
 
   const handleMoveUp = async (dim: Dimension, index: number) => {
     if (!accessToken || index === 0) return;
@@ -401,272 +426,230 @@ export default function DimensionsPage() {
         <div>
           <div className="flex items-start justify-between gap-4 mb-4">
             <p className="text-xs text-gray-500">Configure dimensions before uploading your Chart of Accounts. Active dimensions appear as columns in the CoA template.</p>
-            <button type="button" onClick={() => { setShowAdd(v => !v); setAddStep("source"); setAddSource(""); }}
+            <button type="button"
+              onClick={() => {
+                setShowAdd(v => !v);
+                setAddStep("name");
+                setAddStdValue("");
+                setAddCustomName("");
+                setAddCode("");
+                setAddSources([]);
+                setAddOrgFilter("");
+                setAddDescription("");
+                setAddError(null);
+              }}
               className="flex items-center gap-1.5 text-sm px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50 flex-shrink-0">
               <i className="ti ti-plus" style={{ fontSize: 13 }} />
               Add dimension
             </button>
           </div>
 
-          {/* Source-first add form */}
+          {/* 3-step add form */}
           {showAdd && (
             <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-xl">
 
-              {/* Step 1: Pick source */}
-              {addStep === "source" && (
+              {/* Step 1: Name */}
+              {addStep === "name" && (
                 <div>
                   <p className="text-sm font-medium text-gray-800 mb-1">New dimension</p>
-                  <p className="text-xs text-gray-500 mb-3">Step 1 — Where do the values for this dimension come from?</p>
-                  <div className="grid grid-cols-2 gap-2 mb-3">
-                    {[
-                      { src: "org_structure", icon: "building-community", label: "Org structure", desc: "Auto-sync cost centers from your org tree" },
-                      { src: "employee_master", icon: "users", label: "Employee master", desc: "Auto-sync all active employee codes" },
-                      { src: "hybrid", icon: "git-branch", label: "Hybrid", desc: "One or more auto-sources + manual codes" },
-                      { src: "manual", icon: "pencil", label: "Manual", desc: "Enter values manually or upload in bulk" },
-                    ].map(opt => (
-                      <button key={opt.src} type="button" onClick={() => pickSource(opt.src)}
-                        className={`text-left p-3 border rounded-lg transition-colors hover:border-blue-400 ${
-                          addSource === opt.src ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"
-                        }`}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <i className={`ti ti-${opt.icon} text-blue-500`} style={{ fontSize: 14 }} />
-                          <span className="text-xs font-medium text-gray-900">{opt.label}</span>
-                        </div>
-                        <p className="text-xs text-gray-500">{opt.desc}</p>
-                      </button>
-                    ))}
-                  </div>
-                  <button type="button" onClick={() => setShowAdd(false)}
-                    className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-                </div>
-              )}
-
-              {/* Step 2: Org structure */}
-              {addStep === "org" && (
-                <div>
-                  <p className="text-sm font-medium text-gray-800 mb-1">Org structure dimension</p>
-                  <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mb-3">
-                    <i className="ti ti-refresh text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-blue-700">Values will auto-sync from Organisation → Structure. Select which data to use.</p>
-                  </div>
-                  <p className="text-xs font-medium text-gray-600 mb-2">Step 2 — Select data source:</p>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden mb-3">
-                    <div className="flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50"
-                      onClick={() => { setAddName("Cost center"); setAddCode("cost_center"); }}>
-                      <input type="radio" name="org-type" checked={addName === "Cost center"} readOnly className="accent-blue-600" />
-                      <div>
-                        <p className="text-xs font-medium text-gray-900">Cost centers</p>
-                        <p className="text-xs text-gray-500">All cost center nodes from your org tree</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {addName === "Cost center" && (
-                    <div className="mb-3">
-                      <p className="text-xs font-medium text-gray-600 mb-2">Step 3 — Uncheck any cost centers to exclude:</p>
-                      {orgNodesLoading ? (
-                        <div className="h-24 bg-gray-100 rounded animate-pulse" />
-                      ) : orgNodes.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No cost centers found. Add cost centers in Organisation → Structure first.</p>
-                      ) : (
-                        <div className="border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {orgNodes.map(node => (
-                            <label key={node.id}
-                              className="flex items-center gap-3 px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 cursor-pointer">
-                              <input type="checkbox"
-                                checked={selectedOrgNodes.has(node.id)}
-                                onChange={e => {
-                                  setSelectedOrgNodes(prev => {
-                                    const next = new Set(prev);
-                                    if (e.target.checked) next.add(node.id);
-                                    else next.delete(node.id);
-                                    return next;
-                                  });
-                                }}
-                                className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0" />
-                              <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                {node.cost_center_code || node.code}
-                              </span>
-                              <span className="text-xs text-gray-800">{node.name}</span>
-                            </label>
+                  <p className="text-xs text-gray-500 mb-3">Step 1 — What dimension do you want to configure?</p>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Dimension name *</label>
+                    <select value={addStdValue}
+                      onChange={e => {
+                        setAddStdValue(e.target.value);
+                        if (e.target.value && e.target.value !== "__custom__") {
+                          const opt = STANDARD_OPTIONS.find(o => o.value === e.target.value);
+                          if (opt) {
+                            setAddCode(opt.code);
+                            setAddSources(opt.sources as DimensionSource[]);
+                          }
+                        } else {
+                          setAddCode("");
+                          setAddSources([]);
+                        }
+                      }}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="">— Select a dimension —</option>
+                      <optgroup label="Standard dimensions">
+                        {STANDARD_OPTIONS
+                          .filter(o => !dimensions.some(d => d.code === o.code))
+                          .map(o => (
+                            <option key={o.value} value={o.value}>{o.name}</option>
                           ))}
-                        </div>
-                      )}
-                      <p className="text-xs text-gray-400 mt-1">{selectedOrgNodes.size} of {orgNodes.length} selected</p>
-                    </div>
-                  )}
-
-                  {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => setAddStep("source")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd} disabled={addingDim || !addName}
-                      className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
-                      {addingDim ? "Saving…" : "Save dimension"}
-                    </button>
+                      </optgroup>
+                      <option value="__custom__">Not on list — enter custom name</option>
+                    </select>
+                    {addStdValue && addStdValue !== "__custom__" && (
+                      <p className="text-xs text-gray-400 mt-1">
+                        {STANDARD_OPTIONS.find(o => o.value === addStdValue)?.desc}
+                      </p>
+                    )}
                   </div>
-                </div>
-              )}
-
-              {/* Step 2: Employee master */}
-              {addStep === "employee" && (
-                <div>
-                  <p className="text-sm font-medium text-gray-800 mb-1">Employee master dimension</p>
-                  <div className="flex items-start gap-2 p-2.5 bg-green-50 rounded-md mb-3">
-                    <i className="ti ti-check text-green-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-green-700">All active employee codes will be added automatically. New employees are added automatically. Deactivated employees are archived.</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Dimension name</label>
-                      <input type="text" value={addName}
-                        onChange={e => { setAddName(e.target.value); setAddCode(generateCode(e.target.value)); }}
+                  {addStdValue === "__custom__" && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Custom name *</label>
+                      <input type="text" value={addCustomName}
+                        onChange={e => { setAddCustomName(e.target.value); setAddCode(generateCode(e.target.value)); }}
+                        placeholder="e.g. Territory, Fund, Vehicle fleet"
                         className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
-                    <div>
+                  )}
+                  {addStdValue && (
+                    <div className="mb-3">
                       <label className="block text-xs font-medium text-gray-600 mb-1">Code</label>
                       <input type="text" value={addCode} onChange={e => setAddCode(e.target.value)}
                         className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
-                  </div>
-                  {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
+                  )}
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setAddStep("source")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd} disabled={addingDim || !addName.trim()}
+                    <button type="button" onClick={() => { setShowAdd(false); setAddStdValue(""); setAddStep("name"); }}
+                      className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                    <button type="button" onClick={() => setAddStep("sources")}
+                      disabled={!addStdValue || (addStdValue === "__custom__" && !addCustomName.trim())}
                       className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
-                      {addingDim ? "Saving…" : "Save dimension"}
+                      Next — configure sources →
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Step 2: Hybrid — user picks which auto-sources to combine */}
-              {addStep === "hybrid" && (
+              {/* Step 2: Sources */}
+              {addStep === "sources" && (
                 <div>
-                  <p className="text-sm font-medium text-gray-800 mb-1">Hybrid dimension</p>
+                  <p className="text-sm font-medium text-gray-800 mb-1">Connected sources</p>
                   <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mb-3">
-                    <i className="ti ti-git-branch text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-blue-700">
-                      Hybrid combines one or more auto-synced sources with manually added codes. Manual codes are always included.
-                    </p>
+                    <i className="ti ti-plug-connected text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                    <p className="text-xs text-blue-700">Select which system sources this dimension should draw values from. Manual values are always available on every dimension.</p>
                   </div>
-                  <p className="text-xs font-medium text-gray-600 mb-2">Step 2 — Which auto-sources should this dimension include?</p>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Step 2 — Connected sources (select all that apply)</p>
                   <div className="space-y-2 mb-3">
                     {[
-                      { key: "employee_master", icon: "users", label: "Employee master", desc: "All active employee codes — auto-synced" },
-                      { key: "org_structure", icon: "building-community", label: "Org structure", desc: "Cost center nodes — auto-synced from org tree" },
-                    ].map(opt => (
-                      <label key={opt.key}
-                        className="flex items-center gap-3 p-2.5 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
-                        <input type="checkbox" className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
-                          checked={hybridSources.has(opt.key)}
-                          onChange={e => {
-                            setHybridSources(prev => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(opt.key);
-                              else next.delete(opt.key);
-                              return next;
-                            });
-                          }} />
-                        <i className={`ti ti-${opt.icon} text-blue-500`} style={{ fontSize: 14 }} />
-                        <div>
-                          <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                          <p className="text-xs text-gray-500">{opt.desc}</p>
+                      { key: "org_structure",   icon: "building-community", label: "Org structure",   desc: "Cost center nodes from your organisation tree.", available: true },
+                      { key: "employee_master", icon: "users",              label: "Employee master", desc: "All active employee codes, auto-synced.",         available: true },
+                      { key: "product_master",  icon: "barcode",            label: "Product master",  desc: "SKU and product codes (available when Inventory active).", available: false },
+                      { key: "customer_master", icon: "users-group",        label: "Customer master", desc: "Customer category codes (available when AR active).",       available: false },
+                    ].map(opt => {
+                      const isSelected = addSources.some(s => s.source_type === opt.key);
+                      return (
+                        <div key={opt.key}>
+                          <label className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer transition-colors ${
+                            isSelected ? "border-blue-400 bg-blue-50" : "border-gray-200 hover:bg-gray-50"
+                          }`}>
+                            <input type="checkbox" className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                              checked={isSelected}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setAddSources(prev => [...prev, { source_type: opt.key, filter: null }]);
+                                  if (opt.key === "org_structure" && orgPreviewNodes.length === 0) {
+                                    apiFetch<OrgNode[]>("/api/config/dimensions/org-structure-preview", {
+                                      token: accessToken!,
+                                    }).then(nodes => setOrgPreviewNodes(nodes)).catch(() => {});
+                                  }
+                                } else {
+                                  setAddSources(prev => prev.filter(s => s.source_type !== opt.key));
+                                  if (opt.key === "org_structure") setAddOrgFilter("");
+                                }
+                              }} />
+                            <i className={`ti ti-${opt.icon} ${isSelected ? "text-blue-500" : "text-gray-400"}`} style={{ fontSize: 14 }} />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                  opt.available ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+                                }`}>{opt.available ? "Available now" : "Future"}</span>
+                              </div>
+                              <p className="text-xs text-gray-500">{opt.desc}</p>
+                            </div>
+                          </label>
+                          {opt.key === "org_structure" && isSelected && (
+                            <div className="ml-6 mt-1 p-2.5 bg-gray-50 border border-gray-200 rounded-md">
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Scope to (optional)</label>
+                              <select value={addOrgFilter} onChange={e => setAddOrgFilter(e.target.value)}
+                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                <option value="">All cost centers</option>
+                                {orgPreviewNodes
+                                  .filter(n => n.cost_center_code)
+                                  .map(n => (
+                                    <option key={n.code} value={n.code}>
+                                      Children of: {n.name} ({n.cost_center_code || n.code})
+                                    </option>
+                                  ))
+                                }
+                              </select>
+                              <p className="text-xs text-gray-400 mt-1">e.g. &quot;Children of Sales&quot; gives Off Premise and On Premise — useful for a Sales channel dimension.</p>
+                            </div>
+                          )}
                         </div>
-                      </label>
-                    ))}
-                    <div className="flex items-center gap-3 p-2.5 border border-gray-200 rounded-lg bg-gray-50 opacity-60">
-                      <input type="checkbox" checked disabled className="w-3.5 h-3.5 flex-shrink-0" />
+                      );
+                    })}
+                    <div className="flex items-start gap-3 p-2.5 border border-dashed border-gray-300 rounded-lg opacity-60">
+                      <input type="checkbox" checked disabled className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                       <i className="ti ti-pencil text-gray-400" style={{ fontSize: 14 }} />
                       <div>
-                        <p className="text-xs font-medium text-gray-600">Manual codes</p>
-                        <p className="text-xs text-gray-400">Always included — add campaigns, vehicles, assets etc.</p>
+                        <p className="text-xs font-medium text-gray-600">Manual values</p>
+                        <p className="text-xs text-gray-400">Always available — add codes that aren&apos;t in any system source.</p>
                       </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Dimension name *</label>
-                      <input type="text" value={addName}
-                        onChange={e => { setAddName(e.target.value); setAddCode(generateCode(e.target.value)); }}
-                        placeholder="e.g. Statistical internal order"
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Code *</label>
-                      <input type="text" value={addCode} onChange={e => setAddCode(e.target.value)}
-                        placeholder="e.g. statistical_order"
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                  </div>
-                  {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setAddStep("source")}
+                    <button type="button" onClick={() => setAddStep("name")}
                       className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd}
-                      disabled={addingDim || !addName.trim() || hybridSources.size === 0}
-                      className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
-                      {addingDim ? "Saving…" : "Save dimension"}
+                    <button type="button" onClick={() => setAddStep("review")}
+                      className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                      Next — review →
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Step 2: Manual */}
-              {addStep === "manual" && (
+              {/* Step 3: Review */}
+              {addStep === "review" && (
                 <div>
-                  <p className="text-sm font-medium text-gray-800 mb-1">Manual dimension</p>
-                  <div className="flex items-start gap-2 p-2.5 bg-gray-100 rounded-md mb-3">
-                    <i className="ti ti-pencil text-gray-500 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-gray-600">Values entered manually or uploaded in bulk. Add values after saving the dimension.</p>
+                  <p className="text-sm font-medium text-gray-800 mb-3">Review & save</p>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden mb-3">
+                    <div className="px-3 py-2.5 bg-gray-50 border-b border-gray-100">
+                      <p className="text-xs font-medium text-gray-800">
+                        {addStdValue === "__custom__" ? addCustomName : STANDARD_OPTIONS.find(o => o.value === addStdValue)?.name}
+                        <span className="font-mono font-normal text-gray-400 ml-2 text-[10px] bg-gray-100 px-1.5 py-0.5 rounded">{addCode}</span>
+                      </p>
+                    </div>
+                    <div className="px-3 py-2.5">
+                      <p className="text-xs text-gray-500 mb-1.5">Connected sources:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {addSources.length === 0 ? (
+                          <span className="text-xs text-gray-400">None — manual only</span>
+                        ) : addSources.map(s => (
+                          <span key={s.source_type} className="text-[10px] px-2 py-0.5 rounded bg-green-50 text-green-700">
+                            {SOURCE_LABELS[s.source_type] ?? s.source_type}
+                            {s.source_type === "org_structure" && addOrgFilter ? ` (scoped to ${addOrgFilter})` : ""}
+                          </span>
+                        ))}
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-gray-100 text-gray-600">Manual (always)</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-                      <input type="text" value={addName}
-                        onChange={e => { setAddName(e.target.value); setAddCode(generateCode(e.target.value)); }}
-                        placeholder="e.g. Customer order, Brand, Region"
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Code *</label>
-                      <input type="text" value={addCode} onChange={e => setAddCode(e.target.value)}
-                        placeholder="auto-generated"
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Default requirement</label>
-                      <select value={addRequired ? "required" : "optional"}
-                        onChange={e => setAddRequired(e.target.value === "required")}
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="required">Required where applicable</option>
-                        <option value="optional">Optional</option>
-                      </select>
-                      <p className="text-xs text-gray-400 mt-1">GL-level override set on Chart of Accounts.</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Description (optional)</label>
-                      <input type="text" value={addDescription}
-                        onChange={e => setAddDescription(e.target.value)}
-                        placeholder="What does this dimension represent?"
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Default requirement</label>
+                    <select value={addRequired ? "required" : "optional"}
+                      onChange={e => setAddRequired(e.target.value === "required")}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="required">Required where applicable</option>
+                      <option value="optional">Optional</option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">GL-level override set on Chart of Accounts.</p>
                   </div>
                   {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setAddStep("source")}
+                    <button type="button" onClick={() => setAddStep("sources")}
                       className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd} disabled={addingDim || !addName.trim()}
+                    <button type="button" onClick={handleAdd} disabled={addingDim}
                       className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
                       {addingDim ? "Saving…" : "Save dimension"}
                     </button>
                   </div>
                 </div>
               )}
-
             </div>
           )}
 
@@ -686,34 +669,24 @@ export default function DimensionsPage() {
               {activeDims.map((dim, idx) => {
                 const isExpanded = expandedIds.has(dim.id);
                 const iconName = DIM_ICONS[dim.code] ?? "vector";
-                const isHybrid = dim.value_source === "hybrid";
-                const isOrgAuto = dim.value_source === "org_structure";
-                const isEmpAuto = dim.value_source === "employee_master";
+                const sources = dim.dimension_sources ?? [];
+                const isOrgAuto = sources.some(s => s.source_type === "org_structure");
+                const isEmpAuto = sources.some(s => s.source_type === "employee_master");
+                const isHybrid = sources.length > 1 || (sources.length === 1 && dim.value_source === "hybrid");
 
-                // Parse hybrid sources from description field
-                const hybridDesc = dim.description ?? "";
-                const parsedHybridSources = isHybrid && hybridDesc.startsWith("hybrid:")
-                  ? hybridDesc.replace("hybrid:", "").split(",")
-                  : isHybrid ? ["employee_master"] : [];
-
-                // Description to show in card header (suppress hybrid: encoding)
                 const displayDesc = dim.description && !dim.description.startsWith("hybrid:")
                   ? dim.description
                   : null;
 
                 return (
                   <div key={dim.id}
-                    className={`border rounded-xl overflow-hidden ${
-                      dim.is_active ? "border-blue-300 bg-white" : "border-gray-200 bg-gray-50 opacity-60"
-                    }`}>
+                    className="border rounded-xl overflow-hidden border-blue-300 bg-white">
 
                     <div className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50"
                       onClick={() => toggleExpand(dim.id, dim)}>
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                        dim.is_active ? "bg-blue-50" : "bg-gray-100"
-                      }`}>
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-blue-50">
                         <i className={`ti ti-${iconName}`}
-                          style={{ fontSize: 15, color: dim.is_active ? "#378ADD" : "#9CA3AF" }} />
+                          style={{ fontSize: 15, color: "#378ADD" }} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -742,12 +715,8 @@ export default function DimensionsPage() {
                           aria-label={`Toggle ${dim.name}`}>
                           <input type="checkbox" className="sr-only" checked={dim.is_active}
                             onChange={() => handleToggle(dim)} />
-                          <span className={`absolute inset-0 rounded-full transition-colors ${
-                            dim.is_active ? "bg-blue-500" : "bg-gray-300"
-                          }`} />
-                          <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${
-                            dim.is_active ? "translate-x-4" : ""
-                          }`} />
+                          <span className="absolute inset-0 rounded-full transition-colors bg-blue-500" />
+                          <span className="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform translate-x-4" />
                         </label>
                         <i className={`ti ti-chevron-${isExpanded ? "down" : "right"} text-gray-400`}
                           style={{ fontSize: 13 }} />
@@ -757,43 +726,40 @@ export default function DimensionsPage() {
                     {isExpanded && (
                       <div className="px-4 pb-4 border-t border-gray-100">
 
-                        {isOrgAuto && (
+                        {isOrgAuto && !isHybrid && (
                           <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mt-3 mb-2">
                             <i className="ti ti-refresh text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
                             <p className="text-xs text-blue-700">Values auto-synced from <strong className="font-medium">Organisation → Structure</strong>. Edit cost centers there.</p>
                           </div>
                         )}
 
-                        {isEmpAuto && (
+                        {isEmpAuto && !isHybrid && !isOrgAuto && (
                           <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md mt-3 mb-2">
                             <i className="ti ti-refresh text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
                             <p className="text-xs text-blue-700">Values auto-synced from the employee master. Manage employees on the Employees page.</p>
                           </div>
                         )}
 
-                        {isHybrid && (
+                        {sources.length > 0 && (isHybrid || (sources.length === 1 && !isOrgAuto && !isEmpAuto)) && (
                           <div className="mt-3 mb-2 space-y-1.5">
-                            {parsedHybridSources.map(src => {
-                              const info = HYBRID_SOURCE_INFO[src];
-                              if (!info) return null;
-                              return (
-                                <div key={src} className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
-                                  <i className={`ti ti-${info.icon} text-blue-600`} style={{ fontSize: 13 }} />
-                                  <div className="flex-1">
-                                    <p className="text-xs font-medium text-gray-900">{info.label} — auto-synced</p>
-                                    <p className="text-xs text-gray-500">{info.desc}</p>
-                                  </div>
-                                  <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">Live</span>
+                            {sources.map(src => (
+                              <div key={src.source_type} className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
+                                <i className="ti ti-refresh text-blue-600" style={{ fontSize: 13 }} />
+                                <div className="flex-1">
+                                  <p className="text-xs font-medium text-gray-900">{SOURCE_LABELS[src.source_type] ?? src.source_type} — auto-synced</p>
                                 </div>
-                              );
-                            })}
-                            <div className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-md">
-                              <i className="ti ti-pencil text-gray-500" style={{ fontSize: 13 }} />
-                              <div className="flex-1">
-                                <p className="text-xs font-medium text-gray-900">Manual codes — campaigns, vehicles, assets etc.</p>
+                                <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">Live</span>
                               </div>
-                              <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">Manual</span>
-                            </div>
+                            ))}
+                            {isHybrid && (
+                              <div className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-md">
+                                <i className="ti ti-pencil text-gray-500" style={{ fontSize: 13 }} />
+                                <div className="flex-1">
+                                  <p className="text-xs font-medium text-gray-900">Manual codes — campaigns, vehicles, assets etc.</p>
+                                </div>
+                                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">Manual</span>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -804,9 +770,8 @@ export default function DimensionsPage() {
                           </div>
                         )}
 
-                        {(!isOrgAuto && !isEmpAuto) && (
+                        {(!isOrgAuto || isHybrid) && (!isEmpAuto || isHybrid) && (
                           <div className="mt-3 mb-2">
-                            {/* Values list */}
                             {dimValues[dim.id] && dimValues[dim.id].length > 0 && (
                               <div className="border border-gray-200 rounded-lg overflow-hidden mb-3">
                                 <table className="min-w-full text-xs">
@@ -834,7 +799,6 @@ export default function DimensionsPage() {
                               </div>
                             )}
 
-                            {/* Add value inline form */}
                             {addValueDimId === dim.id ? (
                               <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-2">
                                 <div className="grid grid-cols-2 gap-2 mb-2">
@@ -945,8 +909,6 @@ export default function DimensionsPage() {
                           <p className="text-[11px] text-gray-500">
                             GL-level applicability configured on the{" "}
                             <strong className="font-medium">Chart of Accounts</strong> page.
-                            {(dim.code === "statistical_order" || dim.code === "real_order" || dim.code === "customer_order") &&
-                              " A GL account can accept any combination of order types — configured per account on CoA."}
                           </p>
                         </div>
 
@@ -955,6 +917,39 @@ export default function DimensionsPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Deactivated dimensions */}
+          {inactiveDims.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Deactivated</p>
+              <div className="space-y-2">
+                {inactiveDims.map(dim => (
+                  <div key={dim.id}
+                    className="border border-gray-200 rounded-xl bg-gray-50 opacity-60 px-4 py-3 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                      <i className={`ti ti-${DIM_ICONS[dim.code] ?? "vector"} text-gray-400`} style={{ fontSize: 15 }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-600">{dim.name}</p>
+                      <span className="text-[10px] font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{dim.code}</span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button type="button" onClick={() => handleToggle(dim)}
+                        className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-white text-gray-600">
+                        Reactivate
+                      </button>
+                      {!STANDARD_CODES.has(dim.code) && (
+                        <button type="button" onClick={() => handleHardDelete(dim)}
+                          className="text-xs px-2.5 py-1 border border-red-200 rounded hover:bg-red-50 text-red-500">
+                          Delete permanently
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -990,7 +985,11 @@ export default function DimensionsPage() {
             const dim = activeDims.find(d => d.id === selectedDimForValues);
             if (!dim) return null;
 
-            if (dim.value_source === "org_structure") {
+            const sources = dim.dimension_sources ?? [];
+            const isOrgOnly = sources.length === 1 && sources[0].source_type === "org_structure";
+            const isHybrid = sources.length > 1 || (sources.length === 1 && dim.value_source === "hybrid");
+
+            if (isOrgOnly) {
               return (
                 <div>
                   <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-4">
@@ -1006,7 +1005,7 @@ export default function DimensionsPage() {
               );
             }
 
-            if (dim.value_source === "hybrid") {
+            if (isHybrid) {
               return (
                 <div>
                   <div className="flex gap-0 border-b border-gray-200 mb-4">

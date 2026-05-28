@@ -23,7 +23,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -61,6 +61,8 @@ class TenantDimension(Base):
     locked_by_implementation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # M8.2 rebuild: value source controls how dimension values are populated
     value_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="manual")
+    # M8.2 source redesign: list of connected source dicts e.g. [{"source_type": "org_structure", "filter": None}]
+    dimension_sources: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -10,6 +10,8 @@ Endpoints:
     POST   /api/config/dimensions                              Create dimension
     PATCH  /api/config/dimensions/{id}                         Update dimension
     DELETE /api/config/dimensions/{id}                         Soft delete (is_active=false)
+    PATCH  /api/config/dimensions/{id}/reactivate              Reactivate a soft-deleted dimension
+    DELETE /api/config/dimensions/{id}/permanent               Hard delete a custom dimension + its values
     POST   /api/config/dimensions/{id}/reorder                 Update sort_order
 
   Dimension Values:
@@ -169,6 +171,7 @@ STANDARD_DIMENSIONS = [
         "code": "cost_center",
         "is_required": True,
         "value_source": "org_structure",
+        "dimension_sources": [{"source_type": "org_structure", "filter": None}],
         "description": "Tracks costs by organisational cost center. Auto-synced from org structure.",
         "icon": "building-community",
         "sort_order": 1,
@@ -178,24 +181,27 @@ STANDARD_DIMENSIONS = [
         "code": "material",
         "is_required": False,
         "value_source": "product_master",
-        "description": "Tags transactions with product or SKU codes. Auto-syncs from product master when Inventory is active.",
+        "dimension_sources": [{"source_type": "product_master", "filter": None}],
+        "description": "Tags transactions with product or SKU codes.",
         "icon": "barcode",
         "sort_order": 2,
     },
     {
         "name": "Statistical internal order",
-        "code": "statistical_order",
+        "code": "statistical_internal_order",
         "is_required": False,
         "value_source": "hybrid",
-        "description": "Employee codes auto-synced + manual codes for campaigns, vehicles, assets etc.",
+        "dimension_sources": [{"source_type": "employee_master", "filter": None}],
+        "description": "Employee codes auto-synced + manual codes for campaigns, vehicles, assets.",
         "icon": "git-branch",
         "sort_order": 3,
     },
     {
         "name": "Real internal order",
-        "code": "real_order",
+        "code": "real_internal_order",
         "is_required": False,
         "value_source": "manual",
+        "dimension_sources": [],
         "description": "Tracks actual costs by project or initiative.",
         "icon": "git-commit",
         "sort_order": 4,
@@ -205,22 +211,29 @@ STANDARD_DIMENSIONS = [
         "code": "customer_order",
         "is_required": False,
         "value_source": "customer_order",
-        "description": "Customer categories/segments. Manual now, auto-syncs from customer master when AR is active.",
+        "dimension_sources": [{"source_type": "customer_master", "filter": None}],
+        "description": "Customer categories/segments. Manual now, auto-syncs from customer master when AR active.",
         "icon": "users-group",
         "sort_order": 5,
     },
 ]
 
-# Correct value_source for dimensions created before the value_source column existed
+# Correct value_source + dimension_sources for dimensions created before these columns existed
 _SOURCE_FIXES = {
-    "cost_center": "org_structure",
-    "material": "product_master",
-    "statistical_order": "hybrid",
-    "statistical_internal_order": "hybrid",
-    "real_order": "manual",
-    "real_statistical_order": "manual",
-    "real_internal_order": "manual",
-    "customer_order": "customer_order",
+    "cost_center": ("org_structure", [{"source_type": "org_structure", "filter": None}]),
+    "material": ("product_master", [{"source_type": "product_master", "filter": None}]),
+    "statistical_order": ("hybrid", [{"source_type": "employee_master", "filter": None}]),
+    "statistical_internal_order": ("hybrid", [{"source_type": "employee_master", "filter": None}]),
+    "real_order": ("manual", []),
+    "real_internal_order": ("manual", []),
+    "customer_order": ("customer_order", [{"source_type": "customer_master", "filter": None}]),
+}
+
+# Codes that identify standard (non-custom) dimensions — cannot be permanently deleted
+STANDARD_DIMENSION_CODES = {
+    "cost_center", "material", "statistical_order", "statistical_internal_order",
+    "real_order", "real_internal_order", "customer_order", "employee",
+    "brand", "region", "channel", "project",
 }
 
 
@@ -248,12 +261,20 @@ async def seed_standard_dimensions(
     existing_dims = existing_result.scalars().all()
     existing_codes = {d.code for d in existing_dims}
 
-    # Fix existing dimensions that have a wrong value_source
+    # Fix existing dimensions with wrong value_source or missing dimension_sources
     for dim in existing_dims:
-        correct_source = _SOURCE_FIXES.get(dim.code)
-        if correct_source and (not dim.value_source or (dim.value_source == "manual" and correct_source != "manual")):
-            dim.value_source = correct_source
-            fixed += 1
+        fix = _SOURCE_FIXES.get(dim.code)
+        if fix:
+            correct_source, correct_sources = fix
+            changed = False
+            if dim.value_source != correct_source:
+                dim.value_source = correct_source
+                changed = True
+            if not dim.dimension_sources:
+                dim.dimension_sources = correct_sources
+                changed = True
+            if changed:
+                fixed += 1
 
     # Seed missing standard dimensions
     for std in STANDARD_DIMENSIONS:
@@ -264,6 +285,7 @@ async def seed_standard_dimensions(
                 code=std["code"],
                 is_required=std["is_required"],
                 value_source=std["value_source"],
+                dimension_sources=std["dimension_sources"],
                 description=std["description"],
                 icon=std["icon"],
                 sort_order=std["sort_order"],
@@ -358,6 +380,7 @@ async def create_dimension(
         code=code,
         is_required=data.is_required,
         value_source=data.value_source,
+        dimension_sources=data.dimension_sources,
         description=data.description,
         icon=data.icon,
     )
@@ -418,6 +441,78 @@ async def delete_dimension(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dimension not found.")
 
     dim.is_active = False
+    await db.flush()
+
+
+@router.patch("/dimensions/{dimension_id}/reactivate", response_model=DimensionResponse)
+async def reactivate_dimension(
+    dimension_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> DimensionResponse:
+    """Reactivate a soft-deleted dimension. Admin only."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    result = await db.execute(
+        select(TenantDimension).where(
+            TenantDimension.id == dimension_id,
+            TenantDimension.tenant_id == tenant_id,
+        )
+    )
+    dim = result.scalar_one_or_none()
+    if not dim:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dimension not found."
+        )
+    dim.is_active = True
+    await db.flush()
+    await db.refresh(dim)
+    return DimensionResponse.from_orm(dim)
+
+
+@router.delete("/dimensions/{dimension_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def hard_delete_dimension(
+    dimension_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Permanently delete a custom dimension and all its values.
+    Standard dimensions cannot be permanently deleted — use soft delete instead.
+    Admin only.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    result = await db.execute(
+        select(TenantDimension).where(
+            TenantDimension.id == dimension_id,
+            TenantDimension.tenant_id == tenant_id,
+        )
+    )
+    dim = result.scalar_one_or_none()
+    if not dim:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dimension not found."
+        )
+
+    if dim.code in STANDARD_DIMENSION_CODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Standard dimensions cannot be permanently deleted. Use deactivate instead.",
+        )
+
+    # Delete all values first (cascade would handle this but being explicit)
+    await db.execute(
+        delete(DimensionValue).where(
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+        )
+    )
+    await db.delete(dim)
     await db.flush()
 
 

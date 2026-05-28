@@ -29,6 +29,7 @@ class DimensionCreate(BaseModel):
     is_required: bool = False
     accepted_value_types: str | None = None  # comma-separated type tags
     value_source: Optional[str] = "manual"
+    dimension_sources: Optional[list] = None
     description: Optional[str] = None
     icon: Optional[str] = None
 
@@ -61,6 +62,7 @@ class DimensionUpdate(BaseModel):
     sort_order: int | None = None
     accepted_value_types: str | None = None
     value_source: Optional[str] = None
+    dimension_sources: Optional[list] = None
     description: Optional[str] = None
     icon: Optional[str] = None
 
@@ -94,6 +96,7 @@ class DimensionResponse(BaseModel):
     created_at: datetime
     accepted_value_types: str | None = None
     value_source: Optional[str] = "manual"
+    dimension_sources: Optional[list] = None
     description: Optional[str] = None
     icon: Optional[str] = None
 
@@ -114,6 +117,7 @@ class DimensionResponse(BaseModel):
             created_at=dim.created_at,
             accepted_value_types=dim.accepted_value_types,
             value_source=dim.value_source,
+            dimension_sources=dim.dimension_sources,
             description=dim.description,
             icon=dim.icon,
         )
