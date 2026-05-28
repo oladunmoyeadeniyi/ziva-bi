@@ -978,11 +978,18 @@ async def upload_dimension_values(
 
 @router.get("/coa/template")
 async def download_coa_template(
-    include_group: bool = Query(default=True),
-    include_fs: bool = Query(default=True),
-    include_tb: bool = Query(default=True),
-    include_category: bool = Query(default=True),
-    include_classification: bool = Query(default=True),
+    is_active: bool = Query(default=True),
+    gl_group: bool = Query(default=True),
+    gl_subgroup: bool = Query(default=True),
+    gl_sub_subgroup: bool = Query(default=True),
+    fs_head: bool = Query(default=True),
+    fs_note: bool = Query(default=True),
+    tb_mapping: bool = Query(default=True),
+    group_account: bool = Query(default=True),
+    account_classification: bool = Query(default=True),
+    category: bool = Query(default=True),
+    subcategory: bool = Query(default=True),
+    is_default_gl: bool = Query(default=True),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
@@ -1019,12 +1026,6 @@ async def download_coa_template(
     if org and org.org_configuration:
         structure_type = org.org_configuration.get("structure_type", "")
         is_subsidiary = structure_type.lower() in ("subsidiary", "branch")
-
-    # Override include_group if not subsidiary
-    if not is_subsidiary:
-        include_group_cols = False
-    else:
-        include_group_cols = include_group
 
     try:
         import openpyxl
@@ -1094,58 +1095,43 @@ async def download_coa_template(
     ws1.title = "GL Accounts"
     ws1.freeze_panes = "A2"
 
-    # Always included (mandatory)
-    mandatory_headers: list[tuple[str, str, bool]] = [
-        ("GL Number*", "Unique GL number e.g. 733060", True),
-        ("GL Name*", "Full GL description", True),
-        ("Account Type*", "PL = Profit & Loss (SOCI — Statement of Comprehensive Income) | BS = Balance Sheet (SOFP — Statement of Financial Position)", True),
-        ("Is Active", "Yes or No", False),
+    # Build column list per-column from individual params
+    # Each entry: (header_name, instruction_text)
+    all_cols: list[tuple[str, str]] = [
+        ("GL Number*", "Unique GL number e.g. 733060"),
+        ("GL Name*", "Full GL description"),
+        ("Account Type*", "PL = Profit & Loss (SOCI) | BS = Balance Sheet (SOFP)"),
     ]
 
-    # Optional columns — included based on parameters
-    optional_headers: list[tuple[str, str, bool]] = []
+    if is_active:         all_cols.append(("Is Active", "Yes or No"))
+    if gl_group:          all_cols.append(("GL Group", "Top-level GL grouping"))
+    if gl_subgroup:       all_cols.append(("GL Subgroup", "Second-level grouping"))
+    if gl_sub_subgroup:   all_cols.append(("GL Sub-subgroup", "Third-level (optional)"))
+    if fs_head:           all_cols.append(("FS Head", "Financial statement face line"))
+    if fs_note:           all_cols.append(("FS Note", "FS note reference"))
+    if tb_mapping:        all_cols.append(("TB Mapping", "Trial balance roll-up group"))
+    if group_account and is_subsidiary:
+        all_cols.append(("Group Account Number", "Parent group GL number"))
+        all_cols.append(("Group Account Name", "Parent group GL name"))
+    if account_classification:
+        all_cols.append(("Account Classification", "Classification for module behaviour"))
+    if category:          all_cols.append(("Category", "Expense category name"))
+    if subcategory:       all_cols.append(("Subcategory", "Subcategory name"))
+    if is_default_gl:
+        all_cols.append(("Is Default GL for Subcategory", "Yes if default GL for subcategory"))
 
-    if include_fs:
-        optional_headers.extend([
-            ("GL Group", "Top-level GL grouping", False),
-            ("GL Subgroup", "Second-level grouping", False),
-            ("GL Sub-subgroup", "Third-level (optional)", False),
-            ("FS Head", "Financial statement face line", False),
-            ("FS Note", "FS note reference", False),
-        ])
+    # Dimension columns — always included, one per active dimension
+    for dim in dimensions:
+        display = dim.display_name or dim.name
+        all_cols.append((display, "Required / Optional / N/A"))
 
-    if include_tb:
-        optional_headers.append(("TB Mapping", "Trial balance roll-up group", False))
+    # Mandatory cols (first 3) get required fill; the rest get optional fill
+    MANDATORY_COUNT = 3
+    header_row = [c[0] for c in all_cols]
+    instruction_row = [c[1] for c in all_cols]
+    headers_for_write = [(c[0], i < MANDATORY_COUNT) for i, c in enumerate(all_cols)]
 
-    if include_group_cols:
-        optional_headers.extend([
-            ("Group Account Number", "Parent group GL number (subsidiaries)", False),
-            ("Group Account Name", "Parent group GL name", False),
-        ])
-
-    if include_classification:
-        optional_headers.append(
-            ("Account Classification", "Account classification for module behaviour", False)
-        )
-
-    if include_category:
-        optional_headers.extend([
-            ("Category", "Expense category name", False),
-            ("Subcategory", "Subcategory name", False),
-            ("Is Default GL for Subcategory", "Yes if default GL for subcategory", False),
-        ])
-
-    # Dimension columns — always included
-    dim_headers: list[tuple[str, str, bool]] = [
-        (dim.display_name or dim.name, "Required / Optional / N/A", False)
-        for dim in dimensions
-    ]
-
-    all_headers = mandatory_headers + optional_headers + dim_headers
-    header_row = [h[0] for h in all_headers]
-    instruction_row = [h[1] for h in all_headers]
-
-    _write_headers(ws1, [(h[0], h[2]) for h in all_headers])
+    _write_headers(ws1, headers_for_write)
 
     # Add comment and data validation to Account Type header cell
     at_col_idx = header_row.index("Account Type*") + 1  # 1-based
@@ -1211,25 +1197,26 @@ async def download_coa_template(
     dv_type.sqref = f"{at_col_letter}4:{at_col_letter}5000"
     ws1.add_data_validation(dv_type)
 
-    # Is Active dropdown (always column D)
-    dv_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
-    ws1.add_data_validation(dv_active)
-    dv_active.sqref = "D4:D10000"
+    # Is Active dropdown — dynamic column (may not be present if unchecked)
+    if "Is Active" in header_row:
+        active_col_letter = get_column_letter(header_row.index("Is Active") + 1)
+        dv_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
+        ws1.add_data_validation(dv_active)
+        dv_active.sqref = f"{active_col_letter}4:{active_col_letter}10000"
 
-    # Is Default GL for Subcategory dropdown (dynamic column)
-    if include_category:
-        try:
-            default_gl_idx = header_row.index("Is Default GL for Subcategory") + 1
-            dv_default_gl = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
-            ws1.add_data_validation(dv_default_gl)
-            col_letter = get_column_letter(default_gl_idx)
-            dv_default_gl.sqref = f"{col_letter}4:{col_letter}10000"
-        except ValueError:
-            pass
+    # Is Default GL for Subcategory dropdown — dynamic column
+    try:
+        default_gl_idx = header_row.index("Is Default GL for Subcategory") + 1
+        dv_default_gl = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
+        ws1.add_data_validation(dv_default_gl)
+        col_letter = get_column_letter(default_gl_idx)
+        dv_default_gl.sqref = f"{col_letter}4:{col_letter}10000"
+    except ValueError:
+        pass
 
-    # Dimension requirement dropdowns
-    dim_start_idx = len(mandatory_headers) + len(optional_headers) + 1
-    for i in range(len(dim_headers)):
+    # Dimension requirement dropdowns — dimensions are the last N columns
+    dim_start_idx = len(all_cols) - len(dimensions) + 1
+    for i in range(len(dimensions)):
         col_letter = get_column_letter(dim_start_idx + i)
         dv_dim = DataValidation(
             type="list",

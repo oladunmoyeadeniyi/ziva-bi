@@ -84,6 +84,14 @@ const COMMON_CURRENCIES = [
   "AED", "CAD", "AUD", "JPY", "CHF", "CNY", "INR",
 ];
 
+const normaliseAccountType = (raw: string | undefined): string => {
+  if (!raw) return "—";
+  const v = raw.trim().toUpperCase().replace(/[^A-Z]/g, "");
+  if (["PL", "SOCI", "PLV", "PANDL"].includes(v) || v.startsWith("PL")) return "PL";
+  if (["BS", "SOFP", "BALANCESHEET"].includes(v) || v.startsWith("BS")) return "BS";
+  return raw;
+};
+
 interface SheetResult {
   imported: number;
   updated: number;
@@ -125,11 +133,18 @@ export default function ChartOfAccountsPage() {
   // Template column selector
   const [showTemplateOptions, setShowTemplateOptions] = useState(false);
   const [templateCols, setTemplateCols] = useState({
-    include_group: true,
-    include_fs: true,
-    include_tb: true,
-    include_category: true,
-    include_classification: true,
+    is_active: true,
+    gl_group: true,
+    gl_subgroup: true,
+    gl_sub_subgroup: true,
+    fs_head: true,
+    fs_note: true,
+    tb_mapping: true,
+    group_account: true,
+    account_classification: true,
+    category: true,
+    subcategory: true,
+    is_default_gl: true,
   });
 
   // Multi-column filters
@@ -150,7 +165,7 @@ export default function ChartOfAccountsPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [addGL, setAddGL] = useState("");
   const [addName, setAddName] = useState("");
-  const [addType, setAddType] = useState<"SOCI" | "SOFP">("SOCI");
+  const [addType, setAddType] = useState<"PL" | "BS">("PL");
   const [addGroup, setAddGroup] = useState("");
   const [addSubgroup, setAddSubgroup] = useState("");
   const [addSubSubgroup, setAddSubSubgroup] = useState("");
@@ -170,7 +185,7 @@ export default function ChartOfAccountsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editGL, setEditGL] = useState("");
   const [editName, setEditName] = useState("");
-  const [editType, setEditType] = useState<"SOCI" | "SOFP">("SOCI");
+  const [editType, setEditType] = useState<"PL" | "BS">("PL");
   const [editActive, setEditActive] = useState(true);
   const [editGroup, setEditGroup] = useState("");
   const [editSubgroup, setEditSubgroup] = useState("");
@@ -265,7 +280,7 @@ export default function ChartOfAccountsPage() {
           revalue_at_period_end: addIsForeignCurrency ? addRevalueAtPeriodEnd : false,
         }),
       });
-      setAddGL(""); setAddName(""); setAddType("SOCI");
+      setAddGL(""); setAddName(""); setAddType("PL");
       setAddGroup(""); setAddSubgroup(""); setAddSubSubgroup("");
       setAddFsHead(""); setAddFsNote(""); setAddTbMapping("");
       setAddGroupAccNum(""); setAddGroupAccName("");
@@ -367,11 +382,18 @@ export default function ChartOfAccountsPage() {
     try {
       const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const params = new URLSearchParams({
-        include_group: templateCols.include_group.toString(),
-        include_fs: templateCols.include_fs.toString(),
-        include_tb: templateCols.include_tb.toString(),
-        include_category: templateCols.include_category.toString(),
-        include_classification: templateCols.include_classification.toString(),
+        is_active:              templateCols.is_active.toString(),
+        gl_group:               templateCols.gl_group.toString(),
+        gl_subgroup:            templateCols.gl_subgroup.toString(),
+        gl_sub_subgroup:        templateCols.gl_sub_subgroup.toString(),
+        fs_head:                templateCols.fs_head.toString(),
+        fs_note:                templateCols.fs_note.toString(),
+        tb_mapping:             templateCols.tb_mapping.toString(),
+        group_account:          templateCols.group_account.toString(),
+        account_classification: templateCols.account_classification.toString(),
+        category:               templateCols.category.toString(),
+        subcategory:            templateCols.subcategory.toString(),
+        is_default_gl:          templateCols.is_default_gl.toString(),
       });
       const res = await fetch(`${BASE}/api/config/coa/template?${params}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -482,7 +504,7 @@ export default function ChartOfAccountsPage() {
       if (filterGL && !a.gl_number.toLowerCase().includes(filterGL.toLowerCase())) return false;
       if (filterName && !a.gl_name.toLowerCase().includes(filterName.toLowerCase())) return false;
       if (filterGroup && !(a.gl_group ?? "").toLowerCase().includes(filterGroup.toLowerCase())) return false;
-      if (filterType && a.account_type !== filterType) return false;
+      if (filterType && normaliseAccountType(a.account_type) !== filterType) return false;
       if (filterClassification && !(a.account_classification ?? "").toLowerCase().includes(filterClassification.toLowerCase())) return false;
       if (filterStatus === "active" && !a.is_active) return false;
       if (filterStatus === "inactive" && a.is_active) return false;
@@ -631,8 +653,8 @@ export default function ChartOfAccountsPage() {
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">All types</option>
-            <option value="SOCI">SOCI</option>
-            <option value="SOFP">SOFP</option>
+            <option value="PL">PL — Profit &amp; Loss</option>
+            <option value="BS">BS — Balance Sheet</option>
           </select>
           <input type="text" value={filterClassification}
             onChange={e => setFilterClassification(e.target.value)}
@@ -779,10 +801,10 @@ export default function ChartOfAccountsPage() {
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
-                <select value={addType} onChange={(e) => setAddType(e.target.value as "SOCI" | "SOFP")}
+                <select value={addType} onChange={(e) => setAddType(e.target.value as "PL" | "BS")}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="SOCI">SOCI — Statement of Comprehensive Income</option>
-                  <option value="SOFP">SOFP — Statement of Financial Position</option>
+                  <option value="PL">PL — Profit &amp; Loss (SOCI)</option>
+                  <option value="BS">BS — Balance Sheet (SOFP)</option>
                 </select>
               </div>
             </div>
@@ -926,10 +948,10 @@ export default function ChartOfAccountsPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
-                <select value={editType} onChange={(e) => setEditType(e.target.value as "SOCI" | "SOFP")}
+                <select value={editType} onChange={(e) => setEditType(e.target.value as "PL" | "BS")}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="SOCI">SOCI — Statement of Comprehensive Income</option>
-                  <option value="SOFP">SOFP — Statement of Financial Position</option>
+                  <option value="PL">PL — Profit &amp; Loss (SOCI)</option>
+                  <option value="BS">BS — Balance Sheet (SOFP)</option>
                 </select>
               </div>
               <div className="flex items-center gap-2 pt-5">
@@ -1154,11 +1176,11 @@ export default function ChartOfAccountsPage() {
                   <td className="px-4 py-3 text-xs text-gray-500 hidden md:table-cell">{gl.gl_group || "—"}</td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                      gl.account_type === "SOCI" || gl.account_type === "PL"
+                      normaliseAccountType(gl.account_type) === "PL"
                         ? "bg-blue-50 text-blue-700"
                         : "bg-purple-50 text-purple-700"
                     }`}>
-                      {gl.account_type === "PL" ? "SOCI" : gl.account_type === "BS" ? "SOFP" : gl.account_type}
+                      {normaliseAccountType(gl.account_type)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500 hidden lg:table-cell">
@@ -1179,7 +1201,7 @@ export default function ChartOfAccountsPage() {
                           setEditId(gl.id);
                           setEditGL(gl.gl_number);
                           setEditName(gl.gl_name);
-                          setEditType((gl.account_type === "PL" ? "SOCI" : gl.account_type === "BS" ? "SOFP" : gl.account_type) as "SOCI" | "SOFP");
+                          setEditType(normaliseAccountType(gl.account_type) as "PL" | "BS");
                           setEditActive(gl.is_active);
                           setEditGroup(gl.gl_group ?? "");
                           setEditSubgroup(gl.gl_subgroup ?? "");
@@ -1334,61 +1356,103 @@ export default function ChartOfAccountsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40"
             onClick={() => setShowTemplateOptions(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6">
+          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-sm font-semibold text-gray-900 mb-1">Download CoA Template</h2>
             <p className="text-xs text-gray-500 mb-4">
               Uncheck columns you don&apos;t need. Mandatory columns are always included.
             </p>
 
+            {/* Mandatory */}
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2">
               Always included
             </p>
-            {["GL Number", "GL Name", "Account Type", "Is Active"].map(col => (
-              <div key={col} className="flex items-center gap-2 py-1.5 opacity-50">
-                <input type="checkbox" checked disabled className="w-3.5 h-3.5 accent-blue-600" />
-                <span className="text-xs text-gray-600">{col}</span>
-                <span className="text-[10px] text-gray-400 ml-auto">Mandatory</span>
-              </div>
-            ))}
+            <div className="space-y-1 mb-4">
+              {["GL Number *", "GL Name *", "Account Type *"].map(col => (
+                <div key={col} className="flex items-center gap-2 opacity-50">
+                  <input type="checkbox" checked disabled
+                    className="w-3.5 h-3.5 accent-blue-600 flex-shrink-0" />
+                  <span className="text-xs text-gray-600 flex-1">{col}</span>
+                  <span className="text-[10px] text-gray-400">Mandatory</span>
+                </div>
+              ))}
+            </div>
 
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2 mt-4">
+            {/* Optional — individual */}
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2">
               Optional columns
             </p>
-            {[
-              { key: "include_fs" as const,             label: "GL Hierarchy + FS Mappings",   desc: "GL Group, Subgroup, FS Head, FS Note" },
-              { key: "include_tb" as const,             label: "TB Mapping",                    desc: "Trial balance roll-up group" },
-              { key: "include_classification" as const, label: "Account Classification",         desc: "For module-level behaviour" },
-              { key: "include_category" as const,       label: "Expense Category",               desc: "Category, Subcategory, Default GL" },
-            ].map(opt => (
-              <label key={opt.key}
-                className="flex items-start gap-2 py-1.5 cursor-pointer hover:bg-gray-50 rounded px-1">
-                <input type="checkbox" className="w-3.5 h-3.5 accent-blue-600 mt-0.5 flex-shrink-0"
-                  checked={templateCols[opt.key]}
-                  onChange={e => setTemplateCols(prev => ({ ...prev, [opt.key]: e.target.checked }))} />
-                <div>
-                  <p className="text-xs font-medium text-gray-800">{opt.label}</p>
-                  <p className="text-[11px] text-gray-400">{opt.desc}</p>
-                </div>
-              </label>
-            ))}
+            <div className="space-y-1 mb-4">
+              {([
+                { key: "is_active" as const,              label: "Is Active",                      desc: "Yes / No" },
+                { key: "gl_group" as const,               label: "GL Group",                       desc: "Top-level GL grouping" },
+                { key: "gl_subgroup" as const,            label: "GL Subgroup",                    desc: "Second-level grouping" },
+                { key: "gl_sub_subgroup" as const,        label: "GL Sub-subgroup",                desc: "Third-level grouping" },
+                { key: "fs_head" as const,                label: "FS Head",                        desc: "Financial statement face line" },
+                { key: "fs_note" as const,                label: "FS Note",                        desc: "FS note reference" },
+                { key: "tb_mapping" as const,             label: "TB Mapping",                     desc: "Trial balance roll-up group" },
+                { key: "account_classification" as const, label: "Account Classification",          desc: "For module-level behaviour" },
+                { key: "category" as const,               label: "Category",                       desc: "Expense category name" },
+                { key: "subcategory" as const,            label: "Subcategory",                    desc: "Subcategory name" },
+                { key: "is_default_gl" as const,          label: "Is Default GL for Subcategory",  desc: "Yes / No" },
+              ] as { key: keyof typeof templateCols; label: string; desc: string }[]).map(opt => (
+                <label key={opt.key}
+                  className="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-50 rounded px-1">
+                  <input type="checkbox"
+                    className="w-3.5 h-3.5 accent-blue-600 flex-shrink-0"
+                    checked={templateCols[opt.key]}
+                    onChange={e => setTemplateCols(prev => ({
+                      ...prev, [opt.key]: e.target.checked
+                    }))} />
+                  <span className="text-xs text-gray-800 flex-1">{opt.label}</span>
+                  <span className="text-[10px] text-gray-400">{opt.desc}</span>
+                </label>
+              ))}
 
-            {isSubsidiary && (
-              <label className="flex items-start gap-2 py-1.5 cursor-pointer hover:bg-gray-50 rounded px-1">
-                <input type="checkbox" className="w-3.5 h-3.5 accent-blue-600 mt-0.5 flex-shrink-0"
-                  checked={templateCols.include_group}
-                  onChange={e => setTemplateCols(prev => ({ ...prev, include_group: e.target.checked }))} />
-                <div>
-                  <p className="text-xs font-medium text-gray-800">Group Account Mapping</p>
-                  <p className="text-[11px] text-gray-400">Group Account Number and Name (subsidiary reporting)</p>
-                </div>
-              </label>
-            )}
+              {/* Group account — only shown for subsidiaries */}
+              {isSubsidiary && (
+                <label className="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-50 rounded px-1">
+                  <input type="checkbox"
+                    className="w-3.5 h-3.5 accent-blue-600 flex-shrink-0"
+                    checked={templateCols.group_account}
+                    onChange={e => setTemplateCols(prev => ({
+                      ...prev, group_account: e.target.checked
+                    }))} />
+                  <span className="text-xs text-gray-800 flex-1">Group Account Mapping</span>
+                  <span className="text-[10px] text-gray-400">Group Number + Name</span>
+                </label>
+              )}
+            </div>
 
-            <p className="text-[11px] text-gray-400 mt-3 italic">
+            <div className="flex items-center justify-between mb-4">
+              <button type="button"
+                onClick={() => setTemplateCols({
+                  is_active: true, gl_group: true, gl_subgroup: true,
+                  gl_sub_subgroup: true, fs_head: true, fs_note: true,
+                  tb_mapping: true, group_account: true,
+                  account_classification: true, category: true,
+                  subcategory: true, is_default_gl: true,
+                })}
+                className="text-xs text-blue-600 hover:text-blue-800">
+                Select all
+              </button>
+              <button type="button"
+                onClick={() => setTemplateCols({
+                  is_active: false, gl_group: false, gl_subgroup: false,
+                  gl_sub_subgroup: false, fs_head: false, fs_note: false,
+                  tb_mapping: false, group_account: false,
+                  account_classification: false, category: false,
+                  subcategory: false, is_default_gl: false,
+                })}
+                className="text-xs text-gray-500 hover:text-gray-700">
+                Clear all
+              </button>
+            </div>
+
+            <p className="text-[11px] text-gray-400 italic mb-4">
               Dimension columns are always included based on your configured dimensions.
             </p>
 
-            <div className="flex gap-2 justify-end mt-4">
+            <div className="flex gap-2 justify-end">
               <button type="button" onClick={() => setShowTemplateOptions(false)}
                 className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">
                 Cancel
