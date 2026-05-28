@@ -7,8 +7,8 @@
  * Table with search, filter, bulk actions, add/edit/upload/transfer/code-update modals.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -65,9 +65,11 @@ interface EmployeeHistory {
 
 type EmpTab = "add" | "list" | "transfers" | "config";
 
-export default function EmployeesPage() {
+function EmployeesPage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
 
   const [activeTab, setActiveTab] = useState<EmpTab>("add");
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -379,6 +381,15 @@ export default function EmployeesPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
+      {returnTo && (
+        <button
+          type="button"
+          onClick={() => router.push(decodeURIComponent(returnTo))}
+          className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 mb-3 font-medium">
+          <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+          Back to Dimensions
+        </button>
+      )}
       <h1 className="text-xl font-bold text-gray-900 mb-1">Employees</h1>
       <p className="text-sm text-gray-500 mb-5">
         Manage your employee master data. Employees can be mapped to cost centers and used as dimension values.
@@ -824,5 +835,13 @@ export default function EmployeesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function EmployeesPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <EmployeesPage />
+    </Suspense>
   );
 }

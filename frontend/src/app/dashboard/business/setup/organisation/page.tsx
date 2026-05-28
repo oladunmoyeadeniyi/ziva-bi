@@ -11,8 +11,8 @@
  * Route: /dashboard/business/setup/organisation
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -526,10 +526,13 @@ function TreeNode({
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function OrganisationPage() {
+function OrganisationPage() {
   const { accessToken } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("identity");
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
+  const initialTab = (searchParams.get("tab") as Tab) || "identity";
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [org, setOrg] = useState<OrgConfig>({ tenant_id: "" });
   const [nodes, setNodes] = useState<OrgNode[]>([]);
   const [periods, setPeriods] = useState<FiscalPeriod[]>([]);
@@ -823,6 +826,15 @@ export default function OrganisationPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
+      {returnTo && (
+        <button
+          type="button"
+          onClick={() => router.push(decodeURIComponent(returnTo))}
+          className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 mb-3 font-medium">
+          <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
+          Back to Dimensions
+        </button>
+      )}
       <h1 className="text-xl font-semibold text-gray-900 mb-1">Organisation</h1>
       <p className="text-sm text-gray-500 mb-6">
         Configure your company identity, org structure, branding, and fiscal year.
@@ -2174,5 +2186,13 @@ export default function OrganisationPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function OrganisationPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <OrganisationPage />
+    </Suspense>
   );
 }

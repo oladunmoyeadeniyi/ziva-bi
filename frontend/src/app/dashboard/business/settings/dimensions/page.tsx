@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -102,11 +102,15 @@ const DIM_ICONS: Record<string, string> = {
   customer_order: "users-group",
 };
 
-export default function DimensionsPage() {
+function DimensionsPage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState<Tab>("setup");
+  const initialTabParam = (searchParams.get("tab") as Tab) || "setup";
+  const initialDimParam = searchParams.get("dim") || "";
+
+  const [activeTab, setActiveTab] = useState<Tab>(initialTabParam);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +149,7 @@ export default function DimensionsPage() {
   const [dimValues, setDimValues] = useState<Record<string, DimensionValue[]>>({});
 
   // Values tab
-  const [selectedDimForValues, setSelectedDimForValues] = useState<string>("");
+  const [selectedDimForValues, setSelectedDimForValues] = useState<string>(initialDimParam);
   const [valuesSubTab, setValuesSubTab] = useState<ValuesSubTab>("manual");
 
   // Inline values (merged auto + manual per dimension)
@@ -173,6 +177,9 @@ export default function DimensionsPage() {
         token: accessToken,
       });
       setDimensions(data);
+      if (initialDimParam) {
+        loadInlineValues(initialDimParam);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dimensions.");
     } finally {
@@ -1112,20 +1119,30 @@ export default function DimensionsPage() {
                           : "Read-only — values auto-synced from the linked source."}
                       </p>
                     </div>
-                    {valuesSubTab === "org_structure" && (
-                      <Link href="/dashboard/business/setup/organisation"
-                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
-                        <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
-                        Go to Organisation → Structure
-                      </Link>
-                    )}
-                    {valuesSubTab === "employee_master" && (
-                      <Link href="/dashboard/business/settings/employees"
-                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
-                        <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
-                        Go to Employees
-                      </Link>
-                    )}
+                    {valuesSubTab === "org_structure" && (() => {
+                      const returnUrl = encodeURIComponent(
+                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}`
+                      );
+                      return (
+                        <Link href={`/dashboard/business/setup/organisation?tab=structure&returnTo=${returnUrl}`}
+                          className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
+                          <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
+                          Go to Organisation → Structure
+                        </Link>
+                      );
+                    })()}
+                    {valuesSubTab === "employee_master" && (() => {
+                      const returnUrl = encodeURIComponent(
+                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}`
+                      );
+                      return (
+                        <Link href={`/dashboard/business/settings/employees?returnTo=${returnUrl}`}
+                          className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
+                          <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
+                          Go to Employees
+                        </Link>
+                      );
+                    })()}
                     {currentVals.length > 0 ? (
                       <div className="border border-gray-200 rounded-lg overflow-hidden">
                         <table className="min-w-full text-xs">
@@ -1293,5 +1310,13 @@ export default function DimensionsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DimensionsPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <DimensionsPage />
+    </Suspense>
   );
 }

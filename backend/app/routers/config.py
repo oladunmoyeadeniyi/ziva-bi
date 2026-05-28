@@ -599,7 +599,7 @@ async def get_dimension_inline_values(
         for node in nodes_result.scalars().all():
             results.append({
                 "id": str(node.id),
-                "code": node.cost_center_code or node.code or "",
+                "code": getattr(node, "cost_center_code", None) or getattr(node, "code", "") or "",
                 "name": node.name,
                 "source": "org_structure",
                 "editable": False,
