@@ -21,7 +21,16 @@ interface Dimension {
   value_source: string;
   description?: string;
   icon?: string;
+  display_name?: string;
   dimension_sources?: DimensionSource[];
+}
+
+interface InlineValue {
+  id: string;
+  code: string;
+  name: string;
+  source: string;
+  editable: boolean;
 }
 
 interface OrgNode {
@@ -46,12 +55,12 @@ function generateCode(name: string): string {
 
 type Tab = "setup" | "values";
 type AddStep = "name" | "sources" | "review";
-type ValuesSubTab = "employee" | "manual";
+type ValuesSubTab = string;
 
 const STANDARD_CODES = new Set([
   "cost_center", "material", "statistical_order", "statistical_internal_order",
   "real_order", "real_internal_order", "customer_order", "employee",
-  "brand", "region", "channel", "project",
+  "brand", "region", "channel", "project", "trading_partner",
 ]);
 
 const STANDARD_OPTIONS = [
@@ -71,6 +80,7 @@ const SOURCE_LABELS: Record<string, string> = {
   customer_order: "Manual now · Auto when AR active",
   product_master: "Auto — product master (future)",
   customer_master: "Customer master (future)",
+  group_structure: "Group structure (future)",
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -136,7 +146,17 @@ export default function DimensionsPage() {
 
   // Values tab
   const [selectedDimForValues, setSelectedDimForValues] = useState<string>("");
-  const [valuesSubTab, setValuesSubTab] = useState<ValuesSubTab>("employee");
+  const [valuesSubTab, setValuesSubTab] = useState<ValuesSubTab>("manual");
+
+  // Inline values (merged auto + manual per dimension)
+  const [inlineValues, setInlineValues] = useState<Record<string, InlineValue[]>>({});
+  const [inlineValuesLoading, setInlineValuesLoading] = useState<Record<string, boolean>>({});
+
+  // Deactivated section collapsed by default
+  const [deactivatedExpanded, setDeactivatedExpanded] = useState(false);
+
+  // Edit display name
+  const [editDisplayName, setEditDisplayName] = useState("");
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -175,6 +195,22 @@ export default function DimensionsPage() {
       setDimValues(prev => ({ ...prev, [dimId]: vals }));
     } catch {}
   }, [accessToken]);
+
+  const loadInlineValues = async (dimId: string) => {
+    if (!accessToken) return;
+    setInlineValuesLoading(prev => ({ ...prev, [dimId]: true }));
+    try {
+      const vals = await apiFetch<InlineValue[]>(
+        `/api/config/dimensions/${dimId}/inline-values`,
+        { token: accessToken }
+      );
+      setInlineValues(prev => ({ ...prev, [dimId]: vals }));
+    } catch {
+      setInlineValues(prev => ({ ...prev, [dimId]: [] }));
+    } finally {
+      setInlineValuesLoading(prev => ({ ...prev, [dimId]: false }));
+    }
+  };
 
   const toggleExpand = (id: string, dim?: Dimension) => {
     setExpandedIds(prev => {
@@ -253,6 +289,7 @@ export default function DimensionsPage() {
           name: editName.trim(),
           code: editCode.trim(),
           is_required: editRequired,
+          display_name: editDisplayName.trim() || null,
         }),
       });
       setEditId(null);
@@ -346,6 +383,7 @@ export default function DimensionsPage() {
       setAddValueName("");
       setAddValueDesc("");
       await loadDimValues(dimId);
+      await loadInlineValues(dimId);
     } catch (err) {
       setAddValueError(err instanceof Error ? err.message : "Failed to add value.");
     } finally {
@@ -690,7 +728,12 @@ export default function DimensionsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-medium text-gray-900">{dim.name}</p>
+                          <p className="text-sm font-medium text-gray-900">
+                            {dim.display_name || dim.name}
+                            {dim.display_name && dim.display_name !== dim.name && (
+                              <span className="text-xs font-normal text-gray-400 ml-1.5">({dim.name})</span>
+                            )}
+                          </p>
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                             SOURCE_COLORS[dim.value_source ?? "manual"]
                           }`}>
@@ -862,6 +905,12 @@ export default function DimensionsPage() {
                               <input type="text" value={editCode} onChange={e => setEditCode(e.target.value)}
                                 className="px-2 py-1.5 border border-gray-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
                             </div>
+                            <div className="mb-2">
+                              <label className="block text-xs font-medium text-gray-500 mb-1">Display name (optional — rename for your organisation)</label>
+                              <input type="text" value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)}
+                                placeholder={`Default: ${dim.name}`}
+                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </div>
                             <label className="flex items-center gap-2 text-xs text-gray-700 mb-2">
                               <input type="checkbox" checked={editRequired}
                                 onChange={e => setEditRequired(e.target.checked)} className="accent-blue-600" />
@@ -881,7 +930,7 @@ export default function DimensionsPage() {
                         ) : (
                           <div className="flex items-center gap-3 mt-3 pt-2 border-t border-gray-100">
                             <button type="button"
-                              onClick={e => { e.stopPropagation(); setEditId(dim.id); setEditName(dim.name); setEditCode(dim.code); setEditRequired(dim.is_required); }}
+                              onClick={e => { e.stopPropagation(); setEditId(dim.id); setEditName(dim.name); setEditCode(dim.code); setEditRequired(dim.is_required); setEditDisplayName(dim.display_name || ""); }}
                               className="text-xs text-gray-500 hover:text-gray-800 flex items-center gap-1">
                               <i className="ti ti-edit" style={{ fontSize: 12 }} /> Edit
                             </button>
@@ -923,8 +972,12 @@ export default function DimensionsPage() {
           {/* Deactivated dimensions */}
           {inactiveDims.length > 0 && (
             <div className="mt-4">
-              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Deactivated</p>
-              <div className="space-y-2">
+              <button type="button" onClick={() => setDeactivatedExpanded(v => !v)}
+                className="flex items-center gap-2 text-xs font-medium text-gray-400 uppercase tracking-wide mb-2 hover:text-gray-600">
+                <i className={`ti ti-chevron-${deactivatedExpanded ? "down" : "right"}`} style={{ fontSize: 12 }} />
+                Deactivated ({inactiveDims.length})
+              </button>
+              {deactivatedExpanded && <div className="space-y-2">
                 {inactiveDims.map(dim => (
                   <div key={dim.id}
                     className="border border-gray-200 rounded-xl bg-gray-50 opacity-60 px-4 py-3 flex items-center gap-3">
@@ -949,7 +1002,7 @@ export default function DimensionsPage() {
                     </div>
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
           )}
 
@@ -969,10 +1022,19 @@ export default function DimensionsPage() {
           <div className="flex items-center gap-3 mb-4">
             <label className="text-sm font-medium text-gray-600">Dimension:</label>
             <select value={selectedDimForValues}
-              onChange={e => { setSelectedDimForValues(e.target.value); setValuesSubTab("employee"); }}
+              onChange={e => {
+                const newDimId = e.target.value;
+                setSelectedDimForValues(newDimId);
+                if (newDimId) {
+                  const newDim = activeDims.find(d => d.id === newDimId);
+                  const srcs = newDim?.dimension_sources ?? [];
+                  setValuesSubTab(srcs[0]?.source_type ?? "manual");
+                  loadInlineValues(newDimId);
+                }
+              }}
               className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 max-w-xs">
               <option value="">— Select dimension —</option>
-              {activeDims.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {activeDims.map(d => <option key={d.id} value={d.id}>{d.display_name || d.name}</option>)}
             </select>
           </div>
 
@@ -986,200 +1048,177 @@ export default function DimensionsPage() {
             if (!dim) return null;
 
             const sources = dim.dimension_sources ?? [];
-            const isOrgOnly = sources.length === 1 && sources[0].source_type === "org_structure";
-            const isHybrid = sources.length > 1 || (sources.length === 1 && dim.value_source === "hybrid");
+            const autoSourceKeys = sources.map(s => s.source_type).filter(k => k !== "manual");
+            const allTabs = [...autoSourceKeys, "manual"];
 
-            if (isOrgOnly) {
-              return (
-                <div>
-                  <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-4">
-                    <i className="ti ti-refresh text-blue-600 flex-shrink-0" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-blue-700">Read-only — values auto-synced from Organisation → Structure.</p>
-                  </div>
-                  <Link href="/dashboard/business/setup/organisation"
-                    className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                    <i className="ti ti-arrow-right" style={{ fontSize: 13 }} />
-                    Go to Organisation → Structure
-                  </Link>
-                </div>
-              );
-            }
+            const vals = inlineValues[selectedDimForValues] ?? [];
+            const isLoadingVals = inlineValuesLoading[selectedDimForValues] ?? false;
 
-            if (isHybrid) {
-              return (
-                <div>
-                  <div className="flex gap-0 border-b border-gray-200 mb-4">
-                    {(["employee", "manual"] as const).map(st => (
-                      <button key={st} type="button" onClick={() => setValuesSubTab(st)}
-                        className={`px-3 py-2 text-sm border-b-2 transition-colors ${
-                          valuesSubTab === st
-                            ? "border-blue-600 text-gray-900 font-medium"
-                            : "border-transparent text-gray-500 hover:text-gray-700"
-                        }`}>
-                        {st === "employee" ? "Auto-synced codes" : "Manual codes"}
-                      </button>
-                    ))}
-                  </div>
-                  {valuesSubTab === "employee" && (
-                    <div>
-                      <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-3">
-                        <i className="ti ti-refresh text-blue-600 flex-shrink-0" style={{ fontSize: 13 }} />
-                        <p className="text-xs text-blue-700">Auto-synced from configured sources. Manage employees on the Employees page.</p>
-                      </div>
-                      <Link href="/dashboard/business/settings/employees"
-                        className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                        <i className="ti ti-arrow-right" style={{ fontSize: 13 }} />
-                        Go to Employees
-                      </Link>
-                    </div>
-                  )}
-                  {valuesSubTab === "manual" && (
-                    <div>
-                      <div className="flex gap-2 mb-3">
-                        <button type="button"
-                          onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
-                          className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add code</button>
-                        <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
-                          className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
-                          <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
-                        </button>
-                        <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
-                          <i className="ti ti-upload" style={{ fontSize: 11 }} /> Upload
-                          <input type="file" accept=".xlsx,.csv" className="hidden"
-                            onChange={e => {
-                              const file = e.target.files?.[0];
-                              if (file) handleBulkUpload(dim.id, file);
-                              e.target.value = "";
-                            }} />
-                        </label>
-                      </div>
-                      {addValueDimId === dim.id && (
-                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-3">
-                          <div className="grid grid-cols-2 gap-2 mb-2">
-                            <input type="text" value={addValueCode}
-                              onChange={e => setAddValueCode(e.target.value)}
-                              placeholder="Code *"
-                              className="px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                            <input type="text" value={addValueName}
-                              onChange={e => setAddValueName(e.target.value)}
-                              placeholder="Name *"
-                              className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                          </div>
-                          {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
-                          <div className="flex gap-2">
-                            <button type="button" onClick={() => handleAddValue(dim.id)}
-                              disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
-                              className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
-                              {addingValue ? "Adding…" : "Add"}
-                            </button>
-                            <button type="button"
-                              onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
-                              className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {dimValues[dim.id] && dimValues[dim.id].length > 0 ? (
-                        <div className="border border-gray-200 rounded-lg overflow-hidden">
-                          <table className="min-w-full text-xs">
-                            <thead className="bg-gray-50">
-                              <tr>
-                                <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
-                                <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {dimValues[dim.id].map(val => (
-                                <tr key={val.id} className="hover:bg-gray-50">
-                                  <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
-                                  <td className="px-3 py-2 text-gray-800">{val.name}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-gray-400 italic">No manual codes yet. Add non-employee codes like campaigns, vehicles, hubs, funds.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            }
+            const SOURCE_BADGE: Record<string, string> = {
+              org_structure: "bg-green-50 text-green-700",
+              employee_master: "bg-blue-50 text-blue-700",
+              manual: "bg-gray-100 text-gray-600",
+            };
+
+            const TAB_LABELS: Record<string, string> = {
+              org_structure: "Org structure",
+              employee_master: "Employee master",
+              product_master: "Product master",
+              customer_master: "Customer master",
+              group_structure: "Group structure",
+              manual: "Manual codes",
+            };
+
+            const currentVals = vals.filter(v => v.source === valuesSubTab);
 
             return (
               <div>
-                <div className="flex gap-2 mb-3">
-                  <button type="button"
-                    onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
-                    className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add value</button>
-                  <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
-                    className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
-                    <i className="ti ti-download" style={{ fontSize: 11 }} /> Download template
-                  </button>
-                  <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
-                    <i className="ti ti-upload" style={{ fontSize: 11 }} /> Bulk upload
-                    <input type="file" accept=".xlsx,.csv" className="hidden"
-                      onChange={e => {
-                        const file = e.target.files?.[0];
-                        if (file) handleBulkUpload(dim.id, file);
-                        e.target.value = "";
-                      }} />
-                  </label>
+                <div className="flex gap-0 border-b border-gray-200 mb-4">
+                  {allTabs.map(tab => (
+                    <button key={tab} type="button" onClick={() => setValuesSubTab(tab)}
+                      className={`px-3 py-2 text-sm border-b-2 transition-colors ${
+                        valuesSubTab === tab
+                          ? "border-blue-600 text-gray-900 font-medium"
+                          : "border-transparent text-gray-500 hover:text-gray-700"
+                      }`}>
+                      {TAB_LABELS[tab] ?? tab}
+                    </button>
+                  ))}
                 </div>
-                {addValueDimId === dim.id && (
-                  <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-3">
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                      <input type="text" value={addValueCode}
-                        onChange={e => setAddValueCode(e.target.value)}
-                        placeholder="Code *"
-                        className="px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                      <input type="text" value={addValueName}
-                        onChange={e => setAddValueName(e.target.value)}
-                        placeholder="Name *"
-                        className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    </div>
-                    <input type="text" value={addValueDesc}
-                      onChange={e => setAddValueDesc(e.target.value)}
-                      placeholder="Description (optional)"
-                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
-                    {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
-                    <div className="flex gap-2">
-                      <button type="button" onClick={() => handleAddValue(dim.id)}
-                        disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
-                        className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
-                        {addingValue ? "Adding…" : "Add"}
-                      </button>
-                      <button type="button"
-                        onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
-                        className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
-                        Cancel
-                      </button>
-                    </div>
+
+                {isLoadingVals ? (
+                  <div className="space-y-2">
+                    {[1,2,3].map(i => <div key={i} className="h-8 bg-gray-100 rounded animate-pulse" />)}
                   </div>
-                )}
-                {dimValues[dim.id] && dimValues[dim.id].length > 0 ? (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <table className="min-w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
-                          <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {dimValues[dim.id].map(val => (
-                          <tr key={val.id} className="hover:bg-gray-50">
-                            <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
-                            <td className="px-3 py-2 text-gray-800">{val.name}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                ) : valuesSubTab !== "manual" ? (
+                  <div>
+                    <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-3">
+                      <i className="ti ti-refresh text-blue-600 flex-shrink-0" style={{ fontSize: 13 }} />
+                      <p className="text-xs text-blue-700">
+                        {valuesSubTab === "org_structure"
+                          ? "Read-only — values auto-synced from Organisation → Structure."
+                          : valuesSubTab === "employee_master"
+                          ? "Read-only — values auto-synced from the employee master."
+                          : "Read-only — values auto-synced from the linked source."}
+                      </p>
+                    </div>
+                    {valuesSubTab === "org_structure" && (
+                      <Link href="/dashboard/business/setup/organisation"
+                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
+                        <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
+                        Go to Organisation → Structure
+                      </Link>
+                    )}
+                    {valuesSubTab === "employee_master" && (
+                      <Link href="/dashboard/business/settings/employees"
+                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
+                        <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
+                        Go to Employees
+                      </Link>
+                    )}
+                    {currentVals.length > 0 ? (
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <table className="min-w-full text-xs">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
+                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Source</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {currentVals.map(val => (
+                              <tr key={val.id} className="hover:bg-gray-50">
+                                <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
+                                <td className="px-3 py-2 text-gray-800">{val.name}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${SOURCE_BADGE[val.source] ?? "bg-gray-100 text-gray-600"}`}>
+                                    {TAB_LABELS[val.source] ?? val.source}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No values from this source yet.</p>
+                    )}
                   </div>
                 ) : (
-                  <p className="text-xs text-gray-400 italic">No values configured yet for {dim.name}.</p>
+                  <div>
+                    <div className="flex gap-2 mb-3">
+                      <button type="button"
+                        onClick={() => setAddValueDimId(dim.id)}
+                        className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">+ Add value</button>
+                      <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
+                        className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                        <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
+                      </button>
+                      <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
+                        <i className="ti ti-upload" style={{ fontSize: 11 }} /> Upload
+                        <input type="file" accept=".xlsx,.csv" className="hidden"
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (file) handleBulkUpload(dim.id, file);
+                            e.target.value = "";
+                          }} />
+                      </label>
+                    </div>
+                    {addValueDimId === dim.id && (
+                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-3">
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <input type="text" value={addValueCode}
+                            onChange={e => setAddValueCode(e.target.value)}
+                            placeholder="Code *"
+                            className="px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                          <input type="text" value={addValueName}
+                            onChange={e => setAddValueName(e.target.value)}
+                            placeholder="Name *"
+                            className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                        </div>
+                        <input type="text" value={addValueDesc}
+                          onChange={e => setAddValueDesc(e.target.value)}
+                          placeholder="Description (optional)"
+                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
+                        {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => handleAddValue(dim.id)}
+                            disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
+                            className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
+                            {addingValue ? "Adding…" : "Add"}
+                          </button>
+                          <button type="button"
+                            onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
+                            className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {currentVals.length > 0 ? (
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <table className="min-w-full text-xs">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
+                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {currentVals.map(val => (
+                              <tr key={val.id} className="hover:bg-gray-50">
+                                <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
+                                <td className="px-3 py-2 text-gray-800">{val.name}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No manual values yet. Add codes that aren&apos;t in any auto-synced source.</p>
+                    )}
+                  </div>
                 )}
               </div>
             );

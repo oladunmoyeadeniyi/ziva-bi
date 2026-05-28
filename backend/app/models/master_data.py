@@ -63,6 +63,8 @@ class TenantDimension(Base):
     value_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="manual")
     # M8.2 source redesign: list of connected source dicts e.g. [{"source_type": "org_structure", "filter": None}]
     dimension_sources: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    # Tenant-facing rename — overrides name in UI while preserving code for system logic
+    display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

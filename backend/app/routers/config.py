@@ -8,6 +8,7 @@ Endpoints:
     GET    /api/config/dimensions                              List tenant dimensions
     GET    /api/config/dimensions/org-structure-preview        Cost center nodes for add form
     POST   /api/config/dimensions                              Create dimension
+    GET    /api/config/dimensions/{id}/inline-values           Merged values from all sources
     PATCH  /api/config/dimensions/{id}                         Update dimension
     DELETE /api/config/dimensions/{id}                         Soft delete (is_active=false)
     PATCH  /api/config/dimensions/{id}/reactivate              Reactivate a soft-deleted dimension
@@ -65,6 +66,7 @@ from app.models.master_data import (
     CategoryGLMapping,
     ChartOfAccount,
     DimensionValue,
+    Employee,
     GLDimensionRequirement,
     TenantDimension,
 )
@@ -172,7 +174,7 @@ STANDARD_DIMENSIONS = [
         "is_required": True,
         "value_source": "org_structure",
         "dimension_sources": [{"source_type": "org_structure", "filter": None}],
-        "description": "Tracks costs by organisational cost center. Auto-synced from org structure.",
+        "description": "Tracks costs by organisational cost center.",
         "icon": "building-community",
         "sort_order": 1,
     },
@@ -182,7 +184,7 @@ STANDARD_DIMENSIONS = [
         "is_required": False,
         "value_source": "product_master",
         "dimension_sources": [{"source_type": "product_master", "filter": None}],
-        "description": "Tags transactions with product or SKU codes.",
+        "description": "Tags transactions with product or SKU codes. Auto-syncs from product master when Inventory active.",
         "icon": "barcode",
         "sort_order": 2,
     },
@@ -216,24 +218,33 @@ STANDARD_DIMENSIONS = [
         "icon": "users-group",
         "sort_order": 5,
     },
+    {
+        "name": "Trading partner",
+        "code": "trading_partner",
+        "is_required": False,
+        "value_source": "manual",
+        "dimension_sources": [{"source_type": "group_structure", "filter": None}],
+        "description": "Intercompany entities — subsidiaries, branches, related parties. Manual now, auto-syncs from group structure when Intercompany module is active.",
+        "icon": "building-bridge",
+        "sort_order": 6,
+    },
 ]
 
 # Correct value_source + dimension_sources for dimensions created before these columns existed
 _SOURCE_FIXES = {
     "cost_center": ("org_structure", [{"source_type": "org_structure", "filter": None}]),
     "material": ("product_master", [{"source_type": "product_master", "filter": None}]),
-    "statistical_order": ("hybrid", [{"source_type": "employee_master", "filter": None}]),
     "statistical_internal_order": ("hybrid", [{"source_type": "employee_master", "filter": None}]),
-    "real_order": ("manual", []),
     "real_internal_order": ("manual", []),
     "customer_order": ("customer_order", [{"source_type": "customer_master", "filter": None}]),
+    "trading_partner": ("manual", [{"source_type": "group_structure", "filter": None}]),
 }
 
 # Codes that identify standard (non-custom) dimensions — cannot be permanently deleted
 STANDARD_DIMENSION_CODES = {
     "cost_center", "material", "statistical_order", "statistical_internal_order",
     "real_order", "real_internal_order", "customer_order", "employee",
-    "brand", "region", "channel", "project",
+    "brand", "region", "channel", "project", "trading_partner",
 }
 
 
@@ -381,6 +392,7 @@ async def create_dimension(
         is_required=data.is_required,
         value_source=data.value_source,
         dimension_sources=data.dimension_sources,
+        display_name=data.display_name,
         description=data.description,
         icon=data.icon,
     )
@@ -560,6 +572,77 @@ async def _get_dimension_or_404(
     if not dim:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dimension not found.")
     return dim
+
+
+@router.get("/dimensions/{dimension_id}/inline-values")
+async def get_dimension_inline_values(
+    dimension_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """
+    Return all values for a dimension in one call, merging auto-synced and manual sources.
+
+    Used by the Master data / values tab to show inline values without jumping to source.
+    Returns a flat list with source labels for each entry.
+    """
+    tenant_id = _require_tenant(current_user)
+    dim = await _get_dimension_or_404(dimension_id, tenant_id, db)
+    results: list[dict] = []
+
+    sources = dim.dimension_sources or []
+    source_types = [s.get("source_type") for s in sources]
+
+    if "org_structure" in source_types or dim.value_source == "org_structure":
+        nodes_result = await db.execute(
+            select(OrgStructureNode).where(
+                OrgStructureNode.tenant_id == tenant_id,
+                OrgStructureNode.node_type == "Cost center",
+                OrgStructureNode.is_active.is_(True),
+            ).order_by(OrgStructureNode.sort_order)
+        )
+        for node in nodes_result.scalars().all():
+            results.append({
+                "id": str(node.id),
+                "code": node.cost_center_code or node.code or "",
+                "name": node.name,
+                "source": "org_structure",
+                "editable": False,
+            })
+
+    if "employee_master" in source_types or dim.value_source in ("employee_master", "hybrid"):
+        emp_result = await db.execute(
+            select(Employee).where(
+                Employee.tenant_id == tenant_id,
+                Employee.is_active.is_(True),
+            ).order_by(Employee.last_name)
+        )
+        for emp in emp_result.scalars().all():
+            results.append({
+                "id": str(emp.id),
+                "code": getattr(emp, "employee_code", None) or str(emp.id)[:8],
+                "name": f"{emp.first_name or ''} {emp.last_name or ''}".strip(),
+                "source": "employee_master",
+                "editable": False,
+            })
+
+    vals_result = await db.execute(
+        select(DimensionValue).where(
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+            DimensionValue.is_active.is_(True),
+        ).order_by(DimensionValue.code)
+    )
+    for val in vals_result.scalars().all():
+        results.append({
+            "id": str(val.id),
+            "code": val.code,
+            "name": val.name,
+            "source": "manual",
+            "editable": True,
+        })
+
+    return results
 
 
 @router.get("/dimensions/{dimension_id}/values", response_model=list[DimensionValueResponse])
