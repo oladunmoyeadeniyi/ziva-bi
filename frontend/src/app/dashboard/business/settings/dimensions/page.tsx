@@ -184,6 +184,18 @@ function DimensionsPage() {
   const [cascadeMode, setCascadeMode] = useState<"all" | "parent_only" | "choose" | null>(null);
   const [savingExclusion, setSavingExclusion] = useState(false);
 
+  // Tree collapse state — empty = all expanded
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+
+  const toggleNodeCollapse = (nodeCode: string) => {
+    setCollapsedNodes(prev => {
+      const next = new Set(prev);
+      if (next.has(nodeCode)) next.delete(nodeCode);
+      else next.add(nodeCode);
+      return next;
+    });
+  };
+
   const load = useCallback(async () => {
     if (!accessToken) return;
     try {
@@ -481,18 +493,21 @@ function DimensionsPage() {
     return roots;
   };
 
-  const getExcludedCodes = (dim: Dimension): Set<string> => {
-    const orgSource = (dim.dimension_sources ?? []).find(s => s.source_type === "org_structure");
-    const excluded = orgSource?.filter?.excluded_codes ?? [];
-    return new Set<string>(excluded);
+  const getExcludedCodes = (dim: Dimension, sourceType: string = "org_structure"): Set<string> => {
+    const src = (dim.dimension_sources ?? []).find(s => s.source_type === sourceType);
+    return new Set<string>(src?.filter?.excluded_codes ?? []);
   };
 
-  const saveExclusions = async (dim: Dimension, excludedCodes: string[]) => {
+  const saveExclusions = async (
+    dim: Dimension,
+    excludedCodes: string[],
+    sourceType: string = "org_structure"
+  ) => {
     if (!accessToken) return;
     setSavingExclusion(true);
     try {
       const newSources = (dim.dimension_sources ?? []).map(s => {
-        if (s.source_type === "org_structure") {
+        if (s.source_type === sourceType) {
           return { ...s, filter: { ...(s.filter ?? {}), excluded_codes: excludedCodes } };
         }
         return s;
@@ -527,7 +542,7 @@ function DimensionsPage() {
       const newExcluded = new Set(currentlyExcluded);
       if (isExcluded) newExcluded.delete(node.code);
       else newExcluded.add(node.code);
-      saveExclusions(dim, Array.from(newExcluded));
+      saveExclusions(dim, Array.from(newExcluded), "org_structure");
     }
   };
 
@@ -550,7 +565,7 @@ function DimensionsPage() {
         cascadeSelectedChildren.forEach(code => newExcluded.delete(code));
       }
     }
-    await saveExclusions(dim, Array.from(newExcluded));
+    await saveExclusions(dim, Array.from(newExcluded), "org_structure");
     setCascadeModal(null);
     setCascadeMode(null);
   };
@@ -1249,30 +1264,142 @@ function DimensionsPage() {
                       );
                     })()}
                     {valuesSubTab === "employee_master" && (() => {
-                      const returnUrl = encodeURIComponent(
-                        `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}&subtab=${valuesSubTab}`
-                      );
+                      const empVals = vals.filter(v => v.source === "employee_master");
+                      const excludedEmpCodes = getExcludedCodes(dim, "employee_master");
+
+                      const sortedEmpVals = [...empVals].sort((a, b) => {
+                        const aEx = excludedEmpCodes.has(a.code) ? 1 : 0;
+                        const bEx = excludedEmpCodes.has(b.code) ? 1 : 0;
+                        return aEx - bEx;
+                      });
+
                       return (
-                        <Link href={`/dashboard/business/settings/employees?returnTo=${returnUrl}`}
-                          className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 mb-3">
-                          <i className="ti ti-arrow-right" style={{ fontSize: 12 }} />
-                          Go to Employees
-                        </Link>
+                        <div>
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-start gap-2 p-2.5 bg-blue-50 rounded-md flex-1 mr-3">
+                              <i className="ti ti-refresh text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                              <p className="text-xs text-blue-700">
+                                Auto-synced from employee master. Uncheck employees to exclude them from this dimension.
+                              </p>
+                            </div>
+                            <Link
+                              href={`/dashboard/business/settings/employees?returnTo=${encodeURIComponent(
+                                `/dashboard/business/settings/dimensions?tab=values&dim=${dim.id}&subtab=employee_master`
+                              )}`}
+                              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 flex-shrink-0 mt-2.5">
+                              <i className="ti ti-external-link" style={{ fontSize: 12 }} />
+                              Go to source
+                            </Link>
+                          </div>
+
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs text-gray-500">
+                              {empVals.length - excludedEmpCodes.size} of {empVals.length} employees included.
+                              {excludedEmpCodes.size > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => saveExclusions(dim, [], "employee_master")}
+                                  className="ml-2 text-blue-600 hover:text-blue-800">
+                                  Include all
+                                </button>
+                              )}
+                            </p>
+                            {savingExclusion && (
+                              <span className="text-xs text-gray-400 flex items-center gap-1">
+                                <i className="ti ti-loader-2 animate-spin" style={{ fontSize: 12 }} /> Saving…
+                              </span>
+                            )}
+                          </div>
+
+                          {sortedEmpVals.length === 0 ? (
+                            <p className="text-xs text-gray-400 italic py-4 text-center">
+                              No employees loaded yet. Add employees on the Employees page.
+                            </p>
+                          ) : (
+                            <div className="border border-gray-200 rounded-lg overflow-hidden">
+                              <table className="min-w-full text-xs">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="px-3 py-2 w-8">
+                                      <input
+                                        type="checkbox"
+                                        className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                                        checked={excludedEmpCodes.size === 0}
+                                        ref={el => {
+                                          if (el) el.indeterminate =
+                                            excludedEmpCodes.size > 0 &&
+                                            excludedEmpCodes.size < empVals.length;
+                                        }}
+                                        onChange={e => saveExclusions(
+                                          dim,
+                                          e.target.checked ? [] : empVals.map(v => v.code),
+                                          "employee_master"
+                                        )}
+                                      />
+                                    </th>
+                                    <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Code</th>
+                                    <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Name</th>
+                                    <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {sortedEmpVals.map(emp => {
+                                    const isExcluded = excludedEmpCodes.has(emp.code);
+                                    return (
+                                      <tr key={emp.id} className={`hover:bg-gray-50 ${isExcluded ? "opacity-40" : ""}`}>
+                                        <td className="px-3 py-2">
+                                          <input
+                                            type="checkbox"
+                                            className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                                            checked={!isExcluded}
+                                            onChange={() => {
+                                              const newExcluded = new Set(excludedEmpCodes);
+                                              if (isExcluded) newExcluded.delete(emp.code);
+                                              else newExcluded.add(emp.code);
+                                              saveExclusions(dim, Array.from(newExcluded), "employee_master");
+                                            }}
+                                          />
+                                        </td>
+                                        <td className="px-3 py-2 font-mono text-gray-600">{emp.code}</td>
+                                        <td className="px-3 py-2 text-gray-800">{emp.name}</td>
+                                        <td className="px-3 py-2">
+                                          {isExcluded
+                                            ? <span className="text-[10px] bg-red-50 text-red-500 px-1.5 py-0.5 rounded">Excluded</span>
+                                            : <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded">Included</span>
+                                          }
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
                       );
                     })()}
                     {valuesSubTab === "org_structure" ? (() => {
                       const orgVals = vals.filter(v => v.source === "org_structure");
-                      const excludedCodes = getExcludedCodes(dim);
+                      const excludedCodes = getExcludedCodes(dim, "org_structure");
                       const tree = buildTree(orgVals);
 
                       const renderNode = (
                         node: InlineValue & { children: (InlineValue & { children: InlineValue[] })[] },
-                        depth: number = 0
+                        depth: number = 0,
+                        excCodes: Set<string> = excludedCodes
                       ): React.ReactNode => {
-                        const isExcluded = excludedCodes.has(node.code);
+                        const isExcluded = excCodes.has(node.code);
                         const hasChildren = node.children.length > 0;
-                        const someChildrenExcluded = hasChildren && node.children.some(c => excludedCodes.has(c.code));
-                        const allChildrenExcluded = hasChildren && node.children.every(c => excludedCodes.has(c.code));
+                        const isCollapsed = collapsedNodes.has(node.code);
+                        const sortedChildren = hasChildren
+                          ? [...node.children].sort((a, b) => {
+                              const aEx = excCodes.has(a.code) ? 1 : 0;
+                              const bEx = excCodes.has(b.code) ? 1 : 0;
+                              return aEx - bEx;
+                            })
+                          : [];
+                        const someChildrenExcluded = hasChildren && node.children.some(c => excCodes.has(c.code));
+                        const allChildrenExcluded = hasChildren && node.children.every(c => excCodes.has(c.code));
                         const isIndeterminate = hasChildren && someChildrenExcluded && !allChildrenExcluded && !isExcluded;
                         return (
                           <React.Fragment key={node.code}>
@@ -1283,12 +1410,23 @@ function DimensionsPage() {
                                   className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
                                   checked={!isExcluded}
                                   ref={el => { if (el) el.indeterminate = isIndeterminate; }}
-                                  onChange={() => handleNodeCheck(dim, node, orgVals, excludedCodes)}
+                                  onChange={() => handleNodeCheck(dim, node, orgVals, excCodes)}
                                 />
                               </td>
                               <td className="px-3 py-2 font-mono text-gray-600 text-xs">
                                 <span style={{ paddingLeft: `${depth * 16}px` }} className="flex items-center gap-1">
-                                  {depth > 0 && <span className="text-gray-300 mr-1">└</span>}
+                                  {depth > 0 && <span className="text-gray-300 mr-0.5">└</span>}
+                                  {hasChildren && (
+                                    <button
+                                      type="button"
+                                      onClick={e => { e.stopPropagation(); toggleNodeCollapse(node.code); }}
+                                      className="text-gray-400 hover:text-gray-600 flex-shrink-0 w-4"
+                                      title={isCollapsed ? "Expand children" : "Collapse children"}
+                                    >
+                                      <i className={`ti ti-chevron-${isCollapsed ? "right" : "down"}`} style={{ fontSize: 11 }} />
+                                    </button>
+                                  )}
+                                  {!hasChildren && <span className="w-4 flex-shrink-0" />}
                                   {node.code}
                                 </span>
                               </td>
@@ -1300,7 +1438,9 @@ function DimensionsPage() {
                                 }
                               </td>
                             </tr>
-                            {node.children.map(child => renderNode(child as InlineValue & { children: (InlineValue & { children: InlineValue[] })[] }, depth + 1))}
+                            {hasChildren && !isCollapsed && sortedChildren.map(child =>
+                              renderNode(child as InlineValue & { children: (InlineValue & { children: InlineValue[] })[] }, depth + 1, excCodes)
+                            )}
                           </React.Fragment>
                         );
                       };
@@ -1311,7 +1451,7 @@ function DimensionsPage() {
                             <p className="text-xs text-gray-500">
                               {orgVals.length - excludedCodes.size} of {orgVals.length} cost centers included.
                               {excludedCodes.size > 0 && (
-                                <button type="button" onClick={() => saveExclusions(dim, [])}
+                                <button type="button" onClick={() => saveExclusions(dim, [], "org_structure")}
                                   className="ml-2 text-blue-600 hover:text-blue-800">
                                   Include all
                                 </button>
@@ -1332,7 +1472,7 @@ function DimensionsPage() {
                                       className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
                                       checked={excludedCodes.size === 0}
                                       ref={el => { if (el) el.indeterminate = excludedCodes.size > 0 && excludedCodes.size < orgVals.length; }}
-                                      onChange={e => saveExclusions(dim, e.target.checked ? [] : orgVals.map(v => v.code))}
+                                      onChange={e => saveExclusions(dim, e.target.checked ? [] : orgVals.map(v => v.code), "org_structure")}
                                     />
                                   </th>
                                   <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Code</th>
@@ -1341,7 +1481,7 @@ function DimensionsPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {tree.map(node => renderNode(node as InlineValue & { children: (InlineValue & { children: InlineValue[] })[] }))}
+                                {tree.map(node => renderNode(node as any, 0, excludedCodes))}
                               </tbody>
                             </table>
                           </div>
@@ -1607,7 +1747,7 @@ function DimensionsPage() {
               <button type="button"
                 onClick={() => {
                   const dim = activeDims.find(d => d.id === selectedDimForValues);
-                  if (dim) applyCascade(dim, getExcludedCodes(dim));
+                  if (dim) applyCascade(dim, getExcludedCodes(dim, "org_structure"));
                 }}
                 disabled={savingExclusion || !cascadeMode || (cascadeMode === "choose" && cascadeSelectedChildren.size === 0)}
                 className={`px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50 flex items-center gap-1.5 ${
