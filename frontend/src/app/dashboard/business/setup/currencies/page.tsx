@@ -112,11 +112,12 @@ interface RevalGL {
 }
 
 interface RevalRules {
-  method?: "cumulative" | "reverse_restate";
+  method?: "directional_netting" | "cumulative" | "reverse_restate";
   reverse_restate_mode?: "separate_entries" | "net_journal";
   year_end_crossing?: "net_journal" | "separate_jan1" | "cumulative_crossover";
-  settlement_rate_basis?: "prior_period_closing" | "original_transaction" | "current_carrying";
+  settlement_rate_basis?: "original_transaction" | "prior_period_closing" | "current_carrying";
   partial_settlement_method?: "fifo" | "specific_id" | "weighted_average";
+  reversal_gl_preference?: "same_gl" | "opposite_gl";
   rate_source?: string;
   frequency?: "monthly" | "quarterly" | "yearly" | "at_period_close";
   scope?: "all" | "selected";
@@ -1081,9 +1082,14 @@ export default function CurrenciesPage() {
             <div className="space-y-2 mb-3">
               {[
                 {
+                  value: "directional_netting",
+                  label: "Directional netting (recommended — best practice)",
+                  desc: "Each period, computes net unrealised position from original booking rate. If direction changes (loss → gain or gain → loss), fully reverses prior GL balance then posts net remainder to opposite GL. At any time, exactly one unrealised GL has a balance per invoice. IAS 21 compliant. Used by SAP FI and Oracle.",
+                },
+                {
                   value: "cumulative",
                   label: "Cumulative",
-                  desc: "Post only the incremental movement each period. Prior entries remain on the books. Most common in practice.",
+                  desc: "Post only the incremental movement each period. Prior entries remain on the books. Both gain and loss GLs may be populated simultaneously for the same invoice.",
                 },
                 {
                   value: "reverse_restate",
@@ -1094,7 +1100,7 @@ export default function CurrenciesPage() {
                 <label
                   key={opt.value}
                   className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                    (config.revaluation_rules?.method ?? "cumulative") === opt.value
+                    (config.revaluation_rules?.method ?? "directional_netting") === opt.value
                       ? "border-blue-400 bg-blue-50"
                       : "border-gray-200 hover:bg-gray-50"
                   }`}
@@ -1102,7 +1108,7 @@ export default function CurrenciesPage() {
                   <input
                     type="radio"
                     name="reval_method"
-                    checked={(config.revaluation_rules?.method ?? "cumulative") === opt.value}
+                    checked={(config.revaluation_rules?.method ?? "directional_netting") === opt.value}
                     onChange={() => setRevalField("method", opt.value)}
                     className="accent-blue-600 mt-0.5 flex-shrink-0"
                   />
@@ -1113,6 +1119,67 @@ export default function CurrenciesPage() {
                 </label>
               ))}
             </div>
+
+            {/* Directional netting info box */}
+            {(config.revaluation_rules?.method ?? "directional_netting") === "directional_netting" && (
+              <div className="ml-4 mt-2 p-3 bg-green-50 border border-green-100 rounded-lg">
+                <p className="text-xs font-medium text-green-800 mb-1">How directional netting works</p>
+                <ul className="text-xs text-green-700 space-y-1 list-none">
+                  <li>• Jan unrealised loss ₦300k → FX loss GL: ₦300k</li>
+                  <li>• Feb net position ₦150k gain → Reverse ₦300k loss, post ₦150k gain → FX loss GL: zero, FX gain GL: ₦150k</li>
+                  <li>• Mar net position ₦450k loss → Reverse ₦150k gain, post ₦450k loss → FX gain GL: zero, FX loss GL: ₦450k</li>
+                </ul>
+                <p className="text-xs text-green-600 mt-1.5">
+                  Settlement always compares actual rate vs original booking rate. All outstanding
+                  unrealised on the invoice auto-reverses at settlement.
+                </p>
+              </div>
+            )}
+
+            {/* Cumulative — reversal GL preference */}
+            {config.revaluation_rules?.method === "cumulative" && (
+              <div className="ml-4 mt-3 space-y-2 border-l-2 border-gray-200 pl-4">
+                <p className="text-xs font-medium text-gray-700 mb-2">
+                  Reversal GL preference
+                </p>
+                <p className="text-xs text-gray-500 mb-2">
+                  When reversing a prior unrealised entry, which GL should the reversal post to?
+                </p>
+                {[
+                  {
+                    value: "same_gl",
+                    label: "Same GL as original (default)",
+                    desc: "Reversal credits/debits the same GL the original entry was posted to. Reduces the balance in that GL.",
+                  },
+                  {
+                    value: "opposite_gl",
+                    label: "Cross to opposite GL",
+                    desc: "Reversal posts to the gain/loss opposite GL. Both GLs may show balances simultaneously.",
+                  },
+                ].map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer ${
+                      (config.revaluation_rules?.reversal_gl_preference ?? "same_gl") === opt.value
+                        ? "border-blue-300 bg-blue-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="reversal_gl_pref"
+                      checked={(config.revaluation_rules?.reversal_gl_preference ?? "same_gl") === opt.value}
+                      onChange={() => setRevalField("reversal_gl_preference", opt.value)}
+                      className="accent-blue-600 mt-0.5 flex-shrink-0"
+                    />
+                    <div>
+                      <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                      <p className="text-xs text-gray-500">{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
 
             {/* Reverse and restate sub-options */}
             {config.revaluation_rules?.method === "reverse_restate" && (
@@ -1214,50 +1281,70 @@ export default function CurrenciesPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
               Settlement rate basis
             </p>
-            <p className="text-xs text-gray-500 mb-3">
-              When a foreign currency balance is settled, what rate does the system compare against
-              to compute the realised FX difference?
-            </p>
-            <div className="space-y-2">
-              {[
-                {
-                  value: "prior_period_closing",
-                  label: "Prior period closing rate (recommended — IAS 21)",
-                  desc: "Realised difference = settlement rate minus last period-end closing rate. Most accurate for IAS 21 reporting.",
-                },
-                {
-                  value: "original_transaction",
-                  label: "Original transaction rate",
-                  desc: "Realised difference = settlement rate minus original invoice/transaction rate. Simpler but combines all period movements into one realised entry.",
-                },
-                {
-                  value: "current_carrying",
-                  label: "Current carrying rate",
-                  desc: "Realised difference = settlement rate minus current NGN carrying value ÷ FCY balance. Equivalent to prior period closing rate in most cases.",
-                },
-              ].map((opt) => (
-                <label
-                  key={opt.value}
-                  className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                    (config.revaluation_rules?.settlement_rate_basis ?? "prior_period_closing") === opt.value
-                      ? "border-blue-400 bg-blue-50"
-                      : "border-gray-200 hover:bg-gray-50"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="settlement_basis"
-                    checked={(config.revaluation_rules?.settlement_rate_basis ?? "prior_period_closing") === opt.value}
-                    onChange={() => setRevalField("settlement_rate_basis", opt.value)}
-                    className="accent-blue-600 mt-0.5 flex-shrink-0"
-                  />
-                  <div>
-                    <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                    <p className="text-xs text-gray-500">{opt.desc}</p>
-                  </div>
-                </label>
-              ))}
-            </div>
+            {(config.revaluation_rules?.method ?? "directional_netting") === "directional_netting" ? (
+              <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-100 rounded-lg">
+                <i className="ti ti-lock text-green-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                <div>
+                  <p className="text-xs font-medium text-green-800">
+                    Original transaction rate (fixed for directional netting)
+                  </p>
+                  <p className="text-xs text-green-700 mt-0.5">
+                    Under directional netting, the realised difference is always computed as:
+                    settlement rate vs original booking rate. All outstanding unrealised on
+                    the invoice auto-reverses at settlement. This is not configurable — it
+                    is the correct IAS 21 treatment and ensures the net P&L equals the actual
+                    cash difference from the original booking.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-gray-500 mb-3">
+                  When a foreign currency balance is settled, what rate does the system compare
+                  against to compute the realised FX difference?
+                </p>
+                <div className="space-y-2">
+                  {[
+                    {
+                      value: "original_transaction",
+                      label: "Original transaction rate",
+                      desc: "Realised = settlement rate vs original booking rate. Combined with auto-reversal of all outstanding unrealised on the invoice.",
+                    },
+                    {
+                      value: "prior_period_closing",
+                      label: "Prior period closing rate (IAS 21)",
+                      desc: "Realised = settlement rate vs last period-end closing rate. Simpler journals but less transparent.",
+                    },
+                    {
+                      value: "current_carrying",
+                      label: "Current carrying rate",
+                      desc: "Realised = settlement rate vs current NGN carrying value ÷ FCY balance. Equivalent to prior period closing in most cases.",
+                    },
+                  ].map((opt) => (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                        (config.revaluation_rules?.settlement_rate_basis ?? "original_transaction") === opt.value
+                          ? "border-blue-400 bg-blue-50"
+                          : "border-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="settlement_basis"
+                        checked={(config.revaluation_rules?.settlement_rate_basis ?? "original_transaction") === opt.value}
+                        onChange={() => setRevalField("settlement_rate_basis", opt.value)}
+                        className="accent-blue-600 mt-0.5 flex-shrink-0"
+                      />
+                      <div>
+                        <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                        <p className="text-xs text-gray-500">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           {/* ── PARTIAL SETTLEMENT METHOD ── */}
@@ -1594,13 +1681,22 @@ export default function CurrenciesPage() {
               NGN settlement of FX liability
             </p>
             <p className="text-xs text-gray-600 mb-2">
-              When a foreign currency liability is settled by paying NGN directly to the bank
-              for conversion, the system automatically computes the realised FX difference:
+              At settlement, the system automatically posts two entries:
             </p>
-            <div className="p-2 bg-gray-50 rounded font-mono text-xs text-gray-700 mb-2">
-              Realised gain/loss = (FCY balance × carrying rate) − actual NGN paid
+            <div className="space-y-2 mb-2">
+              <div className="p-2 bg-gray-50 rounded text-xs text-gray-700">
+                <p className="font-medium mb-0.5">Entry 1 — Realised FX difference:</p>
+                <p className="font-mono">Realised gain/loss = (settlement rate − original booking rate) × FCY amount</p>
+                <p className="text-gray-500 mt-0.5">Posted to realised FX gain/loss GL for this balance type.</p>
+              </div>
+              <div className="p-2 bg-gray-50 rounded text-xs text-gray-700">
+                <p className="font-medium mb-0.5">Entry 2 — Auto-reverse outstanding unrealised:</p>
+                <p className="font-mono">All prior unrealised entries on this invoice → reversed to zero</p>
+                <p className="text-gray-500 mt-0.5">Posted back to the same GL the unrealised was originally posted to.</p>
+              </div>
             </div>
             <p className="text-xs text-gray-500">
+              Net P&amp;L impact always equals actual NGN paid minus original NGN booked.
               The settlement rate (actual NGN ÷ FCY) is captured on the payment transaction.
               Bank advice upload is recommended for audit trail purposes.
             </p>
