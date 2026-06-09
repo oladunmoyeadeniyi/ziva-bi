@@ -1366,10 +1366,14 @@ async def download_coa_template(
 async def list_coa(
     search: str = Query(default="", description="Search GL number or name"),
     active_only: bool = Query(default=True),
+    account_type: str = Query(default="", description="Filter by SOCI or SOFP"),
+    classification: str = Query(default="", description="Filter by account_classification"),
+    limit: int = Query(default=200, description="Max results to return"),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[CoAListItem]:
-    """List GL accounts for the tenant. Searchable by GL number or name."""
+    """List GL accounts for the tenant. Searchable by GL number or name.
+    Optionally filtered by account_type (SOCI/SOFP) and classification."""
     tenant_id = _require_tenant(current_user)
 
     q = select(ChartOfAccount).where(ChartOfAccount.tenant_id == tenant_id)
@@ -1380,7 +1384,27 @@ async def list_coa(
         q = q.where(
             ChartOfAccount.gl_number.ilike(term) | ChartOfAccount.gl_name.ilike(term)
         )
-    q = q.order_by(ChartOfAccount.gl_number)
+    if account_type.strip():
+        # Normalise: accept SOCI/PL/P&L as PL, SOFP/BS/B/S as BS
+        at = account_type.strip().upper().replace("/", "").replace("&", "")
+        if at in ("SOCI", "PL"):
+            q = q.where(ChartOfAccount.account_type.in_(["PL", "SOCI", "P/L"]))
+        elif at in ("SOFP", "BS"):
+            q = q.where(ChartOfAccount.account_type.in_(["BS", "SOFP", "B/S"]))
+        else:
+            q = q.where(ChartOfAccount.account_type.ilike(f"%{account_type}%"))
+    if classification.strip():
+        # Support comma-separated list e.g. "Finance income,Finance cost"
+        from sqlalchemy import or_
+        classes = [c.strip() for c in classification.split(",") if c.strip()]
+        if len(classes) == 1:
+            q = q.where(ChartOfAccount.account_classification.ilike(f"%{classes[0]}%"))
+        else:
+            q = q.where(or_(*[
+                ChartOfAccount.account_classification.ilike(f"%{c}%")
+                for c in classes
+            ]))
+    q = q.order_by(ChartOfAccount.gl_number).limit(limit)
 
     result = await db.execute(q)
     return [CoAListItem.from_orm(g) for g in result.scalars().all()]

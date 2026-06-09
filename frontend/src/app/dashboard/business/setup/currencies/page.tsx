@@ -9,7 +9,7 @@
  * Route: /dashboard/business/setup/currencies
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
@@ -99,19 +99,29 @@ interface FxRateEntry {
 }
 
 interface RevalGL {
+  bs_gl?: string;
+  bs_gl_name?: string;
   realized_gain?: string;
+  realized_gain_name?: string;
   realized_loss?: string;
+  realized_loss_name?: string;
   unrealized_gain?: string;
+  unrealized_gain_name?: string;
   unrealized_loss?: string;
+  unrealized_loss_name?: string;
 }
 
 interface RevalRules {
   method?: "cumulative" | "reverse_restate";
+  reverse_restate_mode?: "separate_entries" | "net_journal";
+  year_end_crossing?: "net_journal" | "separate_jan1" | "cumulative_crossover";
+  settlement_rate_basis?: "prior_period_closing" | "original_transaction" | "current_carrying";
+  partial_settlement_method?: "fifo" | "specific_id" | "weighted_average";
   rate_source?: string;
   frequency?: "monthly" | "quarterly" | "yearly" | "at_period_close";
   scope?: "all" | "selected";
   by_balance_type?: Record<string, RevalGL>;
-  translation_diff_gl?: string;
+  custom_balance_types?: { key: string; label: string; desc: string }[];
 }
 
 interface FxConfig {
@@ -120,6 +130,130 @@ interface FxConfig {
   additional_currencies?: AdditionalCurrency[];
   fx_rates?: FxRateEntry[];
   revaluation_rules?: RevalRules;
+}
+
+interface GLOption {
+  id: string;
+  gl_number: string;
+  gl_name: string;
+  account_type?: string;
+  account_classification?: string;
+}
+
+interface GLSearchInputProps {
+  value: string;
+  onChange: (glNumber: string, glName: string) => void;
+  placeholder?: string;
+  accountType?: string;
+  classification?: string;
+  disabled?: boolean;
+}
+
+function GLSearchInput({
+  value,
+  onChange,
+  placeholder = "Search GL number or name…",
+  accountType,
+  classification,
+  disabled,
+}: GLSearchInputProps) {
+  const { accessToken } = useAuth();
+  const [query, setQuery] = useState(value);
+  const [options, setOptions] = useState<GLOption[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!accessToken || query.length < 1) {
+      setOptions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ search: query, limit: "20" });
+        if (accountType) params.set("account_type", accountType);
+        if (classification) params.set("classification", classification);
+        const results = await apiFetch<GLOption[]>(
+          `/api/config/coa?${params}`,
+          { token: accessToken }
+        );
+        setOptions(results);
+        setOpen(true);
+      } catch {
+        setOptions([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, accessToken, accountType, classification]);
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            if (!e.target.value) onChange("", "");
+          }}
+          onFocus={() => { if (options.length > 0) setOpen(true); }}
+          placeholder={placeholder}
+          disabled={disabled}
+          className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm pr-7 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+        />
+        {loading && (
+          <i
+            className="ti ti-loader-2 animate-spin absolute right-2 top-2 text-gray-400"
+            style={{ fontSize: 13 }}
+          />
+        )}
+      </div>
+      {open && options.length > 0 && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          {options.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setQuery(`${opt.gl_number} — ${opt.gl_name}`);
+                onChange(opt.gl_number, opt.gl_name);
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-blue-50 text-xs border-b border-gray-50 last:border-0"
+            >
+              <span className="font-mono text-gray-700 mr-2">{opt.gl_number}</span>
+              <span className="text-gray-800">{opt.gl_name}</span>
+              {opt.account_classification && (
+                <span className="ml-2 text-[10px] text-gray-400 bg-gray-100 px-1 rounded">
+                  {opt.account_classification}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && query.length > 0 && options.length === 0 && !loading && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">
+          No GL accounts found. Check your Chart of Accounts.
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function CurrenciesPage() {
@@ -155,7 +289,15 @@ export default function CurrenciesPage() {
   // Revaluation — shared GL toggle
   const [useSharedGL, setUseSharedGL] = useState(false);
   const [sharedGainGL, setSharedGainGL] = useState("");
+  const [sharedGainGLName, setSharedGainGLName] = useState("");
   const [sharedLossGL, setSharedLossGL] = useState("");
+  const [sharedLossGLName, setSharedLossGLName] = useState("");
+
+  // Custom balance type form
+  const [showAddBalanceType, setShowAddBalanceType] = useState(false);
+  const [newBTKey, setNewBTKey] = useState("");
+  const [newBTLabel, setNewBTLabel] = useState("");
+  const [newBTDesc, setNewBTDesc] = useState("");
 
   // Revaluation filter
   const [rateFilterCurrency, setRateFilterCurrency] = useState("");
@@ -258,7 +400,9 @@ export default function CurrenciesPage() {
   const setRevalGL = (
     balanceType: string,
     field: keyof RevalGL,
-    value: string
+    value: string,
+    nameField?: keyof RevalGL,
+    name?: string
   ) => {
     setConfig((c) => ({
       ...c,
@@ -269,6 +413,7 @@ export default function CurrenciesPage() {
           [balanceType]: {
             ...(c.revaluation_rules?.by_balance_type?.[balanceType] ?? {}),
             [field]: value,
+            ...(nameField && name ? { [nameField]: name } : {}),
           },
         },
       },
@@ -283,12 +428,20 @@ export default function CurrenciesPage() {
 
   const applySharedGL = () => {
     const shared: Record<string, RevalGL> = {};
-    BALANCE_TYPES.forEach((bt) => {
+    const allTypes = [
+      ...BALANCE_TYPES,
+      ...(config.revaluation_rules?.custom_balance_types ?? []),
+    ];
+    allTypes.forEach((bt) => {
       shared[bt.key] = {
         realized_gain: sharedGainGL,
+        realized_gain_name: sharedGainGLName,
         realized_loss: sharedLossGL,
+        realized_loss_name: sharedLossGLName,
         unrealized_gain: sharedGainGL,
+        unrealized_gain_name: sharedGainGLName,
         unrealized_loss: sharedLossGL,
+        unrealized_loss_name: sharedLossGLName,
       };
     });
     setConfig((c) => ({
@@ -919,29 +1072,29 @@ export default function CurrenciesPage() {
       {/* ── REVALUATION RULES TAB ── */}
       {tab === "revaluation" && (
         <div className="space-y-5 max-w-3xl">
-          {/* Method */}
+
+          {/* ── METHOD ── */}
           <div className="border border-gray-200 rounded-lg p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">
               Revaluation method
             </p>
-            <div className="space-y-2">
+            <div className="space-y-2 mb-3">
               {[
                 {
                   value: "cumulative",
                   label: "Cumulative",
-                  desc: "Post only the movement each period. Prior entries remain. Most common in practice.",
+                  desc: "Post only the incremental movement each period. Prior entries remain on the books. Most common in practice.",
                 },
                 {
                   value: "reverse_restate",
                   label: "Reverse and restate",
-                  desc: "Reverse prior period unrealized entry at period start, post fresh revaluation. Cleaner per-period P&L.",
+                  desc: "Reverse prior period unrealised entry, then post fresh revaluation. Cleaner per-period P&L view.",
                 },
               ].map((opt) => (
                 <label
                   key={opt.value}
                   className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                    (config.revaluation_rules?.method ?? "cumulative") ===
-                    opt.value
+                    (config.revaluation_rules?.method ?? "cumulative") === opt.value
                       ? "border-blue-400 bg-blue-50"
                       : "border-gray-200 hover:bg-gray-50"
                   }`}
@@ -949,17 +1102,157 @@ export default function CurrenciesPage() {
                   <input
                     type="radio"
                     name="reval_method"
-                    checked={
-                      (config.revaluation_rules?.method ?? "cumulative") ===
-                      opt.value
-                    }
+                    checked={(config.revaluation_rules?.method ?? "cumulative") === opt.value}
                     onChange={() => setRevalField("method", opt.value)}
                     className="accent-blue-600 mt-0.5 flex-shrink-0"
                   />
                   <div>
-                    <p className="text-xs font-medium text-gray-900">
-                      {opt.label}
-                    </p>
+                    <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                    <p className="text-xs text-gray-500">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Reverse and restate sub-options */}
+            {config.revaluation_rules?.method === "reverse_restate" && (
+              <div className="ml-4 mt-3 space-y-2 border-l-2 border-blue-100 pl-4">
+                <p className="text-xs font-medium text-gray-700 mb-2">
+                  Reverse and restate — posting mode
+                </p>
+                {[
+                  {
+                    value: "net_journal",
+                    label: "Net journal at period end (recommended)",
+                    desc: "Reversal and fresh revaluation posted as a single net entry on period-end date.",
+                  },
+                  {
+                    value: "separate_entries",
+                    label: "Separate entries",
+                    desc: "Reversal posted at period start, fresh revaluation posted at period end. Two journal entries per period.",
+                  },
+                ].map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer ${
+                      (config.revaluation_rules?.reverse_restate_mode ?? "net_journal") === opt.value
+                        ? "border-blue-300 bg-blue-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="restate_mode"
+                      checked={(config.revaluation_rules?.reverse_restate_mode ?? "net_journal") === opt.value}
+                      onChange={() => setRevalField("reverse_restate_mode", opt.value)}
+                      className="accent-blue-600 mt-0.5 flex-shrink-0"
+                    />
+                    <div>
+                      <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                      <p className="text-xs text-gray-500">{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── YEAR-END CROSSING (reverse_restate only) ── */}
+          {config.revaluation_rules?.method === "reverse_restate" && (
+            <div className="border border-gray-200 rounded-lg p-4">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
+                Year-end crossing behaviour
+              </p>
+              <p className="text-xs text-gray-500 mb-3">
+                How should the system handle the transition from December (year-end) into January (new year)?
+              </p>
+              <div className="space-y-2">
+                {[
+                  {
+                    value: "net_journal",
+                    label: "Net journal approach (recommended)",
+                    desc: "December closing rate preserved as comparison base. January revaluation posts as single net entry from Dec rate to Jan rate. No settlement anomaly.",
+                  },
+                  {
+                    value: "separate_jan1",
+                    label: "Reverse on January 1, revalue on January 31 separately",
+                    desc: "Reversal posts on January 1. Note: settlements between Jan 1–31 compare against pre-December-reval rate. System will flag this as a known limitation on affected transactions.",
+                  },
+                  {
+                    value: "cumulative_crossover",
+                    label: "Switch to cumulative for year-end crossing only",
+                    desc: "December → January transition uses cumulative method. Reverse-and-restate resumes from January 31 onwards. Clean year-end, consistent intra-year behaviour.",
+                  },
+                ].map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                      (config.revaluation_rules?.year_end_crossing ?? "net_journal") === opt.value
+                        ? "border-blue-400 bg-blue-50"
+                        : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="year_end_crossing"
+                      checked={(config.revaluation_rules?.year_end_crossing ?? "net_journal") === opt.value}
+                      onChange={() => setRevalField("year_end_crossing", opt.value)}
+                      className="accent-blue-600 mt-0.5 flex-shrink-0"
+                    />
+                    <div>
+                      <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                      <p className="text-xs text-gray-500">{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── SETTLEMENT RATE BASIS ── */}
+          <div className="border border-gray-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
+              Settlement rate basis
+            </p>
+            <p className="text-xs text-gray-500 mb-3">
+              When a foreign currency balance is settled, what rate does the system compare against
+              to compute the realised FX difference?
+            </p>
+            <div className="space-y-2">
+              {[
+                {
+                  value: "prior_period_closing",
+                  label: "Prior period closing rate (recommended — IAS 21)",
+                  desc: "Realised difference = settlement rate minus last period-end closing rate. Most accurate for IAS 21 reporting.",
+                },
+                {
+                  value: "original_transaction",
+                  label: "Original transaction rate",
+                  desc: "Realised difference = settlement rate minus original invoice/transaction rate. Simpler but combines all period movements into one realised entry.",
+                },
+                {
+                  value: "current_carrying",
+                  label: "Current carrying rate",
+                  desc: "Realised difference = settlement rate minus current NGN carrying value ÷ FCY balance. Equivalent to prior period closing rate in most cases.",
+                },
+              ].map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                    (config.revaluation_rules?.settlement_rate_basis ?? "prior_period_closing") === opt.value
+                      ? "border-blue-400 bg-blue-50"
+                      : "border-gray-200 hover:bg-gray-50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="settlement_basis"
+                    checked={(config.revaluation_rules?.settlement_rate_basis ?? "prior_period_closing") === opt.value}
+                    onChange={() => setRevalField("settlement_rate_basis", opt.value)}
+                    className="accent-blue-600 mt-0.5 flex-shrink-0"
+                  />
+                  <div>
+                    <p className="text-xs font-medium text-gray-900">{opt.label}</p>
                     <p className="text-xs text-gray-500">{opt.desc}</p>
                   </div>
                 </label>
@@ -967,7 +1260,58 @@ export default function CurrenciesPage() {
             </div>
           </div>
 
-          {/* Settings */}
+          {/* ── PARTIAL SETTLEMENT METHOD ── */}
+          <div className="border border-gray-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
+              Partial settlement method
+            </p>
+            <p className="text-xs text-gray-500 mb-3">
+              When a payment partially settles multiple outstanding foreign currency invoices,
+              which invoices are considered settled first?
+            </p>
+            <div className="space-y-2">
+              {[
+                {
+                  value: "fifo",
+                  label: "FIFO — oldest invoice first",
+                  desc: "The oldest outstanding invoice is settled first. Common and straightforward.",
+                },
+                {
+                  value: "specific_id",
+                  label: "Specific identification",
+                  desc: "User selects which invoice(s) are being settled at payment time. Maximum control and accuracy.",
+                },
+                {
+                  value: "weighted_average",
+                  label: "Weighted average carrying rate",
+                  desc: "The carrying rate for all outstanding invoices is averaged. Simpler but less precise.",
+                },
+              ].map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                    (config.revaluation_rules?.partial_settlement_method ?? "fifo") === opt.value
+                      ? "border-blue-400 bg-blue-50"
+                      : "border-gray-200 hover:bg-gray-50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="partial_settlement"
+                    checked={(config.revaluation_rules?.partial_settlement_method ?? "fifo") === opt.value}
+                    onChange={() => setRevalField("partial_settlement_method", opt.value)}
+                    className="accent-blue-600 mt-0.5 flex-shrink-0"
+                  />
+                  <div>
+                    <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                    <p className="text-xs text-gray-500">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* ── REVALUATION SETTINGS ── */}
           <div className="border border-gray-200 rounded-lg p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">
               Revaluation settings
@@ -983,9 +1327,7 @@ export default function CurrenciesPage() {
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {RATE_SOURCES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
+                    <option key={s.value} value={s.value}>{s.label}</option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -1004,19 +1346,17 @@ export default function CurrenciesPage() {
                   <option value="monthly">Monthly</option>
                   <option value="quarterly">Quarterly</option>
                   <option value="yearly">Yearly</option>
-                  <option value="at_period_close">
-                    At period close (follows fiscal year settings)
-                  </option>
+                  <option value="at_period_close">At period close (follows Organisation settings)</option>
                 </select>
               </div>
             </div>
           </div>
 
-          {/* GL accounts per balance type */}
+          {/* ── GL ACCOUNTS PER BALANCE TYPE ── */}
           <div className="border border-gray-200 rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-                FX gain/loss GL accounts by balance type
+                GL accounts by balance type
               </p>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1025,40 +1365,38 @@ export default function CurrenciesPage() {
                   onChange={(e) => setUseSharedGL(e.target.checked)}
                   className="w-3.5 h-3.5 accent-blue-600"
                 />
-                <span className="text-xs text-gray-600">
-                  Use shared GLs for all types
-                </span>
+                <span className="text-xs text-gray-600">Use shared GLs for all types</span>
               </label>
             </div>
 
             {useSharedGL && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
                 <p className="text-xs font-medium text-gray-700 mb-2">
-                  Shared GL accounts (applied to all balance types)
+                  Shared FX gain/loss GL accounts (applied to all balance types)
                 </p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3 mb-2">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      FX gain GL
+                    <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                      FX gain GL (realised + unrealised)
                     </label>
-                    <input
-                      type="text"
+                    <GLSearchInput
                       value={sharedGainGL}
-                      onChange={(e) => setSharedGainGL(e.target.value)}
-                      placeholder="e.g. 8001"
-                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      onChange={(gl, name) => { setSharedGainGL(gl); setSharedGainGLName(name); }}
+                      placeholder="Search GL…"
+                      accountType="SOCI"
+                      classification="Finance income"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      FX loss GL
+                    <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                      FX loss GL (realised + unrealised)
                     </label>
-                    <input
-                      type="text"
+                    <GLSearchInput
                       value={sharedLossGL}
-                      onChange={(e) => setSharedLossGL(e.target.value)}
-                      placeholder="e.g. 8002"
-                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      onChange={(gl, name) => { setSharedLossGL(gl); setSharedLossGLName(name); }}
+                      placeholder="Search GL…"
+                      accountType="SOCI"
+                      classification="Finance cost"
                     />
                   </div>
                 </div>
@@ -1066,59 +1404,84 @@ export default function CurrenciesPage() {
                   type="button"
                   onClick={applySharedGL}
                   disabled={!sharedGainGL || !sharedLossGL}
-                  className="mt-2 text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
                   Apply to all balance types
                 </button>
               </div>
             )}
 
-            <div className="space-y-3">
-              {BALANCE_TYPES.map((bt) => {
-                const gl =
-                  config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
+            <div className="space-y-4">
+              {[
+                ...BALANCE_TYPES,
+                ...(config.revaluation_rules?.custom_balance_types ?? []),
+              ].map((bt) => {
+                const gl = config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
                 return (
-                  <div
-                    key={bt.key}
-                    className="border border-gray-100 rounded-lg p-3 bg-gray-50"
-                  >
-                    <p className="text-xs font-medium text-gray-800 mb-0.5">
-                      {bt.label}
-                    </p>
-                    <p className="text-xs text-gray-400 mb-2">{bt.desc}</p>
+                  <div key={bt.key} className="border border-gray-100 rounded-lg p-3 bg-gray-50">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <p className="text-xs font-medium text-gray-800">{bt.label}</p>
+                        <p className="text-xs text-gray-400">{bt.desc}</p>
+                      </div>
+                    </div>
+
+                    {/* Balance sheet control account */}
+                    <div className="mb-3">
+                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                        Balance sheet control account
+                      </label>
+                      <GLSearchInput
+                        value={gl.bs_gl ?? ""}
+                        onChange={(glNum, glName) => setRevalGL(bt.key, "bs_gl", glNum, "bs_gl_name", glName)}
+                        placeholder="Search SOFP GL…"
+                        accountType="SOFP"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        Must match the control account configured in the relevant module (AP, AR, Bank etc.)
+                      </p>
+                    </div>
+
+                    {/* FX gain/loss GLs */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {(
-                        [
-                          {
-                            field: "realized_gain" as const,
-                            label: "Realized gain",
-                          },
-                          {
-                            field: "realized_loss" as const,
-                            label: "Realized loss",
-                          },
-                          {
-                            field: "unrealized_gain" as const,
-                            label: "Unrealized gain",
-                          },
-                          {
-                            field: "unrealized_loss" as const,
-                            label: "Unrealized loss",
-                          },
-                        ] as { field: keyof RevalGL; label: string }[]
-                      ).map((f) => (
+                      {[
+                        {
+                          field: "realized_gain" as const,
+                          nameField: "realized_gain_name" as const,
+                          label: "Realised gain",
+                          classification: "Finance income",
+                        },
+                        {
+                          field: "realized_loss" as const,
+                          nameField: "realized_loss_name" as const,
+                          label: "Realised loss",
+                          classification: "Finance cost",
+                        },
+                        {
+                          field: "unrealized_gain" as const,
+                          nameField: "unrealized_gain_name" as const,
+                          label: "Unrealised gain",
+                          classification: "Finance income",
+                        },
+                        {
+                          field: "unrealized_loss" as const,
+                          nameField: "unrealized_loss_name" as const,
+                          label: "Unrealised loss",
+                          classification: "Finance cost",
+                        },
+                      ].map((f) => (
                         <div key={f.field}>
                           <label className="block text-[10px] font-medium text-gray-500 mb-1">
                             {f.label}
                           </label>
-                          <input
-                            type="text"
+                          <GLSearchInput
                             value={gl[f.field] ?? ""}
-                            onChange={(e) =>
-                              setRevalGL(bt.key, f.field, e.target.value)
+                            onChange={(glNum, glName) =>
+                              setRevalGL(bt.key, f.field, glNum, f.nameField, glName)
                             }
-                            placeholder="GL no."
-                            className="w-full px-2 py-1 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder="GL…"
+                            accountType="SOCI"
+                            classification={f.classification}
                           />
                         </div>
                       ))}
@@ -1128,16 +1491,99 @@ export default function CurrenciesPage() {
               })}
             </div>
 
+            {/* Add custom balance type */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              {!showAddBalanceType ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAddBalanceType(true)}
+                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                >
+                  <i className="ti ti-plus" style={{ fontSize: 12 }} />
+                  Add custom balance type
+                </button>
+              ) : (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
+                  <p className="text-xs font-medium text-gray-700">New balance type</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                        Internal key (no spaces) *
+                      </label>
+                      <input
+                        type="text"
+                        value={newBTKey}
+                        onChange={(e) => setNewBTKey(e.target.value.toLowerCase().replace(/\s/g, "_"))}
+                        placeholder="e.g. prepayments_fx"
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                        Display label *
+                      </label>
+                      <input
+                        type="text"
+                        value={newBTLabel}
+                        onChange={(e) => setNewBTLabel(e.target.value)}
+                        placeholder="e.g. FX Prepayments"
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                        Description
+                      </label>
+                      <input
+                        type="text"
+                        value={newBTDesc}
+                        onChange={(e) => setNewBTDesc(e.target.value)}
+                        placeholder="e.g. Advance payments to vendors in foreign currency"
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={!newBTKey.trim() || !newBTLabel.trim()}
+                      onClick={() => {
+                        const existing = config.revaluation_rules?.custom_balance_types ?? [];
+                        const newCustom = [
+                          ...existing,
+                          { key: newBTKey.trim(), label: newBTLabel.trim(), desc: newBTDesc.trim() },
+                        ];
+                        setRevalField("custom_balance_types", newCustom);
+                        setNewBTKey("");
+                        setNewBTLabel("");
+                        setNewBTDesc("");
+                        setShowAddBalanceType(false);
+                      }}
+                      className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddBalanceType(false)}
+                      className="text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="mt-3 flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
               <i
                 className="ti ti-info-circle text-amber-600 flex-shrink-0 mt-0.5"
                 style={{ fontSize: 13 }}
               />
               <p className="text-xs text-amber-700">
-                GL numbers must exist in your Chart of Accounts. Realized
-                gain/loss GLs are used when FX balances are settled. Unrealized
-                GLs are used for period-end revaluation movements. Gain and loss
-                can point to the same GL if you prefer a net FX position.
+                GL accounts are searched from your Chart of Accounts.
+                Balance sheet control accounts must match those configured in the relevant modules
+                (AP, AR, Bank). Gain and loss can point to the same GL for a net FX position.
               </p>
             </div>
           </div>
@@ -1147,27 +1593,23 @@ export default function CurrenciesPage() {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
               NGN settlement of FX liability
             </p>
-            <p className="text-xs text-gray-600">
-              When a foreign currency liability (AP, loan) is settled by paying
-              NGN directly to the bank for conversion, the system will
-              automatically compute the realized FX difference:
+            <p className="text-xs text-gray-600 mb-2">
+              When a foreign currency liability is settled by paying NGN directly to the bank
+              for conversion, the system automatically computes the realised FX difference:
             </p>
-            <div className="mt-2 p-2 bg-gray-50 rounded font-mono text-xs text-gray-700">
-              Realized gain/loss = (FCY balance × carrying rate) − actual NGN
-              paid
+            <div className="p-2 bg-gray-50 rounded font-mono text-xs text-gray-700 mb-2">
+              Realised gain/loss = (FCY balance × carrying rate) − actual NGN paid
             </div>
-            <p className="text-xs text-gray-500 mt-2">
-              The settlement rate (actual NGN ÷ FCY) is captured on the payment
-              transaction. Bank advice upload is recommended for audit purposes.
+            <p className="text-xs text-gray-500">
+              The settlement rate (actual NGN ÷ FCY) is captured on the payment transaction.
+              Bank advice upload is recommended for audit trail purposes.
             </p>
           </div>
 
           <div className="flex items-center gap-3 pt-2">
             <button
               type="button"
-              onClick={() =>
-                save({ revaluation_rules: config.revaluation_rules })
-              }
+              onClick={() => save({ revaluation_rules: config.revaluation_rules })}
               disabled={saving}
               className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
