@@ -69,10 +69,23 @@ const BALANCE_TYPES = [
   { key: "bank",            label: "Bank balances",          desc: "Foreign currency bank accounts" },
   { key: "ic_loans",        label: "IC loans",               desc: "Intercompany loan balances" },
   { key: "fx_loans",        label: "External FX loans",      desc: "Borrowings in foreign currency" },
-  { key: "translation",     label: "Translation difference", desc: "Net investment in foreign operation (IAS 21 OCI)" },
+  { key: "translation",     label: "Translation difference",          desc: "Net investment in foreign operation (IAS 21 OCI)" },
+  { key: "wht_payable_fcy", label: "WHT payable — foreign currency",  desc: "WHT deducted from FCY invoices, remittable to tax authority in FCY. Recognised at payment. Revalued independently until FIRS remittance." },
 ];
 
-type Tab = "currencies" | "fx_rates" | "revaluation";
+type Tab = "currencies" | "fx_rates" | "revaluation" | "bdc_register";
+
+interface BdcEntry {
+  id: string;
+  name: string;
+  rc_number?: string;
+  cbn_licence?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  wht_category?: string;
+  is_active: boolean;
+}
 
 interface AdditionalCurrency {
   code: string;
@@ -300,6 +313,17 @@ export default function CurrenciesPage() {
   const [newBTLabel, setNewBTLabel] = useState("");
   const [newBTDesc, setNewBTDesc] = useState("");
 
+  // BDC register
+  const [showAddBdc, setShowAddBdc] = useState(false);
+  const [newBdcName, setNewBdcName] = useState("");
+  const [newBdcRc, setNewBdcRc] = useState("");
+  const [newBdcCbn, setNewBdcCbn] = useState("");
+  const [newBdcContact, setNewBdcContact] = useState("");
+  const [newBdcPhone, setNewBdcPhone] = useState("");
+  const [newBdcEmail, setNewBdcEmail] = useState("");
+  const [newBdcWht, setNewBdcWht] = useState("5");
+  const [addingBdc, setAddingBdc] = useState(false);
+
   // Revaluation filter
   const [rateFilterCurrency, setRateFilterCurrency] = useState("");
   const [rateFilterType, setRateFilterType] = useState("");
@@ -454,6 +478,33 @@ export default function CurrenciesPage() {
     }));
   };
 
+  const addBdc = async () => {
+    if (!newBdcName.trim()) return;
+    setAddingBdc(true);
+    const existing = (config as any).bdc_register ?? [];
+    const newEntry: BdcEntry = {
+      id: crypto.randomUUID(),
+      name: newBdcName.trim(),
+      rc_number: newBdcRc.trim() || undefined,
+      cbn_licence: newBdcCbn.trim() || undefined,
+      contact_name: newBdcContact.trim() || undefined,
+      contact_phone: newBdcPhone.trim() || undefined,
+      contact_email: newBdcEmail.trim() || undefined,
+      wht_category: newBdcWht || "5",
+      is_active: true,
+    };
+    const updated = [...existing, newEntry];
+    try {
+      await save({ bdc_register: updated } as any);
+      setConfig((c) => ({ ...c, bdc_register: updated } as any));
+      setNewBdcName(""); setNewBdcRc(""); setNewBdcCbn("");
+      setNewBdcContact(""); setNewBdcPhone(""); setNewBdcEmail("");
+      setNewBdcWht("5"); setShowAddBdc(false);
+    } finally {
+      setAddingBdc(false);
+    }
+  };
+
   const filteredRates = (config.fx_rates ?? [])
     .filter((r) => {
       if (rateFilterCurrency && r.from_currency !== rateFilterCurrency)
@@ -482,7 +533,7 @@ export default function CurrenciesPage() {
       </p>
 
       <div className="flex border-b border-gray-200 mb-6 gap-1">
-        {(["currencies", "fx_rates", "revaluation"] as Tab[]).map((t) => (
+        {(["currencies", "fx_rates", "revaluation", "bdc_register"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -497,7 +548,9 @@ export default function CurrenciesPage() {
               ? "Currencies"
               : t === "fx_rates"
               ? "FX rates"
-              : "Revaluation rules"}
+              : t === "revaluation"
+              ? "Revaluation rules"
+              : "BDC register"}
           </button>
         ))}
       </div>
@@ -1712,6 +1765,222 @@ export default function CurrenciesPage() {
               {saving ? "Saving…" : "Save revaluation rules"}
             </button>
             {saved && <span className="text-sm text-green-600">✓ Saved</span>}
+          </div>
+        </div>
+      )}
+
+      {/* ── BDC REGISTER TAB ── */}
+      {tab === "bdc_register" && (
+        <div className="space-y-4 max-w-3xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">
+                Maintain a register of approved Bureau de Change (BDC) and FX dealers
+                used to source and remit foreign currency on your behalf.
+              </p>
+              <p className="text-xs text-gray-400">
+                BDC entries are referenced when processing FX payments through intermediaries
+                in the Accounts Payable module. Each BDC is a special entity type —
+                separate from regular vendors.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAddBdc(true)}
+              className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-700 flex-shrink-0"
+            >
+              <i className="ti ti-plus" style={{ fontSize: 13 }} /> Add BDC
+            </button>
+          </div>
+
+          {showAddBdc && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <p className="text-xs font-medium text-gray-700 mb-3">New BDC / FX dealer</p>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">BDC name *</label>
+                  <input
+                    type="text"
+                    value={newBdcName}
+                    onChange={(e) => setNewBdcName(e.target.value)}
+                    placeholder="e.g. Rubicon BDC Limited"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">RC number</label>
+                  <input
+                    type="text"
+                    value={newBdcRc}
+                    onChange={(e) => setNewBdcRc(e.target.value)}
+                    placeholder="e.g. RC1234567"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">CBN licence number</label>
+                  <input
+                    type="text"
+                    value={newBdcCbn}
+                    onChange={(e) => setNewBdcCbn(e.target.value)}
+                    placeholder="CBN BDC licence"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Contact name</label>
+                  <input
+                    type="text"
+                    value={newBdcContact}
+                    onChange={(e) => setNewBdcContact(e.target.value)}
+                    placeholder="Primary contact"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Contact phone</label>
+                  <input
+                    type="text"
+                    value={newBdcPhone}
+                    onChange={(e) => setNewBdcPhone(e.target.value)}
+                    placeholder="+234..."
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Contact email</label>
+                  <input
+                    type="email"
+                    value={newBdcEmail}
+                    onChange={(e) => setNewBdcEmail(e.target.value)}
+                    placeholder="email@bdc.com"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">WHT rate on service fee (%)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    value={newBdcWht}
+                    onChange={(e) => setNewBdcWht(e.target.value)}
+                    placeholder="5"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Applied to BDC service fee only — not the FX principal.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={addBdc}
+                  disabled={addingBdc || !newBdcName.trim()}
+                  className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {addingBdc ? "Saving…" : "Add BDC"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddBdc(false)}
+                  className="px-4 py-1.5 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {((config as any).bdc_register ?? []).length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+              <i className="ti ti-building-bank text-gray-300" style={{ fontSize: 32 }} />
+              <p className="text-sm text-gray-500 mt-2">No BDCs registered yet.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Add the BDCs and FX dealers your organisation uses to source foreign currency.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left">RC Number</th>
+                    <th className="px-3 py-2 text-left">CBN Licence</th>
+                    <th className="px-3 py-2 text-left">Contact</th>
+                    <th className="px-3 py-2 text-left">WHT on fee</th>
+                    <th className="px-3 py-2 text-left">Status</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {((config as any).bdc_register ?? []).map((bdc: BdcEntry) => (
+                    <tr key={bdc.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-medium text-gray-800">{bdc.name}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{bdc.rc_number ?? "—"}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{bdc.cbn_licence ?? "—"}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">
+                        {bdc.contact_name ?? "—"}
+                        {bdc.contact_phone && (
+                          <span className="block text-gray-400">{bdc.contact_phone}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-600">{bdc.wht_category ?? "5"}%</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            bdc.is_active
+                              ? "bg-green-100 text-green-700"
+                              : "bg-gray-100 text-gray-500"
+                          }`}
+                        >
+                          {bdc.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = ((config as any).bdc_register ?? []).map(
+                              (b: BdcEntry) =>
+                                b.id === bdc.id ? { ...b, is_active: !b.is_active } : b
+                            );
+                            save({ bdc_register: updated } as any);
+                            setConfig((c) => ({ ...c, bdc_register: updated } as any));
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-800"
+                        >
+                          {bdc.is_active ? "Deactivate" : "Activate"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+            <i
+              className="ti ti-info-circle text-blue-600 flex-shrink-0 mt-0.5"
+              style={{ fontSize: 13 }}
+            />
+            <div className="text-xs text-blue-700">
+              <p className="font-medium mb-0.5">BDC payment flow</p>
+              <p>When paying a foreign currency AP invoice through a BDC:</p>
+              <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                <li>A BDC clearing account is used — nets to zero per transaction</li>
+                <li>The BDC rate (from receipt) is the settlement rate for realised FX</li>
+                <li>BDC service fee and bank charges are expensed separately per receipt lines</li>
+                <li>WHT on service fee deducted at the rate configured above</li>
+                <li>WHT on the original FCY invoice recognised at payment (per your WHT policy)</li>
+                <li>FCY WHT payable to FIRS tracked independently until remittance</li>
+              </ul>
+              <p className="mt-1">Full BDC payment workflow is configured in Accounts Payable (M11).</p>
+            </div>
           </div>
         </div>
       )}
