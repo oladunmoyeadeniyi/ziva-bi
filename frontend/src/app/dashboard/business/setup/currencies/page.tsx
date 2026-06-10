@@ -159,7 +159,7 @@ interface GLSearchInputProps {
   onChange: (glNumber: string, glName: string) => void;
   placeholder?: string;
   accountType?: string;
-  classification?: string;
+  classification?: string; // Reserved for future use when CoA accounts are classified
   disabled?: boolean;
 }
 
@@ -198,7 +198,8 @@ function GLSearchInput({
       try {
         const params = new URLSearchParams({ search: query, limit: "20" });
         if (accountType) params.set("account_type", accountType);
-        if (classification) params.set("classification", classification);
+        // classification filter removed — most accounts don't have it populated yet
+        // Future: re-enable when CoA accounts are fully classified
         const results = await apiFetch<GLOption[]>(
           `/api/config/coa?${params}`,
           { token: accessToken }
@@ -323,6 +324,18 @@ export default function CurrenciesPage() {
   const [newBdcEmail, setNewBdcEmail] = useState("");
   const [newBdcWht, setNewBdcWht] = useState("5");
   const [addingBdc, setAddingBdc] = useState(false);
+
+  // Collapsible balance type sections
+  const [collapsedBalanceTypes, setCollapsedBalanceTypes] = useState<Set<string>>(new Set());
+
+  const toggleBalanceType = (key: string) => {
+    setCollapsedBalanceTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // Revaluation filter
   const [rateFilterCurrency, setRateFilterCurrency] = useState("");
@@ -603,6 +616,14 @@ export default function CurrenciesPage() {
               <option value="">
                 — Select reporting currency (optional) —
               </option>
+              {config.functional_currency && (
+                <option value={config.functional_currency}>
+                  {config.functional_currency} —{" "}
+                  {getCurrencyInfo(config.functional_currency)?.name ??
+                    config.functional_currency}{" "}
+                  (same as functional currency)
+                </option>
+              )}
               {ISO_CURRENCIES.filter(
                 (c) =>
                   c.code !== config.functional_currency && c.code !== "OTHER"
@@ -613,9 +634,9 @@ export default function CurrenciesPage() {
               ))}
             </select>
             <p className="text-xs text-gray-400 mt-1">
-              Used when generating consolidated reports in a currency different
-              from the functional currency (e.g. subsidiary reporting to parent
-              in EUR).
+              The currency used when generating consolidated or group financial
+              reports. Can be the same as the functional currency — for example
+              where the parent and subsidiary both operate in the same market.
             </p>
           </div>
 
@@ -849,13 +870,28 @@ export default function CurrenciesPage() {
       {tab === "fx_rates" && (
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-4">
-            <p className="text-sm text-gray-500 max-w-lg">
-              Maintain FX rate history per currency and rate type. Rates are
-              used for transaction recording, period-end revaluation, and
-              financial statement translation. Employee expense retirements use
-              the actual rate paid (BDC/bank rate) entered at the time of
-              retirement.
-            </p>
+            <div className="space-y-2 max-w-lg">
+              <p className="text-sm text-gray-500">
+                Maintain FX rate history per currency and rate type. Rates are
+                used for transaction recording, period-end revaluation, and
+                financial statement translation. Employee expense retirements use
+                the actual rate paid (BDC/bank rate) entered at the time of
+                retirement.
+              </p>
+              <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
+                <i
+                  className="ti ti-info-circle text-amber-600 flex-shrink-0 mt-0.5"
+                  style={{ fontSize: 13 }}
+                />
+                <p className="text-xs text-amber-700">
+                  <span className="font-medium">Manual entry only for now.</span>{" "}
+                  Auto-fetch from CBN API, XE.com and Bloomberg is planned for a
+                  future release. Rate type labels (CBN official rate, NAFEM etc.)
+                  classify the rate you enter — they do not trigger automatic
+                  fetching.
+                </p>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => setShowAddRate(true)}
@@ -880,14 +916,16 @@ export default function CurrenciesPage() {
                     onChange={(e) => setNewRateCurrency(e.target.value)}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">— Select —</option>
-                    {(config.additional_currencies ?? [])
-                      .filter((c) => c.is_active)
-                      .map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.code} — {c.name}
-                        </option>
-                      ))}
+                    <option value="">— Select foreign currency —</option>
+                    {ISO_CURRENCIES.filter(
+                      (c) =>
+                        c.code !== "OTHER" &&
+                        c.code !== config.functional_currency
+                    ).map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code} — {c.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1430,7 +1468,7 @@ export default function CurrenciesPage() {
                 <label
                   key={opt.value}
                   className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                    (config.revaluation_rules?.partial_settlement_method ?? "fifo") === opt.value
+                    (config.revaluation_rules?.partial_settlement_method ?? "specific_id") === opt.value
                       ? "border-blue-400 bg-blue-50"
                       : "border-gray-200 hover:bg-gray-50"
                   }`}
@@ -1438,7 +1476,7 @@ export default function CurrenciesPage() {
                   <input
                     type="radio"
                     name="partial_settlement"
-                    checked={(config.revaluation_rules?.partial_settlement_method ?? "fifo") === opt.value}
+                    checked={(config.revaluation_rules?.partial_settlement_method ?? "specific_id") === opt.value}
                     onChange={() => setRevalField("partial_settlement_method", opt.value)}
                     className="accent-blue-600 mt-0.5 flex-shrink-0"
                   />
@@ -1551,81 +1589,116 @@ export default function CurrenciesPage() {
               </div>
             )}
 
-            <div className="space-y-4">
+            <div className="space-y-2">
               {[
                 ...BALANCE_TYPES,
                 ...(config.revaluation_rules?.custom_balance_types ?? []),
               ].map((bt) => {
                 const gl = config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
+                const isCollapsed = collapsedBalanceTypes.has(bt.key);
+                const hasConfig = !!(
+                  gl.bs_gl ||
+                  gl.realized_gain ||
+                  gl.realized_loss ||
+                  gl.unrealized_gain ||
+                  gl.unrealized_loss
+                );
+
                 return (
-                  <div key={bt.key} className="border border-gray-100 rounded-lg p-3 bg-gray-50">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <p className="text-xs font-medium text-gray-800">{bt.label}</p>
-                        <p className="text-xs text-gray-400">{bt.desc}</p>
+                  <div
+                    key={bt.key}
+                    className="border border-gray-100 rounded-lg bg-gray-50"
+                  >
+                    {/* Header — always visible, click to toggle */}
+                    <button
+                      type="button"
+                      onClick={() => toggleBalanceType(bt.key)}
+                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100 rounded-lg transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <i
+                          className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-gray-400`}
+                          style={{ fontSize: 12 }}
+                        />
+                        <div>
+                          <span className="text-xs font-medium text-gray-800">
+                            {bt.label}
+                          </span>
+                          <span className="text-xs text-gray-400 ml-2">
+                            {bt.desc}
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                      {hasConfig && (
+                        <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded flex-shrink-0">
+                          Configured
+                        </span>
+                      )}
+                    </button>
 
-                    {/* Balance sheet control account */}
-                    <div className="mb-3">
-                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                        Balance sheet control account
-                      </label>
-                      <GLSearchInput
-                        value={gl.bs_gl ?? ""}
-                        onChange={(glNum, glName) => setRevalGL(bt.key, "bs_gl", glNum, "bs_gl_name", glName)}
-                        placeholder="Search SOFP GL…"
-                        accountType="SOFP"
-                      />
-                      <p className="text-[10px] text-gray-400 mt-0.5">
-                        Must match the control account configured in the relevant module (AP, AR, Bank etc.)
-                      </p>
-                    </div>
-
-                    {/* FX gain/loss GLs */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {[
-                        {
-                          field: "realized_gain" as const,
-                          nameField: "realized_gain_name" as const,
-                          label: "Realised gain",
-                          classification: "Finance income",
-                        },
-                        {
-                          field: "realized_loss" as const,
-                          nameField: "realized_loss_name" as const,
-                          label: "Realised loss",
-                          classification: "Finance cost",
-                        },
-                        {
-                          field: "unrealized_gain" as const,
-                          nameField: "unrealized_gain_name" as const,
-                          label: "Unrealised gain",
-                          classification: "Finance income",
-                        },
-                        {
-                          field: "unrealized_loss" as const,
-                          nameField: "unrealized_loss_name" as const,
-                          label: "Unrealised loss",
-                          classification: "Finance cost",
-                        },
-                      ].map((f) => (
-                        <div key={f.field}>
+                    {/* Body — only visible when expanded */}
+                    {!isCollapsed && (
+                      <div className="px-3 pb-3 pt-1 border-t border-gray-100">
+                        {/* Balance sheet control account */}
+                        <div className="mb-3">
                           <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                            {f.label}
+                            Balance sheet control account
                           </label>
                           <GLSearchInput
-                            value={gl[f.field] ?? ""}
+                            value={gl.bs_gl ?? ""}
                             onChange={(glNum, glName) =>
-                              setRevalGL(bt.key, f.field, glNum, f.nameField, glName)
+                              setRevalGL(bt.key, "bs_gl", glNum, "bs_gl_name", glName)
                             }
-                            placeholder="GL…"
-                            accountType="SOCI"
-                            classification={f.classification}
+                            placeholder="Search SOFP GL…"
+                            accountType="SOFP"
                           />
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            Must match the control account configured in the
+                            relevant module (AP, AR, Bank etc.)
+                          </p>
                         </div>
-                      ))}
-                    </div>
+
+                        {/* FX gain/loss GLs */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          {[
+                            {
+                              field: "realized_gain" as const,
+                              nameField: "realized_gain_name" as const,
+                              label: "Realised gain",
+                            },
+                            {
+                              field: "realized_loss" as const,
+                              nameField: "realized_loss_name" as const,
+                              label: "Realised loss",
+                            },
+                            {
+                              field: "unrealized_gain" as const,
+                              nameField: "unrealized_gain_name" as const,
+                              label: "Unrealised gain",
+                            },
+                            {
+                              field: "unrealized_loss" as const,
+                              nameField: "unrealized_loss_name" as const,
+                              label: "Unrealised loss",
+                            },
+                          ].map((f) => (
+                            <div key={f.field}>
+                              <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                                {f.label}
+                              </label>
+                              <GLSearchInput
+                                value={gl[f.field] ?? ""}
+                                onChange={(glNum, glName) =>
+                                  setRevalGL(bt.key, f.field, glNum, f.nameField, glName)
+                                }
+                                placeholder="GL…"
+                                accountType="SOCI"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

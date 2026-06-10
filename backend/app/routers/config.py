@@ -1385,12 +1385,21 @@ async def list_coa(
             ChartOfAccount.gl_number.ilike(term) | ChartOfAccount.gl_name.ilike(term)
         )
     if account_type.strip():
-        # Normalise: accept SOCI/PL/P&L as PL, SOFP/BS/B/S as BS
-        at = account_type.strip().upper().replace("/", "").replace("&", "")
-        if at in ("SOCI", "PL"):
-            q = q.where(ChartOfAccount.account_type.in_(["PL", "SOCI", "P/L"]))
-        elif at in ("SOFP", "BS"):
-            q = q.where(ChartOfAccount.account_type.in_(["BS", "SOFP", "B/S"]))
+        at = account_type.strip().upper().replace("/", "").replace("&", "").replace(" ", "")
+        # Normalise to PL variants
+        if at in ("SOCI", "PL", "PANDL", "PROFITLOSS", "PROFITANDLOSS", "PLV"):
+            q = q.where(
+                ChartOfAccount.account_type.in_(
+                    ["PL", "SOCI", "P/L", "P&L", "Profit & Loss", "Profit and Loss"]
+                )
+            )
+        # Normalise to BS variants
+        elif at in ("SOFP", "BS", "BALANCESHEET", "BALANCE"):
+            q = q.where(
+                ChartOfAccount.account_type.in_(
+                    ["BS", "SOFP", "B/S", "Balance Sheet"]
+                )
+            )
         else:
             q = q.where(ChartOfAccount.account_type.ilike(f"%{account_type}%"))
     if classification.strip():
