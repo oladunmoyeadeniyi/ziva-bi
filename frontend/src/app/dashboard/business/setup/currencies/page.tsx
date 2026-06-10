@@ -325,6 +325,20 @@ export default function CurrenciesPage() {
   const [newBdcWht, setNewBdcWht] = useState("5");
   const [addingBdc, setAddingBdc] = useState(false);
 
+  // Collapsible revaluation sections — false = collapsed, true = expanded
+  const [revalSections, setRevalSections] = useState({
+    method: false,
+    settlement_basis: false,
+    partial_settlement: false,
+    settings: false,
+    gl_accounts: false,
+    settlement_note: false,
+  });
+
+  const toggleRevalSection = (key: keyof typeof revalSections) => {
+    setRevalSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   // Collapsible balance type sections
   const [collapsedBalanceTypes, setCollapsedBalanceTypes] = useState<Set<string>>(new Set());
 
@@ -1163,268 +1177,67 @@ export default function CurrenciesPage() {
 
       {/* ── REVALUATION RULES TAB ── */}
       {tab === "revaluation" && (
-        <div className="space-y-5 max-w-3xl">
+        <div className="space-y-3 max-w-3xl">
 
           {/* ── METHOD ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">
-              Revaluation method
-            </p>
-            <div className="space-y-2 mb-3">
-              {[
-                {
-                  value: "directional_netting",
-                  label: "Directional netting (recommended — best practice)",
-                  desc: "Each period, computes net unrealised position from original booking rate. If direction changes (loss → gain or gain → loss), fully reverses prior GL balance then posts net remainder to opposite GL. At any time, exactly one unrealised GL has a balance per invoice. IAS 21 compliant. Used by SAP FI and Oracle.",
-                },
-                {
-                  value: "cumulative",
-                  label: "Cumulative",
-                  desc: "Post only the incremental movement each period. Prior entries remain on the books. Both gain and loss GLs may be populated simultaneously for the same invoice.",
-                },
-                {
-                  value: "reverse_restate",
-                  label: "Reverse and restate",
-                  desc: "Reverse prior period unrealised entry, then post fresh revaluation. Cleaner per-period P&L view.",
-                },
-              ].map((opt) => (
-                <label
-                  key={opt.value}
-                  className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                    (config.revaluation_rules?.method ?? "directional_netting") === opt.value
-                      ? "border-blue-400 bg-blue-50"
-                      : "border-gray-200 hover:bg-gray-50"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="reval_method"
-                    checked={(config.revaluation_rules?.method ?? "directional_netting") === opt.value}
-                    onChange={() => setRevalField("method", opt.value)}
-                    className="accent-blue-600 mt-0.5 flex-shrink-0"
-                  />
-                  <div>
-                    <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                    <p className="text-xs text-gray-500">{opt.desc}</p>
-                  </div>
-                </label>
-              ))}
-            </div>
-
-            {/* Directional netting info box */}
-            {(config.revaluation_rules?.method ?? "directional_netting") === "directional_netting" && (
-              <div className="ml-4 mt-2 p-3 bg-green-50 border border-green-100 rounded-lg">
-                <p className="text-xs font-medium text-green-800 mb-1">How directional netting works</p>
-                <ul className="text-xs text-green-700 space-y-1 list-none">
-                  <li>• Jan unrealised loss ₦300k → FX loss GL: ₦300k</li>
-                  <li>• Feb net position ₦150k gain → Reverse ₦300k loss, post ₦150k gain → FX loss GL: zero, FX gain GL: ₦150k</li>
-                  <li>• Mar net position ₦450k loss → Reverse ₦150k gain, post ₦450k loss → FX gain GL: zero, FX loss GL: ₦450k</li>
-                </ul>
-                <p className="text-xs text-green-600 mt-1.5">
-                  Settlement always compares actual rate vs original booking rate. All outstanding
-                  unrealised on the invoice auto-reverses at settlement.
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleRevalSection("method")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`ti ti-chevron-${revalSections.method ? "down" : "right"} text-gray-400`}
+                  style={{ fontSize: 12 }}
+                />
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-widest">
+                  Revaluation method
                 </p>
               </div>
-            )}
-
-            {/* Cumulative — reversal GL preference */}
-            {config.revaluation_rules?.method === "cumulative" && (
-              <div className="ml-4 mt-3 space-y-2 border-l-2 border-gray-200 pl-4">
-                <p className="text-xs font-medium text-gray-700 mb-2">
-                  Reversal GL preference
-                </p>
-                <p className="text-xs text-gray-500 mb-2">
-                  When reversing a prior unrealised entry, which GL should the reversal post to?
-                </p>
-                {[
-                  {
-                    value: "same_gl",
-                    label: "Same GL as original (default)",
-                    desc: "Reversal credits/debits the same GL the original entry was posted to. Reduces the balance in that GL.",
-                  },
-                  {
-                    value: "opposite_gl",
-                    label: "Cross to opposite GL",
-                    desc: "Reversal posts to the gain/loss opposite GL. Both GLs may show balances simultaneously.",
-                  },
-                ].map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer ${
-                      (config.revaluation_rules?.reversal_gl_preference ?? "same_gl") === opt.value
-                        ? "border-blue-300 bg-blue-50"
-                        : "border-gray-200 hover:bg-gray-50"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="reversal_gl_pref"
-                      checked={(config.revaluation_rules?.reversal_gl_preference ?? "same_gl") === opt.value}
-                      onChange={() => setRevalField("reversal_gl_preference", opt.value)}
-                      className="accent-blue-600 mt-0.5 flex-shrink-0"
-                    />
-                    <div>
-                      <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                      <p className="text-xs text-gray-500">{opt.desc}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {/* Reverse and restate sub-options */}
-            {config.revaluation_rules?.method === "reverse_restate" && (
-              <div className="ml-4 mt-3 space-y-2 border-l-2 border-blue-100 pl-4">
-                <p className="text-xs font-medium text-gray-700 mb-2">
-                  Reverse and restate — posting mode
-                </p>
-                {[
-                  {
-                    value: "net_journal",
-                    label: "Net journal at period end (recommended)",
-                    desc: "Reversal and fresh revaluation posted as a single net entry on period-end date.",
-                  },
-                  {
-                    value: "separate_entries",
-                    label: "Separate entries",
-                    desc: "Reversal posted at period start, fresh revaluation posted at period end. Two journal entries per period.",
-                  },
-                ].map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer ${
-                      (config.revaluation_rules?.reverse_restate_mode ?? "net_journal") === opt.value
-                        ? "border-blue-300 bg-blue-50"
-                        : "border-gray-200 hover:bg-gray-50"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="restate_mode"
-                      checked={(config.revaluation_rules?.reverse_restate_mode ?? "net_journal") === opt.value}
-                      onChange={() => setRevalField("reverse_restate_mode", opt.value)}
-                      className="accent-blue-600 mt-0.5 flex-shrink-0"
-                    />
-                    <div>
-                      <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                      <p className="text-xs text-gray-500">{opt.desc}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* ── YEAR-END CROSSING (reverse_restate only) ── */}
-          {config.revaluation_rules?.method === "reverse_restate" && (
-            <div className="border border-gray-200 rounded-lg p-4">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
-                Year-end crossing behaviour
-              </p>
-              <p className="text-xs text-gray-500 mb-3">
-                How should the system handle the transition from December (year-end) into January (new year)?
-              </p>
-              <div className="space-y-2">
-                {[
-                  {
-                    value: "net_journal",
-                    label: "Net journal approach (recommended)",
-                    desc: "December closing rate preserved as comparison base. January revaluation posts as single net entry from Dec rate to Jan rate. No settlement anomaly.",
-                  },
-                  {
-                    value: "separate_jan1",
-                    label: "Reverse on January 1, revalue on January 31 separately",
-                    desc: "Reversal posts on January 1. Note: settlements between Jan 1–31 compare against pre-December-reval rate. System will flag this as a known limitation on affected transactions.",
-                  },
-                  {
-                    value: "cumulative_crossover",
-                    label: "Switch to cumulative for year-end crossing only",
-                    desc: "December → January transition uses cumulative method. Reverse-and-restate resumes from January 31 onwards. Clean year-end, consistent intra-year behaviour.",
-                  },
-                ].map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                      (config.revaluation_rules?.year_end_crossing ?? "net_journal") === opt.value
-                        ? "border-blue-400 bg-blue-50"
-                        : "border-gray-200 hover:bg-gray-50"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="year_end_crossing"
-                      checked={(config.revaluation_rules?.year_end_crossing ?? "net_journal") === opt.value}
-                      onChange={() => setRevalField("year_end_crossing", opt.value)}
-                      className="accent-blue-600 mt-0.5 flex-shrink-0"
-                    />
-                    <div>
-                      <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                      <p className="text-xs text-gray-500">{opt.desc}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── SETTLEMENT RATE BASIS ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
-              Settlement rate basis
-            </p>
-            {(config.revaluation_rules?.method ?? "directional_netting") === "directional_netting" ? (
-              <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-100 rounded-lg">
-                <i className="ti ti-lock text-green-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                <div>
-                  <p className="text-xs font-medium text-green-800">
-                    Original transaction rate (fixed for directional netting)
-                  </p>
-                  <p className="text-xs text-green-700 mt-0.5">
-                    Under directional netting, the realised difference is always computed as:
-                    settlement rate vs original booking rate. All outstanding unrealised on
-                    the invoice auto-reverses at settlement. This is not configurable — it
-                    is the correct IAS 21 treatment and ensures the net P&L equals the actual
-                    cash difference from the original booking.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <>
-                <p className="text-xs text-gray-500 mb-3">
-                  When a foreign currency balance is settled, what rate does the system compare
-                  against to compute the realised FX difference?
-                </p>
-                <div className="space-y-2">
+              {!revalSections.method && (
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                  {config.revaluation_rules?.method === "cumulative"
+                    ? "Cumulative"
+                    : config.revaluation_rules?.method === "reverse_restate"
+                    ? "Reverse and restate"
+                    : "Directional netting (recommended)"}
+                </span>
+              )}
+            </button>
+            {revalSections.method && (
+              <div className="px-4 pb-4 pt-1 border-t border-gray-100">
+                <div className="space-y-2 mb-3">
                   {[
                     {
-                      value: "original_transaction",
-                      label: "Original transaction rate",
-                      desc: "Realised = settlement rate vs original booking rate. Combined with auto-reversal of all outstanding unrealised on the invoice.",
+                      value: "directional_netting",
+                      label: "Directional netting (recommended — best practice)",
+                      desc: "Each period, computes net unrealised position from original booking rate. If direction changes (loss → gain or gain → loss), fully reverses prior GL balance then posts net remainder to opposite GL. At any time, exactly one unrealised GL has a balance per invoice. IAS 21 compliant. Used by SAP FI and Oracle.",
                     },
                     {
-                      value: "prior_period_closing",
-                      label: "Prior period closing rate (IAS 21)",
-                      desc: "Realised = settlement rate vs last period-end closing rate. Simpler journals but less transparent.",
+                      value: "cumulative",
+                      label: "Cumulative",
+                      desc: "Post only the incremental movement each period. Prior entries remain on the books. Both gain and loss GLs may be populated simultaneously for the same invoice.",
                     },
                     {
-                      value: "current_carrying",
-                      label: "Current carrying rate",
-                      desc: "Realised = settlement rate vs current NGN carrying value ÷ FCY balance. Equivalent to prior period closing in most cases.",
+                      value: "reverse_restate",
+                      label: "Reverse and restate",
+                      desc: "Reverse prior period unrealised entry, then post fresh revaluation. Cleaner per-period P&L view.",
                     },
                   ].map((opt) => (
                     <label
                       key={opt.value}
                       className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                        (config.revaluation_rules?.settlement_rate_basis ?? "original_transaction") === opt.value
+                        (config.revaluation_rules?.method ?? "directional_netting") === opt.value
                           ? "border-blue-400 bg-blue-50"
                           : "border-gray-200 hover:bg-gray-50"
                       }`}
                     >
                       <input
                         type="radio"
-                        name="settlement_basis"
-                        checked={(config.revaluation_rules?.settlement_rate_basis ?? "original_transaction") === opt.value}
-                        onChange={() => setRevalField("settlement_rate_basis", opt.value)}
+                        name="reval_method"
+                        checked={(config.revaluation_rules?.method ?? "directional_netting") === opt.value}
+                        onChange={() => setRevalField("method", opt.value)}
                         className="accent-blue-600 mt-0.5 flex-shrink-0"
                       />
                       <div>
@@ -1434,398 +1247,776 @@ export default function CurrenciesPage() {
                     </label>
                   ))}
                 </div>
-              </>
+
+                {/* Directional netting info box */}
+                {(config.revaluation_rules?.method ?? "directional_netting") === "directional_netting" && (
+                  <div className="ml-4 mt-2 p-3 bg-green-50 border border-green-100 rounded-lg">
+                    <p className="text-xs font-medium text-green-800 mb-1">How directional netting works</p>
+                    <ul className="text-xs text-green-700 space-y-1 list-none">
+                      <li>• Jan unrealised loss ₦300k → FX loss GL: ₦300k</li>
+                      <li>• Feb net position ₦150k gain → Reverse ₦300k loss, post ₦150k gain → FX loss GL: zero, FX gain GL: ₦150k</li>
+                      <li>• Mar net position ₦450k loss → Reverse ₦150k gain, post ₦450k loss → FX gain GL: zero, FX loss GL: ₦450k</li>
+                    </ul>
+                    <p className="text-xs text-green-600 mt-1.5">
+                      Settlement always compares actual rate vs original booking rate. All outstanding
+                      unrealised on the invoice auto-reverses at settlement.
+                    </p>
+                  </div>
+                )}
+
+                {/* Cumulative — reversal GL preference */}
+                {config.revaluation_rules?.method === "cumulative" && (
+                  <div className="ml-4 mt-3 space-y-2 border-l-2 border-gray-200 pl-4">
+                    <p className="text-xs font-medium text-gray-700 mb-2">Reversal GL preference</p>
+                    <p className="text-xs text-gray-500 mb-2">
+                      When reversing a prior unrealised entry, which GL should the reversal post to?
+                    </p>
+                    {[
+                      {
+                        value: "same_gl",
+                        label: "Same GL as original (default)",
+                        desc: "Reversal credits/debits the same GL the original entry was posted to. Reduces the balance in that GL.",
+                      },
+                      {
+                        value: "opposite_gl",
+                        label: "Cross to opposite GL",
+                        desc: "Reversal posts to the gain/loss opposite GL. Both GLs may show balances simultaneously.",
+                      },
+                    ].map((opt) => (
+                      <label
+                        key={opt.value}
+                        className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer ${
+                          (config.revaluation_rules?.reversal_gl_preference ?? "same_gl") === opt.value
+                            ? "border-blue-300 bg-blue-50"
+                            : "border-gray-200 hover:bg-gray-50"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="reversal_gl_pref"
+                          checked={(config.revaluation_rules?.reversal_gl_preference ?? "same_gl") === opt.value}
+                          onChange={() => setRevalField("reversal_gl_preference", opt.value)}
+                          className="accent-blue-600 mt-0.5 flex-shrink-0"
+                        />
+                        <div>
+                          <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                          <p className="text-xs text-gray-500">{opt.desc}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                {/* Reverse and restate sub-options + year-end crossing */}
+                {config.revaluation_rules?.method === "reverse_restate" && (
+                  <>
+                    <div className="ml-4 mt-3 space-y-2 border-l-2 border-blue-100 pl-4">
+                      <p className="text-xs font-medium text-gray-700 mb-2">
+                        Reverse and restate — posting mode
+                      </p>
+                      {[
+                        {
+                          value: "net_journal",
+                          label: "Net journal at period end (recommended)",
+                          desc: "Reversal and fresh revaluation posted as a single net entry on period-end date.",
+                        },
+                        {
+                          value: "separate_entries",
+                          label: "Separate entries",
+                          desc: "Reversal posted at period start, fresh revaluation posted at period end. Two journal entries per period.",
+                        },
+                      ].map((opt) => (
+                        <label
+                          key={opt.value}
+                          className={`flex items-start gap-3 p-2.5 border rounded-lg cursor-pointer ${
+                            (config.revaluation_rules?.reverse_restate_mode ?? "net_journal") === opt.value
+                              ? "border-blue-300 bg-blue-50"
+                              : "border-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="restate_mode"
+                            checked={(config.revaluation_rules?.reverse_restate_mode ?? "net_journal") === opt.value}
+                            onChange={() => setRevalField("reverse_restate_mode", opt.value)}
+                            className="accent-blue-600 mt-0.5 flex-shrink-0"
+                          />
+                          <div>
+                            <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                            <p className="text-xs text-gray-500">{opt.desc}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1">
+                        Year-end crossing behaviour
+                      </p>
+                      <p className="text-xs text-gray-500 mb-3">
+                        How should the system handle the transition from December (year-end) into January (new year)?
+                      </p>
+                      <div className="space-y-2">
+                        {[
+                          {
+                            value: "net_journal",
+                            label: "Net journal approach (recommended)",
+                            desc: "December closing rate preserved as comparison base. January revaluation posts as single net entry from Dec rate to Jan rate. No settlement anomaly.",
+                          },
+                          {
+                            value: "separate_jan1",
+                            label: "Reverse on January 1, revalue on January 31 separately",
+                            desc: "Reversal posts on January 1. Note: settlements between Jan 1–31 compare against pre-December-reval rate. System will flag this as a known limitation on affected transactions.",
+                          },
+                          {
+                            value: "cumulative_crossover",
+                            label: "Switch to cumulative for year-end crossing only",
+                            desc: "December → January transition uses cumulative method. Reverse-and-restate resumes from January 31 onwards. Clean year-end, consistent intra-year behaviour.",
+                          },
+                        ].map((opt) => (
+                          <label
+                            key={opt.value}
+                            className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                              (config.revaluation_rules?.year_end_crossing ?? "net_journal") === opt.value
+                                ? "border-blue-400 bg-blue-50"
+                                : "border-gray-200 hover:bg-gray-50"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="year_end_crossing"
+                              checked={(config.revaluation_rules?.year_end_crossing ?? "net_journal") === opt.value}
+                              onChange={() => setRevalField("year_end_crossing", opt.value)}
+                              className="accent-blue-600 mt-0.5 flex-shrink-0"
+                            />
+                            <div>
+                              <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                              <p className="text-xs text-gray-500">{opt.desc}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── SETTLEMENT RATE BASIS ── */}
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleRevalSection("settlement_basis")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`ti ti-chevron-${revalSections.settlement_basis ? "down" : "right"} text-gray-400`}
+                  style={{ fontSize: 12 }}
+                />
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-widest">
+                  Settlement rate basis
+                </p>
+              </div>
+              {!revalSections.settlement_basis && (
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                  {config.revaluation_rules?.settlement_rate_basis === "prior_period_closing"
+                    ? "Prior period closing rate"
+                    : config.revaluation_rules?.settlement_rate_basis === "current_carrying"
+                    ? "Current carrying rate"
+                    : "Original transaction rate"}
+                </span>
+              )}
+            </button>
+            {revalSections.settlement_basis && (
+              <div className="px-4 pb-4 pt-1 border-t border-gray-100">
+                {(config.revaluation_rules?.method ?? "directional_netting") === "directional_netting" ? (
+                  <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-100 rounded-lg">
+                    <i className="ti ti-lock text-green-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                    <div>
+                      <p className="text-xs font-medium text-green-800">
+                        Original transaction rate (fixed for directional netting)
+                      </p>
+                      <p className="text-xs text-green-700 mt-0.5">
+                        Under directional netting, the realised difference is always computed as:
+                        settlement rate vs original booking rate. All outstanding unrealised on
+                        the invoice auto-reverses at settlement. This is not configurable — it
+                        is the correct IAS 21 treatment and ensures the net P&L equals the actual
+                        cash difference from the original booking.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-500 mb-3">
+                      When a foreign currency balance is settled, what rate does the system compare
+                      against to compute the realised FX difference?
+                    </p>
+                    <div className="space-y-2">
+                      {[
+                        {
+                          value: "original_transaction",
+                          label: "Original transaction rate",
+                          desc: "Realised = settlement rate vs original booking rate. Combined with auto-reversal of all outstanding unrealised on the invoice.",
+                        },
+                        {
+                          value: "prior_period_closing",
+                          label: "Prior period closing rate (IAS 21)",
+                          desc: "Realised = settlement rate vs last period-end closing rate. Simpler journals but less transparent.",
+                        },
+                        {
+                          value: "current_carrying",
+                          label: "Current carrying rate",
+                          desc: "Realised = settlement rate vs current NGN carrying value ÷ FCY balance. Equivalent to prior period closing in most cases.",
+                        },
+                      ].map((opt) => (
+                        <label
+                          key={opt.value}
+                          className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                            (config.revaluation_rules?.settlement_rate_basis ?? "original_transaction") === opt.value
+                              ? "border-blue-400 bg-blue-50"
+                              : "border-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="settlement_basis"
+                            checked={(config.revaluation_rules?.settlement_rate_basis ?? "original_transaction") === opt.value}
+                            onChange={() => setRevalField("settlement_rate_basis", opt.value)}
+                            className="accent-blue-600 mt-0.5 flex-shrink-0"
+                          />
+                          <div>
+                            <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                            <p className="text-xs text-gray-500">{opt.desc}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             )}
           </div>
 
           {/* ── PARTIAL SETTLEMENT METHOD ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">
-              Partial settlement method
-            </p>
-            <p className="text-xs text-gray-500 mb-3">
-              When a payment partially settles multiple outstanding foreign currency invoices,
-              which invoices are considered settled first?
-            </p>
-            <div className="space-y-2">
-              {[
-                {
-                  value: "fifo",
-                  label: "FIFO — oldest invoice first",
-                  desc: "The oldest outstanding invoice is settled first. Common and straightforward.",
-                },
-                {
-                  value: "specific_id",
-                  label: "Specific identification",
-                  desc: "User selects which invoice(s) are being settled at payment time. Maximum control and accuracy.",
-                },
-                {
-                  value: "weighted_average",
-                  label: "Weighted average carrying rate",
-                  desc: "The carrying rate for all outstanding invoices is averaged. Simpler but less precise.",
-                },
-              ].map((opt) => (
-                <label
-                  key={opt.value}
-                  className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
-                    (config.revaluation_rules?.partial_settlement_method ?? "specific_id") === opt.value
-                      ? "border-blue-400 bg-blue-50"
-                      : "border-gray-200 hover:bg-gray-50"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="partial_settlement"
-                    checked={(config.revaluation_rules?.partial_settlement_method ?? "specific_id") === opt.value}
-                    onChange={() => setRevalField("partial_settlement_method", opt.value)}
-                    className="accent-blue-600 mt-0.5 flex-shrink-0"
-                  />
-                  <div>
-                    <p className="text-xs font-medium text-gray-900">{opt.label}</p>
-                    <p className="text-xs text-gray-500">{opt.desc}</p>
-                  </div>
-                </label>
-              ))}
-            </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleRevalSection("partial_settlement")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`ti ti-chevron-${revalSections.partial_settlement ? "down" : "right"} text-gray-400`}
+                  style={{ fontSize: 12 }}
+                />
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-widest">
+                  Partial settlement method
+                </p>
+              </div>
+              {!revalSections.partial_settlement && (
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                  {config.revaluation_rules?.partial_settlement_method === "fifo"
+                    ? "FIFO"
+                    : config.revaluation_rules?.partial_settlement_method === "weighted_average"
+                    ? "Weighted average"
+                    : "Specific identification"}
+                </span>
+              )}
+            </button>
+            {revalSections.partial_settlement && (
+              <div className="px-4 pb-4 pt-1 border-t border-gray-100">
+                <p className="text-xs text-gray-500 mb-3">
+                  When a payment partially settles multiple outstanding foreign currency invoices,
+                  which invoices are considered settled first?
+                </p>
+                <div className="space-y-2">
+                  {[
+                    {
+                      value: "fifo",
+                      label: "FIFO — oldest invoice first",
+                      desc: "The oldest outstanding invoice is settled first. Common and straightforward.",
+                    },
+                    {
+                      value: "specific_id",
+                      label: "Specific identification",
+                      desc: "User selects which invoice(s) are being settled at payment time. Maximum control and accuracy.",
+                    },
+                    {
+                      value: "weighted_average",
+                      label: "Weighted average carrying rate",
+                      desc: "The carrying rate for all outstanding invoices is averaged. Simpler but less precise.",
+                    },
+                  ].map((opt) => (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer ${
+                        (config.revaluation_rules?.partial_settlement_method ?? "specific_id") === opt.value
+                          ? "border-blue-400 bg-blue-50"
+                          : "border-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="partial_settlement"
+                        checked={(config.revaluation_rules?.partial_settlement_method ?? "specific_id") === opt.value}
+                        onChange={() => setRevalField("partial_settlement_method", opt.value)}
+                        className="accent-blue-600 mt-0.5 flex-shrink-0"
+                      />
+                      <div>
+                        <p className="text-xs font-medium text-gray-900">{opt.label}</p>
+                        <p className="text-xs text-gray-500">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── REVALUATION SETTINGS ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">
-              Revaluation settings
-            </p>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Rate source for revaluation
-                </label>
-                <select
-                  value={config.revaluation_rules?.rate_source ?? "cbn_api"}
-                  onChange={(e) => setRevalField("rate_source", e.target.value)}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {RATE_SOURCES.map((s) => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  CBN closing rate is standard for Nigerian entities.
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleRevalSection("settings")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`ti ti-chevron-${revalSections.settings ? "down" : "right"} text-gray-400`}
+                  style={{ fontSize: 12 }}
+                />
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-widest">
+                  Revaluation settings
                 </p>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Revaluation frequency
-                </label>
-                <select
-                  value={config.revaluation_rules?.frequency ?? "monthly"}
-                  onChange={(e) => setRevalField("frequency", e.target.value)}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="yearly">Yearly</option>
-                  <option value="at_period_close">At period close (follows Organisation settings)</option>
-                </select>
+              {!revalSections.settings && (
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                  {RATE_SOURCES.find(
+                    (s) => s.value === (config.revaluation_rules?.rate_source ?? "cbn_api")
+                  )?.label ?? "CBN API"}
+                  {" · "}
+                  {config.revaluation_rules?.frequency === "quarterly"
+                    ? "Quarterly"
+                    : config.revaluation_rules?.frequency === "yearly"
+                    ? "Yearly"
+                    : config.revaluation_rules?.frequency === "at_period_close"
+                    ? "At period close"
+                    : "Monthly"}
+                </span>
+              )}
+            </button>
+            {revalSections.settings && (
+              <div className="px-4 pb-4 pt-3 border-t border-gray-100">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Rate source for revaluation
+                    </label>
+                    <select
+                      value={config.revaluation_rules?.rate_source ?? "cbn_api"}
+                      onChange={(e) => setRevalField("rate_source", e.target.value)}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {RATE_SOURCES.map((s) => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      CBN closing rate is standard for Nigerian entities.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Revaluation frequency
+                    </label>
+                    <select
+                      value={config.revaluation_rules?.frequency ?? "monthly"}
+                      onChange={(e) => setRevalField("frequency", e.target.value)}
+                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                      <option value="yearly">Yearly</option>
+                      <option value="at_period_close">At period close (follows Organisation settings)</option>
+                    </select>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* ── GL ACCOUNTS PER BALANCE TYPE ── */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-                GL accounts by balance type
-              </p>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useSharedGL}
-                  onChange={(e) => setUseSharedGL(e.target.checked)}
-                  className="w-3.5 h-3.5 accent-blue-600"
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleRevalSection("gl_accounts")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`ti ti-chevron-${revalSections.gl_accounts ? "down" : "right"} text-gray-400`}
+                  style={{ fontSize: 12 }}
                 />
-                <span className="text-xs text-gray-600">Use shared GLs for all types</span>
-              </label>
-            </div>
-
-            {useSharedGL && (
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                <p className="text-xs font-medium text-gray-700 mb-2">
-                  Shared FX gain/loss GL accounts (applied to all balance types)
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-widest">
+                  GL accounts by balance type
                 </p>
-                <div className="grid grid-cols-2 gap-3 mb-2">
-                  <div>
-                    <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                      FX gain GL (realised + unrealised)
-                    </label>
-                    <GLSearchInput
-                      value={sharedGainGL}
-                      onChange={(gl, name) => { setSharedGainGL(gl); setSharedGainGLName(name); }}
-                      placeholder="Search GL…"
-                      accountType="SOCI"
-                      classification="Finance income"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                      FX loss GL (realised + unrealised)
-                    </label>
-                    <GLSearchInput
-                      value={sharedLossGL}
-                      onChange={(gl, name) => { setSharedLossGL(gl); setSharedLossGLName(name); }}
-                      placeholder="Search GL…"
-                      accountType="SOCI"
-                      classification="Finance cost"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={applySharedGL}
-                  disabled={!sharedGainGL || !sharedLossGL}
-                  className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Apply to all balance types
-                </button>
               </div>
-            )}
-
-            <div className="space-y-2">
-              {[
-                ...BALANCE_TYPES,
-                ...(config.revaluation_rules?.custom_balance_types ?? []),
-              ].map((bt) => {
-                const gl = config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
-                const isCollapsed = collapsedBalanceTypes.has(bt.key);
-                const hasConfig = !!(
-                  gl.bs_gl ||
-                  gl.realized_gain ||
-                  gl.realized_loss ||
-                  gl.unrealized_gain ||
-                  gl.unrealized_loss
-                );
-
+              {!revalSections.gl_accounts && (() => {
+                const configured = BALANCE_TYPES.filter((bt) => {
+                  const gl = config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
+                  return (
+                    gl.realized_gain &&
+                    gl.realized_loss &&
+                    gl.unrealized_gain &&
+                    gl.unrealized_loss
+                  );
+                }).length;
+                const partial = BALANCE_TYPES.filter((bt) => {
+                  const gl = config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
+                  const count = [
+                    gl.realized_gain,
+                    gl.realized_loss,
+                    gl.unrealized_gain,
+                    gl.unrealized_loss,
+                  ].filter(Boolean).length;
+                  return count > 0 && count < 4;
+                }).length;
                 return (
-                  <div
-                    key={bt.key}
-                    className="border border-gray-100 rounded-lg bg-gray-50"
-                  >
-                    {/* Header — always visible, click to toggle */}
-                    <button
-                      type="button"
-                      onClick={() => toggleBalanceType(bt.key)}
-                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100 rounded-lg transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <i
-                          className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-gray-400`}
-                          style={{ fontSize: 12 }}
-                        />
-                        <div>
-                          <span className="text-xs font-medium text-gray-800">
-                            {bt.label}
-                          </span>
-                          <span className="text-xs text-gray-400 ml-2">
-                            {bt.desc}
-                          </span>
-                        </div>
-                      </div>
-                      {hasConfig && (
-                        <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded flex-shrink-0">
-                          Configured
-                        </span>
-                      )}
-                    </button>
-
-                    {/* Body — only visible when expanded */}
-                    {!isCollapsed && (
-                      <div className="px-3 pb-3 pt-1 border-t border-gray-100">
-                        {/* Balance sheet control account */}
-                        <div className="mb-3">
-                          <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                            Balance sheet control account
-                          </label>
-                          <GLSearchInput
-                            value={gl.bs_gl ?? ""}
-                            onChange={(glNum, glName) =>
-                              setRevalGL(bt.key, "bs_gl", glNum, "bs_gl_name", glName)
-                            }
-                            placeholder="Search SOFP GL…"
-                            accountType="SOFP"
-                          />
-                          <p className="text-[10px] text-gray-400 mt-0.5">
-                            Must match the control account configured in the
-                            relevant module (AP, AR, Bank etc.)
-                          </p>
-                        </div>
-
-                        {/* FX gain/loss GLs */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                          {[
-                            {
-                              field: "realized_gain" as const,
-                              nameField: "realized_gain_name" as const,
-                              label: "Realised gain",
-                            },
-                            {
-                              field: "realized_loss" as const,
-                              nameField: "realized_loss_name" as const,
-                              label: "Realised loss",
-                            },
-                            {
-                              field: "unrealized_gain" as const,
-                              nameField: "unrealized_gain_name" as const,
-                              label: "Unrealised gain",
-                            },
-                            {
-                              field: "unrealized_loss" as const,
-                              nameField: "unrealized_loss_name" as const,
-                              label: "Unrealised loss",
-                            },
-                          ].map((f) => (
-                            <div key={f.field}>
-                              <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                                {f.label}
-                              </label>
-                              <GLSearchInput
-                                value={gl[f.field] ?? ""}
-                                onChange={(glNum, glName) =>
-                                  setRevalGL(bt.key, f.field, glNum, f.nameField, glName)
-                                }
-                                placeholder="GL…"
-                                accountType="SOCI"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                  <div className="flex items-center gap-1.5">
+                    {configured > 0 && (
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                        {configured}/{BALANCE_TYPES.length} complete
+                      </span>
+                    )}
+                    {partial > 0 && (
+                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">
+                        {partial} incomplete
+                      </span>
+                    )}
+                    {configured === 0 && partial === 0 && (
+                      <span className="text-xs text-gray-400">Not configured</span>
                     )}
                   </div>
                 );
-              })}
-            </div>
+              })()}
+            </button>
+            {revalSections.gl_accounts && (
+              <div className="px-4 pb-4 pt-3 border-t border-gray-100">
+                <div className="flex items-center justify-end mb-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useSharedGL}
+                      onChange={(e) => setUseSharedGL(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-blue-600"
+                    />
+                    <span className="text-xs text-gray-600">Use shared GLs for all types</span>
+                  </label>
+                </div>
 
-            {/* Add custom balance type */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              {!showAddBalanceType ? (
-                <button
-                  type="button"
-                  onClick={() => setShowAddBalanceType(true)}
-                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                >
-                  <i className="ti ti-plus" style={{ fontSize: 12 }} />
-                  Add custom balance type
-                </button>
-              ) : (
-                <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
-                  <p className="text-xs font-medium text-gray-700">New balance type</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                        Internal key (no spaces) *
-                      </label>
-                      <input
-                        type="text"
-                        value={newBTKey}
-                        onChange={(e) => setNewBTKey(e.target.value.toLowerCase().replace(/\s/g, "_"))}
-                        placeholder="e.g. prepayments_fx"
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
+                {useSharedGL && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                    <p className="text-xs font-medium text-gray-700 mb-2">
+                      Shared FX gain/loss GL accounts (applied to all balance types)
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 mb-2">
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                          FX gain GL (realised + unrealised)
+                        </label>
+                        <GLSearchInput
+                          value={sharedGainGL}
+                          onChange={(gl, name) => { setSharedGainGL(gl); setSharedGainGLName(name); }}
+                          placeholder="Search GL…"
+                          accountType="SOCI"
+                          classification="Finance income"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                          FX loss GL (realised + unrealised)
+                        </label>
+                        <GLSearchInput
+                          value={sharedLossGL}
+                          onChange={(gl, name) => { setSharedLossGL(gl); setSharedLossGLName(name); }}
+                          placeholder="Search GL…"
+                          accountType="SOCI"
+                          classification="Finance cost"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                        Display label *
-                      </label>
-                      <input
-                        type="text"
-                        value={newBTLabel}
-                        onChange={(e) => setNewBTLabel(e.target.value)}
-                        placeholder="e.g. FX Prepayments"
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-medium text-gray-500 mb-1">
-                        Description
-                      </label>
-                      <input
-                        type="text"
-                        value={newBTDesc}
-                        onChange={(e) => setNewBTDesc(e.target.value)}
-                        placeholder="e.g. Advance payments to vendors in foreign currency"
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
                     <button
                       type="button"
-                      disabled={!newBTKey.trim() || !newBTLabel.trim()}
-                      onClick={() => {
-                        const existing = config.revaluation_rules?.custom_balance_types ?? [];
-                        const newCustom = [
-                          ...existing,
-                          { key: newBTKey.trim(), label: newBTLabel.trim(), desc: newBTDesc.trim() },
-                        ];
-                        setRevalField("custom_balance_types", newCustom);
-                        setNewBTKey("");
-                        setNewBTLabel("");
-                        setNewBTDesc("");
-                        setShowAddBalanceType(false);
-                      }}
+                      onClick={applySharedGL}
+                      disabled={!sharedGainGL || !sharedLossGL}
                       className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                     >
-                      Add
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddBalanceType(false)}
-                      className="text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
-                    >
-                      Cancel
+                      Apply to all balance types
                     </button>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
 
-            <div className="mt-3 flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
-              <i
-                className="ti ti-info-circle text-amber-600 flex-shrink-0 mt-0.5"
-                style={{ fontSize: 13 }}
-              />
-              <p className="text-xs text-amber-700">
-                GL accounts are searched from your Chart of Accounts.
-                Balance sheet control accounts must match those configured in the relevant modules
-                (AP, AR, Bank). Gain and loss can point to the same GL for a net FX position.
-              </p>
-            </div>
+                <div className="space-y-2">
+                  {[
+                    ...BALANCE_TYPES,
+                    ...(config.revaluation_rules?.custom_balance_types ?? []),
+                  ].map((bt) => {
+                    const gl = config.revaluation_rules?.by_balance_type?.[bt.key] ?? {};
+                    const isCollapsed = collapsedBalanceTypes.has(bt.key);
+                    const allFxConfigured = !!(
+                      gl.realized_gain &&
+                      gl.realized_loss &&
+                      gl.unrealized_gain &&
+                      gl.unrealized_loss
+                    );
+                    const partiallyConfigured =
+                      !allFxConfigured &&
+                      !!(
+                        gl.realized_gain ||
+                        gl.realized_loss ||
+                        gl.unrealized_gain ||
+                        gl.unrealized_loss
+                      );
+
+                    return (
+                      <div
+                        key={bt.key}
+                        className="border border-gray-100 rounded-lg bg-gray-50"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleBalanceType(bt.key)}
+                          className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <i
+                              className={`ti ti-chevron-${isCollapsed ? "right" : "down"} text-gray-400`}
+                              style={{ fontSize: 12 }}
+                            />
+                            <div>
+                              <span className="text-xs font-medium text-gray-800">
+                                {bt.label}
+                              </span>
+                              <span className="text-xs text-gray-400 ml-2">{bt.desc}</span>
+                            </div>
+                          </div>
+                          {allFxConfigured && (
+                            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded flex-shrink-0 flex items-center gap-1">
+                              <i className="ti ti-check" style={{ fontSize: 10 }} /> Complete
+                            </span>
+                          )}
+                          {partiallyConfigured && (
+                            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded flex-shrink-0 flex items-center gap-1">
+                              <i className="ti ti-alert-triangle" style={{ fontSize: 10 }} /> Incomplete
+                            </span>
+                          )}
+                        </button>
+
+                        {!isCollapsed && (
+                          <div className="px-3 pb-3 pt-1 border-t border-gray-100">
+                            <div className="mb-3">
+                              <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                                Balance sheet control account
+                              </label>
+                              <GLSearchInput
+                                value={gl.bs_gl ?? ""}
+                                onChange={(glNum, glName) =>
+                                  setRevalGL(bt.key, "bs_gl", glNum, "bs_gl_name", glName)
+                                }
+                                placeholder="Search SOFP GL…"
+                                accountType="SOFP"
+                              />
+                              <p className="text-[10px] text-gray-400 mt-0.5">
+                                Must match the control account configured in the relevant module (AP, AR, Bank etc.)
+                              </p>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              {[
+                                { field: "realized_gain" as const,   nameField: "realized_gain_name" as const,   label: "Realised gain" },
+                                { field: "realized_loss" as const,   nameField: "realized_loss_name" as const,   label: "Realised loss" },
+                                { field: "unrealized_gain" as const, nameField: "unrealized_gain_name" as const, label: "Unrealised gain" },
+                                { field: "unrealized_loss" as const, nameField: "unrealized_loss_name" as const, label: "Unrealised loss" },
+                              ].map((f) => (
+                                <div key={f.field}>
+                                  <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                                    {f.label}
+                                  </label>
+                                  <GLSearchInput
+                                    value={gl[f.field] ?? ""}
+                                    onChange={(glNum, glName) =>
+                                      setRevalGL(bt.key, f.field, glNum, f.nameField, glName)
+                                    }
+                                    placeholder="GL…"
+                                    accountType="SOCI"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Add custom balance type */}
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  {!showAddBalanceType ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddBalanceType(true)}
+                      className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                    >
+                      <i className="ti ti-plus" style={{ fontSize: 12 }} />
+                      Add custom balance type
+                    </button>
+                  ) : (
+                    <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
+                      <p className="text-xs font-medium text-gray-700">New balance type</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                            Internal key (no spaces) *
+                          </label>
+                          <input
+                            type="text"
+                            value={newBTKey}
+                            onChange={(e) =>
+                              setNewBTKey(e.target.value.toLowerCase().replace(/\s/g, "_"))
+                            }
+                            placeholder="e.g. prepayments_fx"
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                            Display label *
+                          </label>
+                          <input
+                            type="text"
+                            value={newBTLabel}
+                            onChange={(e) => setNewBTLabel(e.target.value)}
+                            placeholder="e.g. FX Prepayments"
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-[10px] font-medium text-gray-500 mb-1">
+                            Description
+                          </label>
+                          <input
+                            type="text"
+                            value={newBTDesc}
+                            onChange={(e) => setNewBTDesc(e.target.value)}
+                            placeholder="e.g. Advance payments to vendors in foreign currency"
+                            className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={!newBTKey.trim() || !newBTLabel.trim()}
+                          onClick={() => {
+                            const existing =
+                              config.revaluation_rules?.custom_balance_types ?? [];
+                            const newCustom = [
+                              ...existing,
+                              {
+                                key: newBTKey.trim(),
+                                label: newBTLabel.trim(),
+                                desc: newBTDesc.trim(),
+                              },
+                            ];
+                            setRevalField("custom_balance_types", newCustom);
+                            setNewBTKey("");
+                            setNewBTLabel("");
+                            setNewBTDesc("");
+                            setShowAddBalanceType(false);
+                          }}
+                          className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddBalanceType(false)}
+                          className="text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-100 rounded-lg">
+                  <i
+                    className="ti ti-info-circle text-amber-600 flex-shrink-0 mt-0.5"
+                    style={{ fontSize: 13 }}
+                  />
+                  <p className="text-xs text-amber-700">
+                    GL accounts are searched from your Chart of Accounts.
+                    Balance sheet control accounts must match those configured in the relevant modules
+                    (AP, AR, Bank). Gain and loss can point to the same GL for a net FX position.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Settlement handling note */}
-          <div className="border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
-              NGN settlement of FX liability
-            </p>
-            <p className="text-xs text-gray-600 mb-2">
-              At settlement, the system automatically posts two entries:
-            </p>
-            <div className="space-y-2 mb-2">
-              <div className="p-2 bg-gray-50 rounded text-xs text-gray-700">
-                <p className="font-medium mb-0.5">Entry 1 — Realised FX difference:</p>
-                <p className="font-mono">Realised gain/loss = (settlement rate − original booking rate) × FCY amount</p>
-                <p className="text-gray-500 mt-0.5">Posted to realised FX gain/loss GL for this balance type.</p>
+          {/* ── NGN SETTLEMENT NOTE ── */}
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleRevalSection("settlement_note")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <i
+                  className={`ti ti-chevron-${revalSections.settlement_note ? "down" : "right"} text-gray-400`}
+                  style={{ fontSize: 12 }}
+                />
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-widest">
+                  NGN settlement of FX liability
+                </p>
               </div>
-              <div className="p-2 bg-gray-50 rounded text-xs text-gray-700">
-                <p className="font-medium mb-0.5">Entry 2 — Auto-reverse outstanding unrealised:</p>
-                <p className="font-mono">All prior unrealised entries on this invoice → reversed to zero</p>
-                <p className="text-gray-500 mt-0.5">Posted back to the same GL the unrealised was originally posted to.</p>
+            </button>
+            {revalSections.settlement_note && (
+              <div className="px-4 pb-4 pt-3 border-t border-gray-100">
+                <p className="text-xs text-gray-600 mb-2">
+                  At settlement, the system automatically posts two entries:
+                </p>
+                <div className="space-y-2 mb-2">
+                  <div className="p-2 bg-gray-50 rounded text-xs text-gray-700">
+                    <p className="font-medium mb-0.5">Entry 1 — Realised FX difference:</p>
+                    <p className="font-mono">
+                      Realised gain/loss = (settlement rate − original booking rate) × FCY amount
+                    </p>
+                    <p className="text-gray-500 mt-0.5">
+                      Posted to realised FX gain/loss GL for this balance type.
+                    </p>
+                  </div>
+                  <div className="p-2 bg-gray-50 rounded text-xs text-gray-700">
+                    <p className="font-medium mb-0.5">Entry 2 — Auto-reverse outstanding unrealised:</p>
+                    <p className="font-mono">
+                      All prior unrealised entries on this invoice → reversed to zero
+                    </p>
+                    <p className="text-gray-500 mt-0.5">
+                      Posted back to the same GL the unrealised was originally posted to.
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Net P&amp;L impact always equals actual NGN paid minus original NGN booked.
+                  The settlement rate (actual NGN ÷ FCY) is captured on the payment transaction.
+                  Bank advice upload is recommended for audit trail purposes.
+                </p>
               </div>
-            </div>
-            <p className="text-xs text-gray-500">
-              Net P&amp;L impact always equals actual NGN paid minus original NGN booked.
-              The settlement rate (actual NGN ÷ FCY) is captured on the payment transaction.
-              Bank advice upload is recommended for audit trail purposes.
-            </p>
+            )}
           </div>
 
           <div className="flex items-center gap-3 pt-2">
