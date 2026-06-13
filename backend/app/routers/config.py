@@ -50,6 +50,7 @@ Admin-only operations require is_tenant_admin or is_super_admin.
 import csv
 import io
 import re
+import traceback
 import uuid
 from typing import Optional
 
@@ -826,78 +827,83 @@ async def download_dimension_values_template(
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Font, PatternFill
-        from openpyxl.worksheet.dataval import DataValidation
+        from openpyxl.worksheet.datavalidation import DataValidation
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
 
-    # Fetch all active manual dimensions for dropdown
-    dim_result = await db.execute(
-        select(TenantDimension).where(
-            TenantDimension.tenant_id == tenant_id,
-            TenantDimension.is_active == True,
+    try:
+        # Fetch all active manual dimensions for dropdown
+        dim_result = await db.execute(
+            select(TenantDimension).where(
+                TenantDimension.tenant_id == tenant_id,
+                TenantDimension.is_active == True,
+            )
         )
-    )
-    all_dims = dim_result.scalars().all()
-    manual_dims = [d for d in all_dims if (d.value_source or "manual") in ("manual", "hybrid")]
-    dim_names = [d.display_name or d.name for d in manual_dims]
+        all_dims = dim_result.scalars().all()
+        manual_dims = [d for d in all_dims if (d.value_source or "manual") in ("manual", "hybrid")]
+        dim_names = [d.display_name or d.name for d in manual_dims]
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Values"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Values"
 
-    hdr_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
-    hdr_fill = PatternFill("solid", fgColor="1E3A5F")
-    hdr_align = Alignment(horizontal="center")
+        hdr_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+        hdr_fill = PatternFill("solid", fgColor="1E3A5F")
+        hdr_align = Alignment(horizontal="center")
 
-    headers = ["Dimension", "Code *", "Name *", "Description"]
-    for col_idx, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_idx, value=h)
-        cell.font = hdr_font
-        cell.fill = hdr_fill
-        cell.alignment = hdr_align
+        headers = ["Dimension", "Code *", "Name *", "Description"]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=h)
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = hdr_align
 
-    ws.column_dimensions["A"].width = 28
-    ws.column_dimensions["B"].width = 20
-    ws.column_dimensions["C"].width = 30
-    ws.column_dimensions["D"].width = 40
+        ws.column_dimensions["A"].width = 28
+        ws.column_dimensions["B"].width = 20
+        ws.column_dimensions["C"].width = 30
+        ws.column_dimensions["D"].width = 40
 
-    instr_font = Font(name="Arial", size=10, italic=True, color="555555")
-    ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
-    ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
-    ws.cell(row=2, column=3, value="Full name").font = instr_font
-    ws.cell(row=2, column=4, value="Optional description").font = instr_font
+        instr_font = Font(name="Arial", size=10, italic=True, color="555555")
+        ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
+        ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
+        ws.cell(row=2, column=3, value="Full name").font = instr_font
+        ws.cell(row=2, column=4, value="Optional description").font = instr_font
 
-    example_font = Font(name="Arial", size=10, italic=True, color="888888")
-    ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
-    ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
-    ws.cell(row=3, column=3, value="Khalamanja").font = example_font
-    ws.cell(row=3, column=4, value="Optional description").font = example_font
+        example_font = Font(name="Arial", size=10, italic=True, color="888888")
+        ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
+        ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
+        ws.cell(row=3, column=3, value="Khalamanja").font = example_font
+        ws.cell(row=3, column=4, value="Optional description").font = example_font
 
-    if dim_names:
-        dim_formula = '"' + ",".join(dim_names) + '"'
-        dv = DataValidation(
-            type="list",
-            formula1=dim_formula,
-            allow_blank=True,
-            showDropDown=False,
-            showErrorMessage=True,
-            errorTitle="Invalid dimension",
-            error="Please select a dimension from the dropdown list.",
+        if dim_names:
+            dim_formula = '"' + ",".join(dim_names) + '"'
+            dv = DataValidation(
+                type="list",
+                formula1=dim_formula,
+                allow_blank=True,
+                showDropDown=False,
+                showErrorMessage=True,
+                errorTitle="Invalid dimension",
+                error="Please select a dimension from the dropdown list.",
+            )
+            dv.sqref = "A4:A1000"
+            ws.add_data_validation(dv)
+
+        ws.freeze_panes = "A4"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=dimension_values_template.xlsx"},
         )
-        dv.sqref = "A4:A1000"
-        ws.add_data_validation(dv)
-
-    ws.freeze_panes = "A4"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=dimension_values_template.xlsx"},
-    )
+    except Exception as exc:
+        print("ERROR in download_dimension_values_template:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Template generation failed: {exc}") from exc
 
 
 @router.post(
@@ -1088,77 +1094,82 @@ async def download_universal_dimension_values_template(
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Font, PatternFill
-        from openpyxl.worksheet.dataval import DataValidation
+        from openpyxl.worksheet.datavalidation import DataValidation
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
 
-    dim_result = await db.execute(
-        select(TenantDimension).where(
-            TenantDimension.tenant_id == tenant_id,
-            TenantDimension.is_active == True,
+    try:
+        dim_result = await db.execute(
+            select(TenantDimension).where(
+                TenantDimension.tenant_id == tenant_id,
+                TenantDimension.is_active == True,
+            )
         )
-    )
-    all_dims = dim_result.scalars().all()
-    manual_dims = [d for d in all_dims if (d.value_source or "manual") in ("manual", "hybrid")]
-    dim_names = [d.display_name or d.name for d in manual_dims]
+        all_dims = dim_result.scalars().all()
+        manual_dims = [d for d in all_dims if (d.value_source or "manual") in ("manual", "hybrid")]
+        dim_names = [d.display_name or d.name for d in manual_dims]
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Values"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Values"
 
-    hdr_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
-    hdr_fill = PatternFill("solid", fgColor="1E3A5F")
-    hdr_align = Alignment(horizontal="center")
+        hdr_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+        hdr_fill = PatternFill("solid", fgColor="1E3A5F")
+        hdr_align = Alignment(horizontal="center")
 
-    headers = ["Dimension", "Code *", "Name *", "Description"]
-    for col_idx, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_idx, value=h)
-        cell.font = hdr_font
-        cell.fill = hdr_fill
-        cell.alignment = hdr_align
+        headers = ["Dimension", "Code *", "Name *", "Description"]
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=h)
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = hdr_align
 
-    ws.column_dimensions["A"].width = 28
-    ws.column_dimensions["B"].width = 20
-    ws.column_dimensions["C"].width = 30
-    ws.column_dimensions["D"].width = 40
+        ws.column_dimensions["A"].width = 28
+        ws.column_dimensions["B"].width = 20
+        ws.column_dimensions["C"].width = 30
+        ws.column_dimensions["D"].width = 40
 
-    instr_font = Font(name="Arial", size=10, italic=True, color="555555")
-    ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
-    ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
-    ws.cell(row=2, column=3, value="Full name").font = instr_font
-    ws.cell(row=2, column=4, value="Optional description").font = instr_font
+        instr_font = Font(name="Arial", size=10, italic=True, color="555555")
+        ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
+        ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
+        ws.cell(row=2, column=3, value="Full name").font = instr_font
+        ws.cell(row=2, column=4, value="Optional description").font = instr_font
 
-    example_font = Font(name="Arial", size=10, italic=True, color="888888")
-    ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
-    ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
-    ws.cell(row=3, column=3, value="Khalamanja").font = example_font
-    ws.cell(row=3, column=4, value="Optional description").font = example_font
+        example_font = Font(name="Arial", size=10, italic=True, color="888888")
+        ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
+        ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
+        ws.cell(row=3, column=3, value="Khalamanja").font = example_font
+        ws.cell(row=3, column=4, value="Optional description").font = example_font
 
-    if dim_names:
-        dim_formula = '"' + ",".join(dim_names) + '"'
-        dv = DataValidation(
-            type="list",
-            formula1=dim_formula,
-            allow_blank=True,
-            showDropDown=False,
-            showErrorMessage=True,
-            errorTitle="Invalid dimension",
-            error="Please select a dimension from the dropdown list.",
+        if dim_names:
+            dim_formula = '"' + ",".join(dim_names) + '"'
+            dv = DataValidation(
+                type="list",
+                formula1=dim_formula,
+                allow_blank=True,
+                showDropDown=False,
+                showErrorMessage=True,
+                errorTitle="Invalid dimension",
+                error="Please select a dimension from the dropdown list.",
+            )
+            dv.sqref = "A4:A1000"
+            ws.add_data_validation(dv)
+
+        ws.freeze_panes = "A4"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=dimension_values_universal_template.xlsx"},
         )
-        dv.sqref = "A4:A1000"
-        ws.add_data_validation(dv)
-
-    ws.freeze_panes = "A4"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=dimension_values_universal_template.xlsx"},
-    )
+    except Exception as exc:
+        print("ERROR in download_universal_dimension_values_template:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Template generation failed: {exc}") from exc
 
 
 @router.post("/dimensions/upload/universal", response_model=UploadResult)
