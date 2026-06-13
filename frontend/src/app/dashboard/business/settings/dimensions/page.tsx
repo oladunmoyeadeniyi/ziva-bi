@@ -174,6 +174,14 @@ function DimensionsPage() {
   // Edit display name
   const [editDisplayName, setEditDisplayName] = useState("");
 
+  // Bulk upload state
+  const [uploadingDimId, setUploadingDimId] = useState<string | null>(null);
+  const [uploadResult, setUploadResult] = useState<{
+    dimId: string; imported: number; updated: number; skipped: number;
+    errors: { row: number; reason: string }[];
+  } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   // Delete confirmation modal
   const [deleteConfirmDim, setDeleteConfirmDim] = useState<Dimension | null>(null);
   const [deletingDim, setDeletingDim] = useState(false);
@@ -186,6 +194,17 @@ function DimensionsPage() {
 
   // Tree collapse state — empty = all expanded
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+
+  // Values list — search, selection, collapse, confirm modal
+  const [valuesSearch, setValuesSearch] = useState("");
+  const [selectedValueIds, setSelectedValueIds] = useState<Set<string>>(new Set());
+  const [valuesCollapsed, setValuesCollapsed] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    type: "delete" | "bulk-delete" | "bulk-deactivate" | "bulk-reactivate";
+    ids: string[];
+    label: string;
+  } | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const toggleNodeCollapse = (nodeCode: string) => {
     setCollapsedNodes(prev => {
@@ -463,18 +482,103 @@ function DimensionsPage() {
 
   const handleBulkUpload = async (dimId: string, file: File) => {
     if (!accessToken) return;
+    setUploadingDimId(dimId);
+    setUploadResult(null);
+    setUploadError(null);
     const formData = new FormData();
     formData.append("file", file);
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      await fetch(`${baseUrl}/api/config/dimensions/${dimId}/values/upload`, {
+      const res = await fetch(`${baseUrl}/api/config/dimensions/${dimId}/values/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
         body: formData,
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setUploadError(body?.detail ?? `Upload failed (${res.status}).`);
+        return;
+      }
+      const result = await res.json();
+      setUploadResult({ dimId, ...result });
       await loadDimValues(dimId);
+      await loadInlineValues(dimId);
     } catch {
-      setError("Bulk upload failed.");
+      setUploadError("Upload failed — check your connection and try again.");
+    } finally {
+      setUploadingDimId(null);
+    }
+  };
+
+  const filteredValues = (dimValues[selectedDimForValues] ?? []).filter(v => {
+    if (!valuesSearch) return true;
+    const q = valuesSearch.toLowerCase();
+    return v.code.toLowerCase().includes(q) || v.name.toLowerCase().includes(q);
+  });
+
+  const handleToggleValue = async (valueId: string) => {
+    if (!accessToken || !selectedDimForValues) return;
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const res = await fetch(
+        `${BASE}/api/config/dimensions/${selectedDimForValues}/values/${valueId}/toggle`,
+        { method: "PATCH", headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error("Failed to toggle value");
+      await loadDimValues(selectedDimForValues);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmModal || !accessToken || !selectedDimForValues) return;
+    setActionLoading(true);
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const { type, ids } = confirmModal;
+
+      if (type === "delete") {
+        await fetch(
+          `${BASE}/api/config/dimensions/${selectedDimForValues}/values/${ids[0]}`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+      } else if (type === "bulk-delete") {
+        await fetch(
+          `${BASE}/api/config/dimensions/${selectedDimForValues}/values/bulk-delete`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ ids }),
+          }
+        );
+      } else if (type === "bulk-deactivate") {
+        await fetch(
+          `${BASE}/api/config/dimensions/${selectedDimForValues}/values/bulk-deactivate`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ ids }),
+          }
+        );
+      } else if (type === "bulk-reactivate") {
+        await fetch(
+          `${BASE}/api/config/dimensions/${selectedDimForValues}/values/bulk-reactivate`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ ids }),
+          }
+        );
+      }
+
+      setSelectedValueIds(new Set());
+      await loadDimValues(selectedDimForValues);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setActionLoading(false);
+      setConfirmModal(null);
     }
   };
 
@@ -1017,26 +1121,47 @@ function DimensionsPage() {
                                 </div>
                               </div>
                             ) : (
-                              <div className="flex gap-2">
-                                <button type="button"
-                                  onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
-                                  className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">
-                                  + Add value
-                                </button>
-                                <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
-                                  className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
-                                  <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
-                                </button>
-                                <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
-                                  <i className="ti ti-upload" style={{ fontSize: 11 }} /> Upload
-                                  <input type="file" accept=".xlsx,.csv" className="hidden"
-                                    onChange={e => {
-                                      const file = e.target.files?.[0];
-                                      if (file) handleBulkUpload(dim.id, file);
-                                      e.target.value = "";
-                                    }} />
-                                </label>
-                              </div>
+                              <>
+                                <div className="flex gap-2">
+                                  <button type="button"
+                                    onClick={() => { setAddValueDimId(dim.id); loadDimValues(dim.id); }}
+                                    className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50">
+                                    + Add value
+                                  </button>
+                                  <button type="button" onClick={() => handleDownloadTemplate(dim.id)}
+                                    className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
+                                    <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
+                                  </button>
+                                  <label className={`text-xs px-2.5 py-1 border border-gray-300 rounded flex items-center gap-1 ${uploadingDimId === dim.id ? "opacity-60 cursor-not-allowed" : "hover:bg-gray-50 cursor-pointer"}`}>
+                                    <i className={`ti ${uploadingDimId === dim.id ? "ti-loader-2 animate-spin" : "ti-upload"}`} style={{ fontSize: 11 }} />
+                                    {uploadingDimId === dim.id ? "Uploading…" : "Upload"}
+                                    <input type="file" accept=".xlsx,.csv" className="hidden"
+                                      disabled={uploadingDimId === dim.id}
+                                      onChange={e => {
+                                        const file = e.target.files?.[0];
+                                        if (file) handleBulkUpload(dim.id, file);
+                                        e.target.value = "";
+                                      }} />
+                                  </label>
+                                </div>
+                                {uploadResult?.dimId === dim.id && (
+                                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 flex items-start gap-1.5">
+                                    <i className="ti ti-circle-check flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                                    <span>
+                                      Imported {uploadResult.imported}, updated {uploadResult.updated}, skipped {uploadResult.skipped}.
+                                      {uploadResult.errors.length > 0 && (
+                                        <span className="text-amber-700"> {uploadResult.errors.length} row error{uploadResult.errors.length !== 1 ? "s" : ""}: {uploadResult.errors.slice(0, 2).map(e => `Row ${e.row}: ${e.reason}`).join("; ")}{uploadResult.errors.length > 2 ? "…" : ""}</span>
+                                      )}
+                                    </span>
+                                  </div>
+                                )}
+                                {uploadError && uploadingDimId === null && (
+                                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-start gap-1.5">
+                                    <i className="ti ti-alert-circle flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                                    {uploadError}
+                                  </div>
+                                )}
+                              </>
                             )}
                           </div>
                         )}
@@ -1179,6 +1304,8 @@ function DimensionsPage() {
                   else if (hasEmp) setValuesSubTab("employee_master");
                   else setValuesSubTab("manual");
                   loadInlineValues(newDimId);
+                  loadDimValues(newDimId);
+                  setSelectedValueIds(new Set());
                 }
               }}
               className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 max-w-xs">
@@ -1526,9 +1653,11 @@ function DimensionsPage() {
                         className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1">
                         <i className="ti ti-download" style={{ fontSize: 11 }} /> Template
                       </button>
-                      <label className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1 cursor-pointer">
-                        <i className="ti ti-upload" style={{ fontSize: 11 }} /> Upload
+                      <label className={`text-xs px-2.5 py-1 border border-gray-300 rounded flex items-center gap-1 ${uploadingDimId === dim.id ? "opacity-60 cursor-not-allowed" : "hover:bg-gray-50 cursor-pointer"}`}>
+                        <i className={`ti ${uploadingDimId === dim.id ? "ti-loader-2 animate-spin" : "ti-upload"}`} style={{ fontSize: 11 }} />
+                        {uploadingDimId === dim.id ? "Uploading…" : "Upload"}
                         <input type="file" accept=".xlsx,.csv" className="hidden"
+                          disabled={uploadingDimId === dim.id}
                           onChange={e => {
                             const file = e.target.files?.[0];
                             if (file) handleBulkUpload(dim.id, file);
@@ -1536,6 +1665,23 @@ function DimensionsPage() {
                           }} />
                       </label>
                     </div>
+                    {uploadResult?.dimId === dim.id && (
+                      <div className="mb-3 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 flex items-start gap-1.5">
+                        <i className="ti ti-circle-check flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                        <span>
+                          Imported {uploadResult.imported}, updated {uploadResult.updated}, skipped {uploadResult.skipped}.
+                          {uploadResult.errors.length > 0 && (
+                            <span className="text-amber-700"> {uploadResult.errors.length} row error{uploadResult.errors.length !== 1 ? "s" : ""}: {uploadResult.errors.slice(0, 2).map(e => `Row ${e.row}: ${e.reason}`).join("; ")}{uploadResult.errors.length > 2 ? "…" : ""}</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    {uploadError && uploadingDimId === null && (
+                      <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-start gap-1.5">
+                        <i className="ti ti-alert-circle flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                        {uploadError}
+                      </div>
+                    )}
                     {addValueDimId === dim.id && (
                       <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-3">
                         <div className="grid grid-cols-2 gap-2 mb-2">
@@ -1567,27 +1713,170 @@ function DimensionsPage() {
                         </div>
                       </div>
                     )}
-                    {currentVals.length > 0 ? (
+                    {/* Search bar + collapse toggle */}
+                    <div className="flex items-center gap-2 mb-3">
+                      <input
+                        type="text"
+                        value={valuesSearch}
+                        onChange={e => setValuesSearch(e.target.value)}
+                        placeholder="Search by code or name…"
+                        className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span className="text-xs text-gray-400">{filteredValues.length} values</span>
+                      <button
+                        type="button"
+                        onClick={() => setValuesCollapsed(prev => !prev)}
+                        className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1 border border-gray-200 rounded"
+                      >
+                        {valuesCollapsed ? "▼ Expand" : "▲ Collapse"}
+                      </button>
+                    </div>
+
+                    {/* Bulk action bar — only visible when rows selected */}
+                    {selectedValueIds.size > 0 && (
+                      <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                        <span className="text-xs font-medium text-blue-700">
+                          {selectedValueIds.size} selected
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmModal({
+                            type: "bulk-deactivate",
+                            ids: Array.from(selectedValueIds),
+                            label: `Deactivate ${selectedValueIds.size} value(s)?`
+                          })}
+                          className="text-xs px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          Deactivate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmModal({
+                            type: "bulk-reactivate",
+                            ids: Array.from(selectedValueIds),
+                            label: `Reactivate ${selectedValueIds.size} value(s)?`
+                          })}
+                          className="text-xs px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          Reactivate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmModal({
+                            type: "bulk-delete",
+                            ids: Array.from(selectedValueIds),
+                            label: `Permanently delete ${selectedValueIds.size} value(s)? This cannot be undone.`
+                          })}
+                          className="text-xs px-3 py-1 rounded border border-red-300 bg-white text-red-600 hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedValueIds(new Set())}
+                          className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+                        >
+                          Clear selection
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Values table */}
+                    {!valuesCollapsed && (
                       <div className="border border-gray-200 rounded-lg overflow-hidden">
-                        <table className="min-w-full text-xs">
-                          <thead className="bg-gray-50">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
-                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
-                              <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
+                              <th className="w-8 px-3 py-2">
+                                <input
+                                  type="checkbox"
+                                  className="w-3.5 h-3.5 accent-blue-600"
+                                  checked={
+                                    filteredValues.length > 0 &&
+                                    filteredValues.every(v => selectedValueIds.has(v.id))
+                                  }
+                                  onChange={e => {
+                                    if (e.target.checked) {
+                                      setSelectedValueIds(new Set(filteredValues.map(v => v.id)));
+                                    } else {
+                                      setSelectedValueIds(new Set());
+                                    }
+                                  }}
+                                />
+                              </th>
+                              <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Code</th>
+                              <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                              <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                              <th className="px-3 py-2 text-right font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
-                            {currentVals.map(val => (
-                              <tr key={val.id} className="hover:bg-gray-50">
-                                <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
-                                <td className="px-3 py-2 text-gray-800">{val.name}</td>
+                            {filteredValues.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                                  {valuesSearch ? "No values match your search." : "No manual values yet. Add codes that aren’t in any auto-synced source."}
+                                </td>
                               </tr>
-                            ))}
+                            ) : (
+                              filteredValues.map(v => (
+                                <tr
+                                  key={v.id}
+                                  className={`hover:bg-gray-50 ${!v.is_active ? "opacity-50" : ""}`}
+                                >
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="checkbox"
+                                      className="w-3.5 h-3.5 accent-blue-600"
+                                      checked={selectedValueIds.has(v.id)}
+                                      onChange={e => {
+                                        setSelectedValueIds(prev => {
+                                          const next = new Set(prev);
+                                          if (e.target.checked) next.add(v.id);
+                                          else next.delete(v.id);
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2 font-mono text-gray-700">{v.code}</td>
+                                  <td className="px-3 py-2 text-gray-800">{v.name}</td>
+                                  <td className="px-3 py-2">
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                                      v.is_active
+                                        ? "bg-green-100 text-green-700"
+                                        : "bg-gray-100 text-gray-500"
+                                    }`}>
+                                      {v.is_active ? "Active" : "Inactive"}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleValue(v.id)}
+                                        className="text-[11px] text-gray-500 hover:text-gray-800"
+                                      >
+                                        {v.is_active ? "Deactivate" : "Reactivate"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmModal({
+                                          type: "delete",
+                                          ids: [v.id],
+                                          label: `Delete "${v.code} — ${v.name}"? This cannot be undone.`
+                                        })}
+                                        className="text-[11px] text-red-500 hover:text-red-700"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
                           </tbody>
                         </table>
                       </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 italic">No manual values yet. Add codes that aren&apos;t in any auto-synced source.</p>
                     )}
                   </div>
                 )}
@@ -1648,6 +1937,38 @@ function DimensionsPage() {
                     Delete permanently
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Values list confirmation modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !actionLoading && setConfirmModal(null)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-2">Confirm action</h2>
+            <p className="text-sm text-gray-600 mb-5">{confirmModal.label}</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                disabled={actionLoading}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAction}
+                disabled={actionLoading}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg disabled:opacity-50"
+              >
+                {actionLoading ? "Processing…" : "Confirm"}
               </button>
             </div>
           </div>

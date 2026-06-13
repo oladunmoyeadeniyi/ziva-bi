@@ -55,7 +55,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -125,6 +125,7 @@ async def _parse_upload(file: UploadFile) -> tuple[list[str], list[list[str]]]:
     Returns headers as a list of strings and rows as lists of strings.
     Raises HTTPException for unsupported formats.
     """
+    print("DEBUG parse_upload called")
     content = await file.read()
     fname = (file.filename or "").lower()
 
@@ -774,8 +775,36 @@ async def delete_dimension_value(
     if not val:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Value not found.")
 
-    val.is_active = False
+    await db.delete(val)
     await db.flush()
+
+
+@router.patch(
+    "/dimensions/{dimension_id}/values/{value_id}/toggle",
+    response_model=DimensionValueResponse,
+)
+async def toggle_dimension_value(
+    dimension_id: uuid.UUID,
+    value_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> DimensionValueResponse:
+    """Toggle is_active on a single dimension value. Admin only."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    result = await db.execute(
+        select(DimensionValue).where(
+            DimensionValue.id == value_id,
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+        )
+    )
+    val = result.scalar_one_or_none()
+    if not val:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Value not found.")
+    val.is_active = not val.is_active
+    await db.flush()
+    return DimensionValueResponse.from_orm(val)
 
 
 @router.get("/dimensions/{dimension_id}/values/template")
@@ -855,7 +884,9 @@ async def upload_dimension_values(
     dim = await _get_dimension_or_404(dimension_id, tenant_id, db)
 
     headers, rows = await _parse_upload(file)
-    headers_lower = [h.lower().strip("*").strip() for h in headers]
+    headers_lower = [h.lower().replace("*", "").strip() for h in headers]
+    print("DEBUG headers raw:", headers)
+    print("DEBUG headers_lower:", headers_lower)
 
     def col(name: str) -> Optional[int]:
         try:
@@ -863,8 +894,8 @@ async def upload_dimension_values(
         except ValueError:
             return None
 
-    code_col = col("code") or col("value code")
-    name_col = col("name") or col("value name")
+    _c = col("code"); code_col = _c if _c is not None else col("value code")
+    _n = col("name"); name_col = _n if _n is not None else col("value name")
     order_col = col("sort_order")
     type_col = col("value type")
     from_col = col("valid from (dd/mm/yyyy)") or col("valid from")
@@ -1958,6 +1989,79 @@ async def bulk_action_dimension_values(
 
     await db.flush()
     return BulkActionResult(action=data.action, affected=affected, skipped=len(data.ids) - affected)
+
+
+@router.post("/dimensions/{dimension_id}/values/bulk-deactivate")
+async def bulk_deactivate_dimension_values(
+    dimension_id: uuid.UUID,
+    payload: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Deactivate dimension values by ID list. Admin only."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    ids = [uuid.UUID(str(i)) for i in payload.get("ids", [])]
+    await db.execute(
+        update(DimensionValue)
+        .where(
+            DimensionValue.id.in_(ids),
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+        )
+        .values(is_active=False)
+    )
+    await db.flush()
+    return {"updated": len(ids)}
+
+
+@router.post("/dimensions/{dimension_id}/values/bulk-reactivate")
+async def bulk_reactivate_dimension_values(
+    dimension_id: uuid.UUID,
+    payload: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reactivate dimension values by ID list. Admin only."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    ids = [uuid.UUID(str(i)) for i in payload.get("ids", [])]
+    await db.execute(
+        update(DimensionValue)
+        .where(
+            DimensionValue.id.in_(ids),
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+        )
+        .values(is_active=True)
+    )
+    await db.flush()
+    return {"updated": len(ids)}
+
+
+@router.post("/dimensions/{dimension_id}/values/bulk-delete")
+async def bulk_delete_dimension_values(
+    dimension_id: uuid.UUID,
+    payload: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Hard-delete dimension values by ID list. Admin only."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    ids = [uuid.UUID(str(i)) for i in payload.get("ids", [])]
+    result = await db.execute(
+        select(DimensionValue).where(
+            DimensionValue.id.in_(ids),
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+        )
+    )
+    records = list(result.scalars().all())
+    for rec in records:
+        await db.delete(rec)
+    await db.flush()
+    return {"deleted": len(records)}
 
 
 @router.post("/categories/bulk-action", response_model=BulkActionResult)
