@@ -826,30 +826,68 @@ async def download_dimension_values_template(
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.worksheet.dataval import DataValidation
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
+
+    # Fetch all active manual dimensions for dropdown
+    dim_result = await db.execute(
+        select(TenantDimension).where(
+            TenantDimension.tenant_id == tenant_id,
+            TenantDimension.is_active == True,
+        )
+    )
+    all_dims = dim_result.scalars().all()
+    manual_dims = [d for d in all_dims if (d.value_source or "manual") in ("manual", "hybrid")]
+    dim_names = [d.display_name or d.name for d in manual_dims]
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Values"
 
-    headers = ["Code *", "Name *", "Description"]
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1E3A5F")
-        cell.alignment = Alignment(horizontal="center")
+    hdr_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+    hdr_fill = PatternFill("solid", fgColor="1E3A5F")
+    hdr_align = Alignment(horizontal="center")
 
-    ws.column_dimensions["A"].width = 20
-    ws.column_dimensions["B"].width = 30
-    ws.column_dimensions["C"].width = 40
+    headers = ["Dimension", "Code *", "Name *", "Description"]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = hdr_align
 
-    sample_font = Font(name="Arial", size=10, italic=True, color="888888")
-    ws.cell(row=2, column=1, value="CC-001").font = sample_font
-    ws.cell(row=2, column=2, value="Example value name").font = sample_font
-    ws.cell(row=2, column=3, value="Optional description").font = sample_font
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 30
+    ws.column_dimensions["D"].width = 40
 
-    ws.freeze_panes = "A2"
+    instr_font = Font(name="Arial", size=10, italic=True, color="555555")
+    ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
+    ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
+    ws.cell(row=2, column=3, value="Full name").font = instr_font
+    ws.cell(row=2, column=4, value="Optional description").font = instr_font
+
+    example_font = Font(name="Arial", size=10, italic=True, color="888888")
+    ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
+    ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
+    ws.cell(row=3, column=3, value="Khalamanja").font = example_font
+    ws.cell(row=3, column=4, value="Optional description").font = example_font
+
+    if dim_names:
+        dim_formula = '"' + ",".join(dim_names) + '"'
+        dv = DataValidation(
+            type="list",
+            formula1=dim_formula,
+            allow_blank=True,
+            showDropDown=False,
+            showErrorMessage=True,
+            errorTitle="Invalid dimension",
+            error="Please select a dimension from the dropdown list.",
+        )
+        dv.sqref = "A4:A1000"
+        ws.add_data_validation(dv)
+
+    ws.freeze_panes = "A4"
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -885,8 +923,6 @@ async def upload_dimension_values(
 
     headers, rows = await _parse_upload(file)
     headers_lower = [h.lower().replace("*", "").strip() for h in headers]
-    print("DEBUG headers raw:", headers)
-    print("DEBUG headers_lower:", headers_lower)
 
     def col(name: str) -> Optional[int]:
         try:
@@ -894,6 +930,8 @@ async def upload_dimension_values(
         except ValueError:
             return None
 
+    has_dimension_col = "dimension" in headers_lower
+    dim_col_idx = col("dimension") if has_dimension_col else None
     _c = col("code"); code_col = _c if _c is not None else col("value code")
     _n = col("name"); name_col = _n if _n is not None else col("value name")
     order_col = col("sort_order")
@@ -907,6 +945,23 @@ async def upload_dimension_values(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File must have 'code' (or 'Value Code') and 'name' (or 'Value Name') columns.",
         )
+
+    # Build dimension name lookup if Dimension column is present
+    dim_by_name: dict[str, TenantDimension] = {}
+    if has_dimension_col:
+        all_dims_result = await db.execute(
+            select(TenantDimension).where(
+                TenantDimension.tenant_id == tenant_id,
+                TenantDimension.is_active == True,
+            )
+        )
+        for d in all_dims_result.scalars().all():
+            key_display = (d.display_name or "").strip().lower()
+            key_name = (d.name or "").strip().lower()
+            if key_display:
+                dim_by_name[key_display] = d
+            if key_name:
+                dim_by_name[key_name] = d
 
     from datetime import datetime as _dt2
 
@@ -923,6 +978,19 @@ async def upload_dimension_values(
             if idx is None or idx >= len(row):
                 return ""
             return (row[idx] or "").strip()
+
+        # Determine target dimension for this row
+        if has_dimension_col:
+            dim_name_val = get(dim_col_idx)
+            if not dim_name_val:
+                skipped += 1
+                continue
+            target_dim = dim_by_name.get(dim_name_val.lower())
+            if target_dim is None:
+                errors.append({"row": i, "reason": f"Unknown dimension: {dim_name_val}"})
+                continue
+        else:
+            target_dim = dim
 
         code = get(code_col)
         name = get(name_col)
@@ -968,7 +1036,7 @@ async def upload_dimension_values(
 
         existing = await db.execute(
             select(DimensionValue).where(
-                DimensionValue.dimension_id == dim.id,
+                DimensionValue.dimension_id == target_dim.id,
                 DimensionValue.tenant_id == tenant_id,
                 DimensionValue.code == code,
             )
@@ -988,7 +1056,7 @@ async def upload_dimension_values(
         else:
             db.add(DimensionValue(
                 tenant_id=tenant_id,
-                dimension_id=dim.id,
+                dimension_id=target_dim.id,
                 code=code,
                 name=name,
                 sort_order=sort_order,
@@ -996,6 +1064,231 @@ async def upload_dimension_values(
                 value_type=value_type,
                 valid_from=valid_from,
                 valid_to=valid_to,
+            ))
+            imported += 1
+
+    await db.flush()
+    return UploadResult(imported=imported, updated=updated, skipped=skipped, errors=errors)
+
+
+@router.get("/dimensions/template/universal")
+async def download_universal_dimension_values_template(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Download a universal XLSX template for bulk uploading values across ALL manual dimensions.
+
+    Includes a Dimension column (first) with a dropdown of all active manual dimensions.
+    Instruction row in row 2, example row in row 3. Data starts at row 4.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.worksheet.dataval import DataValidation
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed.")
+
+    dim_result = await db.execute(
+        select(TenantDimension).where(
+            TenantDimension.tenant_id == tenant_id,
+            TenantDimension.is_active == True,
+        )
+    )
+    all_dims = dim_result.scalars().all()
+    manual_dims = [d for d in all_dims if (d.value_source or "manual") in ("manual", "hybrid")]
+    dim_names = [d.display_name or d.name for d in manual_dims]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Values"
+
+    hdr_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
+    hdr_fill = PatternFill("solid", fgColor="1E3A5F")
+    hdr_align = Alignment(horizontal="center")
+
+    headers = ["Dimension", "Code *", "Name *", "Description"]
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = hdr_align
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 30
+    ws.column_dimensions["D"].width = 40
+
+    instr_font = Font(name="Arial", size=10, italic=True, color="555555")
+    ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
+    ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
+    ws.cell(row=2, column=3, value="Full name").font = instr_font
+    ws.cell(row=2, column=4, value="Optional description").font = instr_font
+
+    example_font = Font(name="Arial", size=10, italic=True, color="888888")
+    ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
+    ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
+    ws.cell(row=3, column=3, value="Khalamanja").font = example_font
+    ws.cell(row=3, column=4, value="Optional description").font = example_font
+
+    if dim_names:
+        dim_formula = '"' + ",".join(dim_names) + '"'
+        dv = DataValidation(
+            type="list",
+            formula1=dim_formula,
+            allow_blank=True,
+            showDropDown=False,
+            showErrorMessage=True,
+            errorTitle="Invalid dimension",
+            error="Please select a dimension from the dropdown list.",
+        )
+        dv.sqref = "A4:A1000"
+        ws.add_data_validation(dv)
+
+    ws.freeze_panes = "A4"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=dimension_values_universal_template.xlsx"},
+    )
+
+
+@router.post("/dimensions/upload/universal", response_model=UploadResult)
+async def upload_universal_dimension_values(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> UploadResult:
+    """
+    Bulk upload dimension values for multiple dimensions from a single .xlsx file.
+
+    The file must have a Dimension column (first) whose values match active dimension
+    names or display names for the tenant. Each row is routed to its named dimension.
+    Returns: { imported, updated, skipped, errors }.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    headers, rows = await _parse_upload(file)
+    headers_lower = [h.lower().replace("*", "").strip() for h in headers]
+
+    def col(name: str) -> Optional[int]:
+        try:
+            return headers_lower.index(name)
+        except ValueError:
+            return None
+
+    dim_col_idx = col("dimension")
+    _c = col("code"); code_col = _c if _c is not None else col("value code")
+    _n = col("name"); name_col = _n if _n is not None else col("value name")
+    order_col = col("sort_order")
+    type_col = col("value type")
+    active_col = col("is active")
+
+    if dim_col_idx is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Universal upload requires a 'Dimension' column. Use the universal template.",
+        )
+    if code_col is None or name_col is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must have 'code' and 'name' columns.",
+        )
+
+    # Build dimension name → TenantDimension lookup
+    all_dims_result = await db.execute(
+        select(TenantDimension).where(
+            TenantDimension.tenant_id == tenant_id,
+            TenantDimension.is_active == True,
+        )
+    )
+    dim_by_name: dict[str, TenantDimension] = {}
+    for d in all_dims_result.scalars().all():
+        if d.display_name:
+            dim_by_name[d.display_name.strip().lower()] = d
+        dim_by_name[d.name.strip().lower()] = d
+
+    from datetime import datetime as _dt2
+
+    imported = 0
+    updated = 0
+    skipped = 0
+    errors: list[dict] = []
+
+    for i, row in enumerate(rows, start=2):
+        if not any((cell or "").strip() for cell in row):
+            continue
+
+        def get(idx: Optional[int]) -> str:
+            if idx is None or idx >= len(row):
+                return ""
+            return (row[idx] or "").strip()
+
+        dim_name_val = get(dim_col_idx)
+        if not dim_name_val:
+            skipped += 1
+            continue
+        target_dim = dim_by_name.get(dim_name_val.lower())
+        if target_dim is None:
+            errors.append({"row": i, "reason": f"Unknown dimension: {dim_name_val}"})
+            continue
+
+        code = get(code_col)
+        name = get(name_col)
+        sort_str = get(order_col)
+        value_type = get(type_col) or None
+        is_active_str = get(active_col).lower()
+
+        if not code:
+            errors.append({"row": i, "reason": "Missing code."})
+            continue
+        if not name:
+            errors.append({"row": i, "reason": "Missing name."})
+            continue
+
+        sort_order = 0
+        if sort_str:
+            try:
+                sort_order = int(float(sort_str))
+            except ValueError:
+                errors.append({"row": i, "reason": f"Invalid sort_order: '{sort_str}'."})
+                continue
+
+        is_active = is_active_str not in ("no", "false", "0")
+
+        existing = await db.execute(
+            select(DimensionValue).where(
+                DimensionValue.dimension_id == target_dim.id,
+                DimensionValue.tenant_id == tenant_id,
+                DimensionValue.code == code,
+            )
+        )
+        dv_obj = existing.scalar_one_or_none()
+        if dv_obj:
+            dv_obj.name = name
+            dv_obj.is_active = is_active
+            dv_obj.sort_order = sort_order
+            if value_type is not None:
+                dv_obj.value_type = value_type
+            updated += 1
+        else:
+            db.add(DimensionValue(
+                tenant_id=tenant_id,
+                dimension_id=target_dim.id,
+                code=code,
+                name=name,
+                sort_order=sort_order,
+                is_active=is_active,
+                value_type=value_type,
             ))
             imported += 1
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
@@ -181,6 +181,14 @@ function DimensionsPage() {
     errors: { row: number; reason: string }[];
   } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Universal upload (all dimensions in one file)
+  const universalFileInputRef = useRef<HTMLInputElement>(null);
+  const [universalUploading, setUniversalUploading] = useState(false);
+  const [universalUploadResult, setUniversalUploadResult] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
 
   // Delete confirmation modal
   const [deleteConfirmDim, setDeleteConfirmDim] = useState<Dimension | null>(null);
@@ -507,6 +515,59 @@ function DimensionsPage() {
       setUploadError("Upload failed — check your connection and try again.");
     } finally {
       setUploadingDimId(null);
+    }
+  };
+
+  const handleUniversalTemplateDownload = async () => {
+    if (!accessToken) return;
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const res = await fetch(`${BASE}/api/config/dimensions/template/universal`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dimension_values_universal_template.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleUniversalUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !accessToken) return;
+    e.target.value = "";
+    setUniversalUploading(true);
+    setUniversalUploadResult(null);
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${BASE}/api/config/dimensions/upload/universal`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Upload failed");
+      setUniversalUploadResult({
+        message: `Imported ${data.imported}, updated ${data.updated}, skipped ${data.skipped}. Errors: ${data.errors?.length ?? 0}.`,
+        type: "success",
+      });
+      if (selectedDimForValues) await loadDimValues(selectedDimForValues);
+    } catch (err) {
+      setUniversalUploadResult({
+        message: err instanceof Error ? err.message : "Upload failed.",
+        type: "error",
+      });
+    } finally {
+      setUniversalUploading(false);
+      setTimeout(() => setUniversalUploadResult(null), 6000);
     }
   };
 
@@ -1063,33 +1124,6 @@ function DimensionsPage() {
 
                         {(!isOrgAuto || isHybrid) && (!isEmpAuto || isHybrid) && (
                           <div className="mt-3 mb-2">
-                            {dimValues[dim.id] && dimValues[dim.id].length > 0 && (
-                              <div className="border border-gray-200 rounded-lg overflow-hidden mb-3">
-                                <table className="min-w-full text-xs">
-                                  <thead className="bg-gray-50">
-                                    <tr>
-                                      <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Code</th>
-                                      <th className="text-left px-3 py-2 font-medium text-gray-500 uppercase tracking-wide">Name</th>
-                                      <th className="px-3 py-2" />
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-100">
-                                    {dimValues[dim.id].map(val => (
-                                      <tr key={val.id} className="hover:bg-gray-50">
-                                        <td className="px-3 py-2 font-mono text-gray-600">{val.code}</td>
-                                        <td className="px-3 py-2 text-gray-800">{val.name}</td>
-                                        <td className="px-3 py-2 text-right">
-                                          <button type="button" className="text-red-400 hover:text-red-600">
-                                            <i className="ti ti-x" style={{ fontSize: 12 }} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-
                             {addValueDimId === dim.id ? (
                               <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg mb-2">
                                 <div className="grid grid-cols-2 gap-2 mb-2">
@@ -1286,6 +1320,39 @@ function DimensionsPage() {
       {/* ── VALUES TAB ── */}
       {activeTab === "values" && (
         <div>
+          {/* Universal upload — one file for all dimensions */}
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              type="button"
+              onClick={handleUniversalTemplateDownload}
+              className="px-3 py-1.5 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-1.5"
+            >
+              <i className="ti ti-download" style={{ fontSize: 13 }} /> Download universal template
+            </button>
+            <button
+              type="button"
+              onClick={() => universalFileInputRef.current?.click()}
+              disabled={universalUploading}
+              className="px-3 py-1.5 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <i className={`ti ${universalUploading ? "ti-loader-2 animate-spin" : "ti-upload"}`} style={{ fontSize: 13 }} />
+              {universalUploading ? "Uploading…" : "Upload all dimensions"}
+            </button>
+            <input
+              type="file"
+              ref={universalFileInputRef}
+              className="hidden"
+              accept=".xlsx"
+              onChange={handleUniversalUpload}
+            />
+            <span className="text-xs text-gray-400 ml-2">Use this to upload values for multiple dimensions at once</span>
+          </div>
+          {universalUploadResult && (
+            <p className={`text-xs mb-3 ${universalUploadResult.type === "success" ? "text-green-600" : "text-red-600"}`}>
+              {universalUploadResult.message}
+            </p>
+          )}
+
           <div className="flex items-center gap-3 mb-4">
             <label className="text-sm font-medium text-gray-600">Dimension:</label>
             <select value={selectedDimForValues}
