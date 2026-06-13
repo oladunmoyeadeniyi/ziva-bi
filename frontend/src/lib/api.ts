@@ -46,6 +46,7 @@ export async function apiFetch<T>(
   }
 
   const fetchBody = formData instanceof FormData ? formData
+    : body instanceof FormData ? body
     : body !== undefined
       ? (typeof body === "string" ? body : JSON.stringify(body))
       : undefined;
