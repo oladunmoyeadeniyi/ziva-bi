@@ -808,6 +808,62 @@ async def toggle_dimension_value(
     return DimensionValueResponse.from_orm(val)
 
 
+@router.patch("/dimensions/{dimension_id}/values/{value_id}")
+async def update_dimension_value(
+    dimension_id: uuid.UUID,
+    value_id: uuid.UUID,
+    payload: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Update name, description, valid_from, valid_to, or is_active on a single dimension value. Admin only."""
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+    result = await db.execute(
+        select(DimensionValue).where(
+            DimensionValue.id == value_id,
+            DimensionValue.dimension_id == dimension_id,
+            DimensionValue.tenant_id == tenant_id,
+        )
+    )
+    val = result.scalar_one_or_none()
+    if not val:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Value not found.")
+
+    if "name" in payload and payload["name"]:
+        val.name = payload["name"].strip()
+    if "description" in payload:
+        val.description = payload["description"]
+    if "is_active" in payload:
+        val.is_active = bool(payload["is_active"])
+
+    from datetime import datetime as _dt
+    for field in ("valid_from", "valid_to"):
+        if field in payload:
+            raw = payload[field]
+            if raw is None or raw == "":
+                setattr(val, field, None)
+            else:
+                try:
+                    setattr(val, field, _dt.strptime(raw.strip(), "%d/%m/%Y").date())
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid date format for {field}. Use DD/MM/YYYY.",
+                    )
+
+    await db.flush()
+    return {
+        "id": str(val.id),
+        "code": val.code,
+        "name": val.name,
+        "description": val.description,
+        "is_active": val.is_active,
+        "valid_from": val.valid_from.strftime("%d/%m/%Y") if val.valid_from else None,
+        "valid_to": val.valid_to.strftime("%d/%m/%Y") if val.valid_to else None,
+    }
+
+
 @router.get("/dimensions/{dimension_id}/values/template")
 async def download_dimension_values_template(
     dimension_id: uuid.UUID,

@@ -56,8 +56,10 @@ interface DimensionValue {
   id: string;
   code: string;
   name: string;
-  description?: string;
+  description?: string | null;
   is_active: boolean;
+  valid_from?: string | null;  // DD/MM/YYYY
+  valid_to?: string | null;    // DD/MM/YYYY
 }
 
 function generateCode(name: string): string {
@@ -156,6 +158,9 @@ function DimensionsPage() {
   const [addValueCode, setAddValueCode] = useState("");
   const [addValueName, setAddValueName] = useState("");
   const [addValueDesc, setAddValueDesc] = useState("");
+  const [addValueValidFrom, setAddValueValidFrom] = useState("");
+  const [addValueValidTo, setAddValueValidTo] = useState("");
+  const [addValueIsActive, setAddValueIsActive] = useState(true);
   const [addingValue, setAddingValue] = useState(false);
   const [addValueError, setAddValueError] = useState<string | null>(null);
   const [dimValues, setDimValues] = useState<Record<string, DimensionValue[]>>({});
@@ -213,6 +218,19 @@ function DimensionsPage() {
     label: string;
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Edit value modal
+  const [editValueModal, setEditValueModal] = useState<{
+    id: string;
+    code: string;
+    name: string;
+    description: string;
+    valid_from: string;
+    valid_to: string;
+    is_active: boolean;
+  } | null>(null);
+  const [editValueSaving, setEditValueSaving] = useState(false);
+  const [editValueError, setEditValueError] = useState<string | null>(null);
 
   const toggleNodeCollapse = (nodeCode: string) => {
     setCollapsedNodes(prev => {
@@ -454,19 +472,61 @@ function DimensionsPage() {
         body: JSON.stringify({
           code: addValueCode.trim(),
           name: addValueName.trim(),
-          description: addValueDesc.trim() || undefined,
+          description: addValueDesc.trim() || null,
+          valid_from: addValueValidFrom.trim() || null,
+          valid_to: addValueValidTo.trim() || null,
+          is_active: addValueIsActive,
         }),
       });
       setAddValueDimId(null);
       setAddValueCode("");
       setAddValueName("");
       setAddValueDesc("");
+      setAddValueValidFrom("");
+      setAddValueValidTo("");
+      setAddValueIsActive(true);
       await loadDimValues(dimId);
       await loadInlineValues(dimId);
     } catch (err) {
       setAddValueError(err instanceof Error ? err.message : "Failed to add value.");
     } finally {
       setAddingValue(false);
+    }
+  };
+
+  const handleEditValueSave = async () => {
+    if (!editValueModal || !accessToken || !selectedDimForValues) return;
+    setEditValueSaving(true);
+    setEditValueError(null);
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const res = await fetch(
+        `${BASE}/api/config/dimensions/${selectedDimForValues}/values/${editValueModal.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: editValueModal.name,
+            description: editValueModal.description || null,
+            valid_from: editValueModal.valid_from || null,
+            valid_to: editValueModal.valid_to || null,
+            is_active: editValueModal.is_active,
+          }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail ?? "Save failed");
+      }
+      await loadDimValues(selectedDimForValues);
+      setEditValueModal(null);
+    } catch (err) {
+      setEditValueError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setEditValueSaving(false);
     }
   };
 
@@ -1765,6 +1825,44 @@ function DimensionsPage() {
                           onChange={e => setAddValueDesc(e.target.value)}
                           placeholder="Description (optional)"
                           className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 block mb-1">
+                              Valid From <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={addValueValidFrom}
+                              onChange={e => setAddValueValidFrom(e.target.value)}
+                              placeholder="e.g. 01/01/2025"
+                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 block mb-1">
+                              Valid To <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={addValueValidTo}
+                              onChange={e => setAddValueValidTo(e.target.value)}
+                              placeholder="e.g. 31/12/2025"
+                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            type="checkbox"
+                            id="add-value-is-active"
+                            checked={addValueIsActive}
+                            onChange={e => setAddValueIsActive(e.target.checked)}
+                            className="w-3.5 h-3.5 accent-blue-600"
+                          />
+                          <label htmlFor="add-value-is-active" className="text-xs font-medium text-gray-600">
+                            Active
+                          </label>
+                        </div>
                         {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
                         <div className="flex gap-2">
                           <button type="button" onClick={() => handleAddValue(dim.id)}
@@ -1873,6 +1971,8 @@ function DimensionsPage() {
                               </th>
                               <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Code</th>
                               <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                              <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Valid From</th>
+                              <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Valid To</th>
                               <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                               <th className="px-3 py-2 text-right font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                             </tr>
@@ -1880,7 +1980,7 @@ function DimensionsPage() {
                           <tbody className="divide-y divide-gray-100">
                             {filteredValues.length === 0 ? (
                               <tr>
-                                <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                                <td colSpan={7} className="px-3 py-6 text-center text-gray-400">
                                   {valuesSearch ? "No values match your search." : "No manual values yet. Add codes that aren’t in any auto-synced source."}
                                 </td>
                               </tr>
@@ -1907,6 +2007,8 @@ function DimensionsPage() {
                                   </td>
                                   <td className="px-3 py-2 font-mono text-gray-700">{v.code}</td>
                                   <td className="px-3 py-2 text-gray-800">{v.name}</td>
+                                  <td className="px-3 py-2 text-gray-500 text-[11px]">{v.valid_from ?? "—"}</td>
+                                  <td className="px-3 py-2 text-gray-500 text-[11px]">{v.valid_to ?? "—"}</td>
                                   <td className="px-3 py-2">
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
                                       v.is_active
@@ -1918,6 +2020,21 @@ function DimensionsPage() {
                                   </td>
                                   <td className="px-3 py-2">
                                     <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditValueModal({
+                                          id: v.id,
+                                          code: v.code,
+                                          name: v.name,
+                                          description: v.description ?? "",
+                                          valid_from: v.valid_from ?? "",
+                                          valid_to: v.valid_to ?? "",
+                                          is_active: v.is_active,
+                                        })}
+                                        className="text-[11px] text-blue-600 hover:text-blue-800"
+                                      >
+                                        Edit
+                                      </button>
                                       <button
                                         type="button"
                                         onClick={() => handleToggleValue(v.id)}
@@ -2004,6 +2121,109 @@ function DimensionsPage() {
                     Delete permanently
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit value modal */}
+      {editValueModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !editValueSaving && setEditValueModal(null)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-1">
+              Edit value — <span className="font-mono text-gray-600">{editValueModal.code}</span>
+            </h2>
+            <p className="text-xs text-gray-400 mb-4">Code cannot be changed after creation.</p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">Name *</label>
+                <input
+                  type="text"
+                  value={editValueModal.name}
+                  onChange={e => setEditValueModal(prev => prev ? { ...prev, name: e.target.value } : null)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">
+                  Description <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={editValueModal.description}
+                  onChange={e => setEditValueModal(prev => prev ? { ...prev, description: e.target.value } : null)}
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Valid From <span className="text-gray-400 font-normal">(dd/mm/yyyy)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editValueModal.valid_from}
+                    onChange={e => setEditValueModal(prev => prev ? { ...prev, valid_from: e.target.value } : null)}
+                    placeholder="e.g. 01/01/2025"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Valid To <span className="text-gray-400 font-normal">(dd/mm/yyyy)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editValueModal.valid_to}
+                    onChange={e => setEditValueModal(prev => prev ? { ...prev, valid_to: e.target.value } : null)}
+                    placeholder="e.g. 31/12/2025"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="edit-value-is-active"
+                  checked={editValueModal.is_active}
+                  onChange={e => setEditValueModal(prev => prev ? { ...prev, is_active: e.target.checked } : null)}
+                  className="w-3.5 h-3.5 accent-blue-600"
+                />
+                <label htmlFor="edit-value-is-active" className="text-xs font-medium text-gray-700">
+                  Active
+                </label>
+              </div>
+
+              {editValueError && (
+                <p className="text-xs text-red-600">{editValueError}</p>
+              )}
+            </div>
+
+            <div className="flex gap-2 justify-end mt-5">
+              <button
+                type="button"
+                onClick={() => setEditValueModal(null)}
+                disabled={editValueSaving}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEditValueSave}
+                disabled={editValueSaving || !editValueModal.name.trim()}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+              >
+                {editValueSaving ? "Saving…" : "Save changes"}
               </button>
             </div>
           </div>
