@@ -1524,9 +1524,9 @@ async def download_coa_template(
     if fs_head:           all_cols.append(("FS Head", "Financial statement face line"))
     if fs_note:           all_cols.append(("FS Note", "FS note reference"))
     if tb_mapping:        all_cols.append(("TB Mapping", "Trial balance roll-up group"))
-    if group_account and is_subsidiary:
-        all_cols.append(("Group Account Number", "Parent group GL number"))
-        all_cols.append(("Group Account Name", "Parent group GL name"))
+    if group_account:
+        all_cols.append(("Group Account Number", "Optional — parent group GL number"))
+        all_cols.append(("Group Account Name", "Optional — parent group GL name"))
     if account_classification:
         all_cols.append(("Account Classification", "Classification for module behaviour"))
     if category:          all_cols.append(("Category", "Expense category name"))
