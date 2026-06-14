@@ -851,7 +851,7 @@ async def download_dimension_values_template(
         hdr_fill = PatternFill("solid", fgColor="1E3A5F")
         hdr_align = Alignment(horizontal="center")
 
-        headers = ["Dimension", "Code *", "Name *", "Description"]
+        headers = ["Dimension", "Code *", "Name *", "Description", "Valid From (dd/mm/yyyy)", "Valid To (dd/mm/yyyy)", "Is Active"]
         for col_idx, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=h)
             cell.font = hdr_font
@@ -862,18 +862,27 @@ async def download_dimension_values_template(
         ws.column_dimensions["B"].width = 20
         ws.column_dimensions["C"].width = 30
         ws.column_dimensions["D"].width = 40
+        ws.column_dimensions["E"].width = 22
+        ws.column_dimensions["F"].width = 22
+        ws.column_dimensions["G"].width = 12
 
         instr_font = Font(name="Arial", size=10, italic=True, color="555555")
         ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
         ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
         ws.cell(row=2, column=3, value="Full name").font = instr_font
         ws.cell(row=2, column=4, value="Optional description").font = instr_font
+        ws.cell(row=2, column=5, value="e.g. 01/01/2025 (optional)").font = instr_font
+        ws.cell(row=2, column=6, value="e.g. 31/12/2025 (optional)").font = instr_font
+        ws.cell(row=2, column=7, value="Yes or No (default: Yes)").font = instr_font
 
         example_font = Font(name="Arial", size=10, italic=True, color="888888")
         ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
         ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
         ws.cell(row=3, column=3, value="Khalamanja").font = example_font
         ws.cell(row=3, column=4, value="Optional description").font = example_font
+        ws.cell(row=3, column=5, value="01/01/2025").font = example_font
+        ws.cell(row=3, column=6, value="").font = example_font
+        ws.cell(row=3, column=7, value="Yes").font = example_font
 
         if dim_names:
             dim_formula = '"' + ",".join(dim_names) + '"'
@@ -888,6 +897,10 @@ async def download_dimension_values_template(
             )
             dv.sqref = "A4:A1000"
             ws.add_data_validation(dv)
+
+        dv_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
+        dv_active.sqref = "G4:G1000"
+        ws.add_data_validation(dv_active)
 
         ws.freeze_panes = "A4"
 
@@ -1117,7 +1130,7 @@ async def download_universal_dimension_values_template(
         hdr_fill = PatternFill("solid", fgColor="1E3A5F")
         hdr_align = Alignment(horizontal="center")
 
-        headers = ["Dimension", "Code *", "Name *", "Description"]
+        headers = ["Dimension", "Code *", "Name *", "Description", "Valid From (dd/mm/yyyy)", "Valid To (dd/mm/yyyy)", "Is Active"]
         for col_idx, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_idx, value=h)
             cell.font = hdr_font
@@ -1128,18 +1141,27 @@ async def download_universal_dimension_values_template(
         ws.column_dimensions["B"].width = 20
         ws.column_dimensions["C"].width = 30
         ws.column_dimensions["D"].width = 40
+        ws.column_dimensions["E"].width = 22
+        ws.column_dimensions["F"].width = 22
+        ws.column_dimensions["G"].width = 12
 
         instr_font = Font(name="Arial", size=10, italic=True, color="555555")
         ws.cell(row=2, column=1, value="Select dimension from dropdown").font = instr_font
         ws.cell(row=2, column=2, value="Unique code e.g. NG_AEKHALAMA").font = instr_font
         ws.cell(row=2, column=3, value="Full name").font = instr_font
         ws.cell(row=2, column=4, value="Optional description").font = instr_font
+        ws.cell(row=2, column=5, value="e.g. 01/01/2025 (optional)").font = instr_font
+        ws.cell(row=2, column=6, value="e.g. 31/12/2025 (optional)").font = instr_font
+        ws.cell(row=2, column=7, value="Yes or No (default: Yes)").font = instr_font
 
         example_font = Font(name="Arial", size=10, italic=True, color="888888")
         ws.cell(row=3, column=1, value=dim_names[0] if dim_names else "").font = example_font
         ws.cell(row=3, column=2, value="NG_AEKHALAMA").font = example_font
         ws.cell(row=3, column=3, value="Khalamanja").font = example_font
         ws.cell(row=3, column=4, value="Optional description").font = example_font
+        ws.cell(row=3, column=5, value="01/01/2025").font = example_font
+        ws.cell(row=3, column=6, value="").font = example_font
+        ws.cell(row=3, column=7, value="Yes").font = example_font
 
         if dim_names:
             dim_formula = '"' + ",".join(dim_names) + '"'
@@ -1154,6 +1176,10 @@ async def download_universal_dimension_values_template(
             )
             dv.sqref = "A4:A1000"
             ws.add_data_validation(dv)
+
+        dv_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
+        dv_active.sqref = "G4:G1000"
+        ws.add_data_validation(dv_active)
 
         ws.freeze_panes = "A4"
 
@@ -1202,6 +1228,8 @@ async def upload_universal_dimension_values(
     _n = col("name"); name_col = _n if _n is not None else col("value name")
     order_col = col("sort_order")
     type_col = col("value type")
+    from_col = col("valid from (dd/mm/yyyy)") or col("valid from")
+    to_col = col("valid to (dd/mm/yyyy)") or col("valid to")
     active_col = col("is active")
 
     if dim_col_idx is None:
@@ -1257,6 +1285,8 @@ async def upload_universal_dimension_values(
         name = get(name_col)
         sort_str = get(order_col)
         value_type = get(type_col) or None
+        valid_from_str = get(from_col)
+        valid_to_str = get(to_col)
         is_active_str = get(active_col).lower()
 
         if not code:
@@ -1276,6 +1306,23 @@ async def upload_universal_dimension_values(
 
         is_active = is_active_str not in ("no", "false", "0")
 
+        valid_from = None
+        valid_to = None
+        for date_str, dest in [(valid_from_str, "Valid From"), (valid_to_str, "Valid To")]:
+            if date_str:
+                for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"):
+                    try:
+                        parsed = _dt2.strptime(date_str, fmt).date()
+                        if dest == "Valid From":
+                            valid_from = parsed
+                        else:
+                            valid_to = parsed
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    errors.append({"row": i, "reason": f"Invalid date in {dest}: '{date_str}'."})
+
         existing = await db.execute(
             select(DimensionValue).where(
                 DimensionValue.dimension_id == target_dim.id,
@@ -1290,6 +1337,10 @@ async def upload_universal_dimension_values(
             dv_obj.sort_order = sort_order
             if value_type is not None:
                 dv_obj.value_type = value_type
+            if valid_from is not None:
+                dv_obj.valid_from = valid_from
+            if valid_to is not None:
+                dv_obj.valid_to = valid_to
             updated += 1
         else:
             db.add(DimensionValue(
@@ -1300,6 +1351,8 @@ async def upload_universal_dimension_values(
                 sort_order=sort_order,
                 is_active=is_active,
                 value_type=value_type,
+                valid_from=valid_from,
+                valid_to=valid_to,
             ))
             imported += 1
 
@@ -1566,73 +1619,7 @@ async def download_coa_template(
     _protect_sheet(ws1)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SHEET 2 — Dimensions Setup
-    # ══════════════════════════════════════════════════════════════════════════
-    ws2 = wb.create_sheet("Dimensions Setup")
-    ws2.freeze_panes = "A2"
-
-    s2_headers: list[tuple[str, bool]] = [
-        ("Dimension Name*", True),
-        ("Value Code*", True),
-        ("Value Name*", True),
-        ("Value Type", False),
-        ("Valid From (dd/mm/yyyy)", False),
-        ("Valid To (dd/mm/yyyy)", False),
-        ("Is Active", False),
-    ]
-    _write_headers(ws2, s2_headers)
-
-    first_dim_display = (dimensions[0].display_name or dimensions[0].name) if dimensions else "Cost Center"
-    s2_example = [
-        first_dim_display,
-        "NG_FI",
-        "Nigeria Finance",
-        "cost_center",
-        "",
-        "",
-        "Yes",
-    ]
-    _write_row(ws2, 2, s2_example, font=example_font)
-
-    s2_instructions = [
-        "Must match an existing configured dimension name exactly",
-        "Unique code for this value (e.g. NG_FI)",
-        "Display name (e.g. Nigeria Finance)",
-        "Free-text type tag (e.g. cost_center, statistical_order)",
-        "Leave blank = always active from today",
-        "Leave blank = always active (no expiry)",
-        "Yes or No (default Yes)",
-    ]
-    for ci, instr in enumerate(s2_instructions, 1):
-        cell = ws2.cell(row=3, column=ci, value=instr)
-        cell.font = instr_font
-        cell.fill = opt_fill
-
-    dv_s2_active = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True, showDropDown=False)
-    ws2.add_data_validation(dv_s2_active)
-    dv_s2_active.sqref = "G4:G10000"
-
-    # Dimension name dropdown in Sheet 2, column A
-    if dimensions:
-        dim_names = [dim.display_name or dim.name for dim in dimensions]
-        dim_names_formula = '","'.join(dim_names)
-        dv_dim_name = DataValidation(
-            type="list",
-            formula1=f'"{dim_names_formula}"',
-            allow_blank=False,
-            showDropDown=False,
-            showErrorMessage=True,
-            errorTitle="Invalid dimension",
-            error="Please select a dimension name from the list.",
-        )
-        dv_dim_name.sqref = "A4:A1000"
-        ws2.add_data_validation(dv_dim_name)
-
-    # Protect Sheet 2 — lock rows 1-3, unlock data rows
-    _protect_sheet(ws2)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # SHEET 3 — Instructions
+    # SHEET 2 — Instructions
     # ══════════════════════════════════════════════════════════════════════════
     ws3 = wb.create_sheet("Instructions")
     instruction_rows = [
