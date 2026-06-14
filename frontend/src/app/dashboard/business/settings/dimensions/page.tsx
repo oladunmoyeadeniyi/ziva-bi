@@ -222,6 +222,9 @@ function DimensionsPage() {
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Year filter popover
+  const [yearFilterOpen, setYearFilterOpen] = useState(false);
+
   // Edit value modal
   const [editValueModal, setEditValueModal] = useState<{
     id: string;
@@ -664,7 +667,12 @@ function DimensionsPage() {
       };
       const fromYear = parseYear(v.valid_from);
       const toYear = parseYear(v.valid_to);
+      // Exclude values with no dates at all (unlimited/no-expiry)
+      if (fromYear === null && toYear === null) return false;
+      // from year must be <= selected year (or null = open-ended start)
       const fromOk = fromYear === null || fromYear <= year;
+      // to year must be >= selected year (or null = open-ended end, but
+      // we already excluded fully null above)
       const toOk = toYear === null || toYear >= year;
       if (!fromOk || !toOk) return false;
     }
@@ -939,8 +947,8 @@ function DimensionsPage() {
                     code: v.code,
                     name: v.name,
                     description: v.description ?? "",
-                    valid_from: v.valid_from ?? "",
-                    valid_to: v.valid_to ?? "",
+                    valid_from: v.valid_from ? formatDateDisplay(v.valid_from) : "",
+                    valid_to: v.valid_to ? formatDateDisplay(v.valid_to) : "",
                     is_active: v.is_active,
                   })}
                   className="text-[11px] text-blue-600 hover:text-blue-800"
@@ -1602,6 +1610,7 @@ function DimensionsPage() {
                 setAddValueName("");
                 setValuesStatusFilter("all");
                 setValuesValidityFilter("all");
+                setYearFilterOpen(false);
                 setValuesSearch("");
                 setSelectedValueIds(new Set());
                 setActiveGroupCollapsed(false);
@@ -2078,11 +2087,12 @@ function DimensionsPage() {
                         <option value="active">Active only</option>
                         <option value="inactive">Inactive only</option>
                       </select>
-                      {/* Validity filter — pill buttons */}
-                      <div className="flex items-center gap-1 flex-wrap">
+                      {/* Validity filter controls */}
+                      <div className="flex items-center gap-1.5 relative">
+                        {/* All button */}
                         <button
                           type="button"
-                          onClick={() => setValuesValidityFilter("all")}
+                          onClick={() => { setValuesValidityFilter("all"); setYearFilterOpen(false); }}
                           className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
                             valuesValidityFilter === "all"
                               ? "bg-blue-600 text-white border-blue-600"
@@ -2091,9 +2101,11 @@ function DimensionsPage() {
                         >
                           All
                         </button>
+
+                        {/* No expiry button */}
                         <button
                           type="button"
-                          onClick={() => setValuesValidityFilter("no_expiry")}
+                          onClick={() => { setValuesValidityFilter("no_expiry"); setYearFilterOpen(false); }}
                           className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
                             valuesValidityFilter === "no_expiry"
                               ? "bg-blue-600 text-white border-blue-600"
@@ -2102,20 +2114,65 @@ function DimensionsPage() {
                         >
                           No expiry
                         </button>
-                        {availableYears.map(year => (
+
+                        {/* Year filter button + popover */}
+                        <div className="relative">
                           <button
-                            key={year}
                             type="button"
-                            onClick={() => setValuesValidityFilter(year)}
-                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
-                              valuesValidityFilter === year
+                            onClick={() => setYearFilterOpen(prev => !prev)}
+                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors flex items-center gap-1 ${
+                              typeof valuesValidityFilter === "number"
                                 ? "bg-blue-600 text-white border-blue-600"
                                 : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
                             }`}
                           >
-                            {year}
+                            {typeof valuesValidityFilter === "number" ? (
+                              <>
+                                {valuesValidityFilter}
+                                <span
+                                  className="ml-1 hover:text-blue-200"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setValuesValidityFilter("all");
+                                    setYearFilterOpen(false);
+                                  }}
+                                >
+                                  ✕
+                                </span>
+                              </>
+                            ) : (
+                              <>Filter by year ▾</>
+                            )}
                           </button>
-                        ))}
+
+                          {yearFilterOpen && availableYears.length > 0 && (
+                            <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[100px]">
+                              {availableYears.map(year => (
+                                <button
+                                  key={year}
+                                  type="button"
+                                  onClick={() => {
+                                    setValuesValidityFilter(year);
+                                    setYearFilterOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 hover:text-blue-700 ${
+                                    valuesValidityFilter === year ? "text-blue-600 font-semibold bg-blue-50" : "text-gray-700"
+                                  }`}
+                                >
+                                  {year}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Close popover when clicking outside */}
+                        {yearFilterOpen && (
+                          <div
+                            className="fixed inset-0 z-20"
+                            onClick={() => setYearFilterOpen(false)}
+                          />
+                        )}
                       </div>
                       <span className="text-xs text-gray-400">{filteredValues.length} values</span>
                     </div>
