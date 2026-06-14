@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 
 interface DimensionSource {
   source_type: string;
@@ -868,17 +870,20 @@ function DimensionsPage() {
     setCascadeMode(null);
   };
 
-  const toInputDate = (ddmmyyyy: string): string => {
-    if (!ddmmyyyy) return "";
-    const [d, m, y] = ddmmyyyy.split("/");
-    if (!d || !m || !y) return "";
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  const parseDateForPicker = (ddmmyyyy: string): Date | null => {
+    if (!ddmmyyyy || !ddmmyyyy.trim()) return null;
+    const parts = ddmmyyyy.split("/");
+    if (parts.length !== 3) return null;
+    const [d, m, y] = parts;
+    const date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    return isNaN(date.getTime()) ? null : date;
   };
 
-  const fromInputDate = (yyyymmdd: string): string => {
-    if (!yyyymmdd) return "";
-    const [y, m, d] = yyyymmdd.split("-");
-    if (!y || !m || !d) return "";
+  const formatDateForState = (date: Date | null): string => {
+    if (!date) return "";
+    const d = String(date.getDate()).padStart(2, "0");
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const y = String(date.getFullYear());
     return `${d}/${m}/${y}`;
   };
 
@@ -2023,10 +2028,12 @@ function DimensionsPage() {
                             <label className="text-xs font-medium text-gray-600 block mb-1">
                               Valid From <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
-                            <input
-                              type="date"
-                              value={toInputDate(addValueValidFrom)}
-                              onChange={e => setAddValueValidFrom(fromInputDate(e.target.value))}
+                            <DatePicker
+                              selected={parseDateForPicker(addValueValidFrom)}
+                              onChange={(date: Date | null) => setAddValueValidFrom(formatDateForState(date))}
+                              dateFormat="dd/MM/yyyy"
+                              placeholderText="e.g. 01/01/2025"
+                              isClearable
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
@@ -2034,10 +2041,12 @@ function DimensionsPage() {
                             <label className="text-xs font-medium text-gray-600 block mb-1">
                               Valid To <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
-                            <input
-                              type="date"
-                              value={toInputDate(addValueValidTo)}
-                              onChange={e => setAddValueValidTo(fromInputDate(e.target.value))}
+                            <DatePicker
+                              selected={parseDateForPicker(addValueValidTo)}
+                              onChange={(date: Date | null) => setAddValueValidTo(formatDateForState(date))}
+                              dateFormat="dd/MM/yyyy"
+                              placeholderText="e.g. 31/12/2025"
+                              isClearable
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
@@ -2377,29 +2386,35 @@ function DimensionsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
-                    Valid From <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                    Valid From <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
-                  <input
-                    type="text"
-                    value={editValueModal.valid_from}
-                    onChange={e => setEditValueModal(prev =>
-                      prev ? { ...prev, valid_from: e.target.value } : null
-                    )}
-                    placeholder="e.g. 01/01/2025"
+                  <DatePicker
+                    selected={parseDateForPicker(editValueModal.valid_from)}
+                    onChange={(date: Date | null) =>
+                      setEditValueModal(prev =>
+                        prev ? { ...prev, valid_from: formatDateForState(date) } : null
+                      )
+                    }
+                    dateFormat="dd/MM/yyyy"
+                    placeholderText="e.g. 01/01/2025"
+                    isClearable
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
-                    Valid To <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                    Valid To <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
-                  <input
-                    type="text"
-                    value={editValueModal.valid_to}
-                    onChange={e => setEditValueModal(prev =>
-                      prev ? { ...prev, valid_to: e.target.value } : null
-                    )}
-                    placeholder="e.g. 31/12/2025"
+                  <DatePicker
+                    selected={parseDateForPicker(editValueModal.valid_to)}
+                    onChange={(date: Date | null) =>
+                      setEditValueModal(prev =>
+                        prev ? { ...prev, valid_to: formatDateForState(date) } : null
+                      )
+                    }
+                    dateFormat="dd/MM/yyyy"
+                    placeholderText="e.g. 31/12/2025"
+                    isClearable
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
