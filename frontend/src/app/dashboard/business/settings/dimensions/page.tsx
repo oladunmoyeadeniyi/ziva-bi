@@ -228,6 +228,8 @@ function DimensionsPage() {
     code: string;
     name: string;
     description: string;
+    valid_from: string;  // DD/MM/YYYY or empty string
+    valid_to: string;    // DD/MM/YYYY or empty string
     is_active: boolean;
   } | null>(null);
   const [editValueSaving, setEditValueSaving] = useState(false);
@@ -501,11 +503,17 @@ function DimensionsPage() {
     setEditValueError(null);
     try {
       const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const patchBody = {
+      const patchBody: Record<string, unknown> = {
         name: editValueModal.name,
         description: editValueModal.description || null,
         is_active: editValueModal.is_active,
       };
+      if (editValueModal.valid_from.trim()) {
+        patchBody.valid_from = editValueModal.valid_from.trim();
+      }
+      if (editValueModal.valid_to.trim()) {
+        patchBody.valid_to = editValueModal.valid_to.trim();
+      }
       const res = await fetch(
         `${BASE}/api/config/dimensions/${selectedDimForValues}/values/${editValueModal.id}`,
         {
@@ -891,6 +899,8 @@ function DimensionsPage() {
                     code: v.code,
                     name: v.name,
                     description: v.description ?? "",
+                    valid_from: v.valid_from ?? "",
+                    valid_to: v.valid_to ?? "",
                     is_active: v.is_active,
                   })}
                   className="text-[11px] text-blue-600 hover:text-blue-800"
@@ -2235,6 +2245,37 @@ function DimensionsPage() {
                   onChange={e => setEditValueModal(prev => prev ? { ...prev, description: e.target.value } : null)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Valid From <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editValueModal.valid_from}
+                    onChange={e => setEditValueModal(prev =>
+                      prev ? { ...prev, valid_from: e.target.value } : null
+                    )}
+                    placeholder="e.g. 01/01/2025"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Valid To <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editValueModal.valid_to}
+                    onChange={e => setEditValueModal(prev =>
+                      prev ? { ...prev, valid_to: e.target.value } : null
+                    )}
+                    placeholder="e.g. 31/12/2025"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
