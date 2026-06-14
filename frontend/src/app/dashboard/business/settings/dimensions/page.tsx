@@ -511,13 +511,20 @@ function DimensionsPage() {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            name: editValueModal.name,
-            description: editValueModal.description || null,
-            valid_from: editValueModal.valid_from || null,
-            valid_to: editValueModal.valid_to || null,
-            is_active: editValueModal.is_active,
-          }),
+          body: (() => {
+            const patchBody: Record<string, unknown> = {
+              name: editValueModal.name,
+              description: editValueModal.description || null,
+              is_active: editValueModal.is_active,
+            };
+            if (editValueModal.valid_from && editValueModal.valid_from.trim() !== "") {
+              patchBody.valid_from = editValueModal.valid_from;
+            }
+            if (editValueModal.valid_to && editValueModal.valid_to.trim() !== "") {
+              patchBody.valid_to = editValueModal.valid_to;
+            }
+            return JSON.stringify(patchBody);
+          })(),
         }
       );
       if (!res.ok) {
@@ -889,15 +896,19 @@ function DimensionsPage() {
               <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditValueModal({
-                    id: v.id,
-                    code: v.code,
-                    name: v.name,
-                    description: v.description ?? "",
-                    valid_from: "",
-                    valid_to: "",
-                    is_active: v.is_active,
-                  })}
+                  onClick={() => {
+                    console.log("v.valid_from:", v.valid_from, "v.valid_to:", v.valid_to);
+                    console.log("Opening edit modal with:", { valid_from: "", valid_to: "" });
+                    setEditValueModal({
+                      id: v.id,
+                      code: v.code,
+                      name: v.name,
+                      description: v.description ?? "",
+                      valid_from: "",
+                      valid_to: "",
+                      is_active: v.is_active,
+                    });
+                  }}
                   className="text-[11px] text-blue-600 hover:text-blue-800"
                 >
                   Edit
