@@ -5,8 +5,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
-import DatePicker from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
 
 interface DimensionSource {
   source_type: string;
@@ -870,20 +868,17 @@ function DimensionsPage() {
     setCascadeMode(null);
   };
 
-  const parseDateForPicker = (ddmmyyyy: string): Date | null => {
-    if (!ddmmyyyy || !ddmmyyyy.trim()) return null;
-    const parts = ddmmyyyy.split("/");
-    if (parts.length !== 3) return null;
-    const [d, m, y] = parts;
-    const date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-    return isNaN(date.getTime()) ? null : date;
+  const toInputDate = (ddmmyyyy: string): string => {
+    if (!ddmmyyyy) return "";
+    const [d, m, y] = ddmmyyyy.split("/");
+    if (!d || !m || !y) return "";
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   };
 
-  const formatDateForState = (date: Date | null): string => {
-    if (!date) return "";
-    const d = String(date.getDate()).padStart(2, "0");
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const y = String(date.getFullYear());
+  const fromInputDate = (yyyymmdd: string): string => {
+    if (!yyyymmdd) return "";
+    const [y, m, d] = yyyymmdd.split("-");
+    if (!y || !m || !d) return "";
     return `${d}/${m}/${y}`;
   };
 
@@ -2028,12 +2023,12 @@ function DimensionsPage() {
                             <label className="text-xs font-medium text-gray-600 block mb-1">
                               Valid From <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
-                            <DatePicker
-                              selected={parseDateForPicker(addValueValidFrom)}
-                              onChange={(date: Date | null) => setAddValueValidFrom(formatDateForState(date))}
-                              dateFormat="dd/MM/yyyy"
-                              placeholderText="e.g. 01/01/2025"
-                              isClearable
+                            <input
+                              type="date"
+                              defaultValue={toInputDate(addValueValidFrom)}
+                              onBlur={e => {
+                                if (e.target.value) setAddValueValidFrom(fromInputDate(e.target.value));
+                              }}
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
@@ -2041,12 +2036,12 @@ function DimensionsPage() {
                             <label className="text-xs font-medium text-gray-600 block mb-1">
                               Valid To <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
-                            <DatePicker
-                              selected={parseDateForPicker(addValueValidTo)}
-                              onChange={(date: Date | null) => setAddValueValidTo(formatDateForState(date))}
-                              dateFormat="dd/MM/yyyy"
-                              placeholderText="e.g. 31/12/2025"
-                              isClearable
+                            <input
+                              type="date"
+                              defaultValue={toInputDate(addValueValidTo)}
+                              onBlur={e => {
+                                if (e.target.value) setAddValueValidTo(fromInputDate(e.target.value));
+                              }}
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
@@ -2388,16 +2383,16 @@ function DimensionsPage() {
                   <label className="text-xs font-medium text-gray-600 block mb-1">
                     Valid From <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
-                  <DatePicker
-                    selected={parseDateForPicker(editValueModal.valid_from)}
-                    onChange={(date: Date | null) =>
-                      setEditValueModal(prev =>
-                        prev ? { ...prev, valid_from: formatDateForState(date) } : null
-                      )
-                    }
-                    dateFormat="dd/MM/yyyy"
-                    placeholderText="e.g. 01/01/2025"
-                    isClearable
+                  <input
+                    type="date"
+                    defaultValue={toInputDate(editValueModal.valid_from)}
+                    onBlur={e => {
+                      if (e.target.value) {
+                        setEditValueModal(prev =>
+                          prev ? { ...prev, valid_from: fromInputDate(e.target.value) } : null
+                        );
+                      }
+                    }}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -2405,16 +2400,16 @@ function DimensionsPage() {
                   <label className="text-xs font-medium text-gray-600 block mb-1">
                     Valid To <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
-                  <DatePicker
-                    selected={parseDateForPicker(editValueModal.valid_to)}
-                    onChange={(date: Date | null) =>
-                      setEditValueModal(prev =>
-                        prev ? { ...prev, valid_to: formatDateForState(date) } : null
-                      )
-                    }
-                    dateFormat="dd/MM/yyyy"
-                    placeholderText="e.g. 31/12/2025"
-                    isClearable
+                  <input
+                    type="date"
+                    defaultValue={toInputDate(editValueModal.valid_to)}
+                    onBlur={e => {
+                      if (e.target.value) {
+                        setEditValueModal(prev =>
+                          prev ? { ...prev, valid_to: fromInputDate(e.target.value) } : null
+                        );
+                      }
+                    }}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
