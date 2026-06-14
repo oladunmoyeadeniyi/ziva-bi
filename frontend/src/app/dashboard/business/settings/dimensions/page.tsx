@@ -825,15 +825,15 @@ function DimensionsPage() {
 
   const toInputDate = (ddmmyyyy: string): string => {
     if (!ddmmyyyy) return "";
-    const parts = ddmmyyyy.split("/");
-    if (parts.length !== 3) return "";
-    const [d, m, y] = parts;
-    return y && m && d ? `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}` : "";
+    const [d, m, y] = ddmmyyyy.split("/");
+    if (!d || !m || !y) return "";
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   };
 
   const fromInputDate = (yyyymmdd: string): string => {
     if (!yyyymmdd) return "";
     const [y, m, d] = yyyymmdd.split("-");
+    if (!y || !m || !d) return "";
     return `${d}/${m}/${y}`;
   };
 
