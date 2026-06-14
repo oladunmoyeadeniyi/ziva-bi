@@ -2111,6 +2111,7 @@ async def upload_coa(
 
         if gl_number in seen_gl_numbers:
             s1_result.skipped += 1
+            s1_result.skipped_rows.append({"row": i, "gl_number": gl_number, "reason": "Duplicate GL number in file"})
             continue
         seen_gl_numbers.add(gl_number)
 

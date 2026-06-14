@@ -92,16 +92,25 @@ const normaliseAccountType = (raw: string | undefined): string => {
   return raw;
 };
 
+interface SkippedRow {
+  row: number;
+  gl_number: string;
+  reason: string;
+}
+
 interface SheetResult {
   imported: number;
   updated: number;
   skipped: number;
+  skipped_rows?: SkippedRow[];
   errors: { row: number; reason: string }[];
 }
 
 type UploadResultType = SheetResult | { sheet1: SheetResult; sheet2: SheetResult };
 
 function SheetResultDisplay({ result, label }: { result: SheetResult; label: string }) {
+  const [skippedExpanded, setSkippedExpanded] = useState(false);
+  const skippedRows = result.skipped_rows ?? [];
   return (
     <div>
       <p className="text-xs font-semibold text-green-700 mb-0.5">{label}</p>
@@ -115,6 +124,27 @@ function SheetResultDisplay({ result, label }: { result: SheetResult; label: str
           ))}
           {result.errors.length > 8 && <li>…and {result.errors.length - 8} more</li>}
         </ul>
+      )}
+      {skippedRows.length > 0 && (
+        <div className="mt-1.5">
+          <button
+            type="button"
+            onClick={() => setSkippedExpanded(prev => !prev)}
+            className="text-xs text-amber-700 hover:text-amber-900 underline"
+          >
+            {skippedExpanded ? "▲ Hide skipped rows" : "▼ View skipped rows"} ({skippedRows.length})
+          </button>
+          {skippedExpanded && (
+            <ul className="mt-1 text-xs text-amber-800 space-y-0.5 border-l-2 border-amber-200 pl-2">
+              {skippedRows.slice(0, 50).map((s, i) => (
+                <li key={i}>Row {s.row}{s.gl_number ? ` · ${s.gl_number}` : ""}: {s.reason}</li>
+              ))}
+              {skippedRows.length > 50 && (
+                <li className="text-amber-600">…and {skippedRows.length - 50} more</li>
+              )}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );

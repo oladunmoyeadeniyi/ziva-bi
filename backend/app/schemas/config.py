@@ -210,6 +210,7 @@ class UploadResult(BaseModel):
     imported: int
     updated: int = 0
     skipped: int
+    skipped_rows: list[dict] = []  # [{row: int, gl_number: str, reason: str}]
     errors: list[dict]  # [{row: int, reason: str}]
 
 
