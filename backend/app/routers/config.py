@@ -54,7 +54,7 @@ import traceback
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -813,10 +813,12 @@ async def update_dimension_value(
     dimension_id: uuid.UUID,
     value_id: uuid.UUID,
     payload: dict,
+    request: Request,
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Update name, description, valid_from, valid_to, or is_active on a single dimension value. Admin only."""
+    print("PATCH value body:", await request.json())
     tenant_id = _require_tenant(current_user)
     _require_admin(current_user)
     result = await db.execute(
