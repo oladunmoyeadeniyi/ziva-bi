@@ -894,8 +894,8 @@ function DimensionsPage() {
                     code: v.code,
                     name: v.name,
                     description: v.description ?? "",
-                    valid_from: v.valid_from ?? "",
-                    valid_to: v.valid_to ?? "",
+                    valid_from: "",
+                    valid_to: "",
                     is_active: v.is_active,
                   })}
                   className="text-[11px] text-blue-600 hover:text-blue-800"

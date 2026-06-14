@@ -838,19 +838,24 @@ async def update_dimension_value(
         val.is_active = bool(payload["is_active"])
 
     from datetime import datetime as _dt
-    for field in ("valid_from", "valid_to"):
-        if field in payload:
-            raw = payload[field]
-            if raw is None or raw == "":
-                setattr(val, field, None)
-            else:
-                try:
-                    setattr(val, field, _dt.strptime(raw.strip(), "%d/%m/%Y").date())
-                except ValueError:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid date format for {field}. Use DD/MM/YYYY.",
-                    )
+
+    def parse_date(raw: str):
+        if not raw or not raw.strip():
+            return None
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                return _dt.strptime(raw.strip(), fmt).date()
+            except ValueError:
+                continue
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date format: '{raw}'. Use DD/MM/YYYY."
+        )
+
+    if "valid_from" in payload and payload["valid_from"] is not None and payload["valid_from"] != "":
+        val.valid_from = parse_date(payload["valid_from"])
+    if "valid_to" in payload and payload["valid_to"] is not None and payload["valid_to"] != "":
+        val.valid_to = parse_date(payload["valid_to"])
 
     await db.flush()
     return {
