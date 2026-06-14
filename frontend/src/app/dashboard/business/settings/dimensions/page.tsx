@@ -522,7 +522,15 @@ function DimensionsPage() {
       );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail ?? "Save failed");
+        let errMsg = "Save failed";
+        if (typeof data.detail === "string") {
+          errMsg = data.detail;
+        } else if (Array.isArray(data.detail)) {
+          errMsg = data.detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ");
+        } else if (data.detail) {
+          errMsg = JSON.stringify(data.detail);
+        }
+        throw new Error(errMsg);
       }
       await loadDimValues(selectedDimForValues);
       setEditValueModal(null);
@@ -813,6 +821,20 @@ function DimensionsPage() {
     await saveExclusions(dim, Array.from(newExcluded), "org_structure");
     setCascadeModal(null);
     setCascadeMode(null);
+  };
+
+  const toInputDate = (ddmmyyyy: string): string => {
+    if (!ddmmyyyy) return "";
+    const parts = ddmmyyyy.split("/");
+    if (parts.length !== 3) return "";
+    const [d, m, y] = parts;
+    return y && m && d ? `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}` : "";
+  };
+
+  const fromInputDate = (yyyymmdd: string): string => {
+    if (!yyyymmdd) return "";
+    const [y, m, d] = yyyymmdd.split("-");
+    return `${d}/${m}/${y}`;
   };
 
   const renderValuesTable = (values: DimensionValue[]) => (
@@ -1945,25 +1967,23 @@ function DimensionsPage() {
                         <div className="grid grid-cols-2 gap-2 mb-2">
                           <div>
                             <label className="text-xs font-medium text-gray-600 block mb-1">
-                              Valid From <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                              Valid From <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
                             <input
-                              type="text"
-                              value={addValueValidFrom}
-                              onChange={e => setAddValueValidFrom(e.target.value)}
-                              placeholder="e.g. 01/01/2025"
+                              type="date"
+                              value={toInputDate(addValueValidFrom)}
+                              onChange={e => setAddValueValidFrom(fromInputDate(e.target.value))}
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
                           <div>
                             <label className="text-xs font-medium text-gray-600 block mb-1">
-                              Valid To <span className="text-gray-400 font-normal">(dd/mm/yyyy, optional)</span>
+                              Valid To <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
                             <input
-                              type="text"
-                              value={addValueValidTo}
-                              onChange={e => setAddValueValidTo(e.target.value)}
-                              placeholder="e.g. 31/12/2025"
+                              type="date"
+                              value={toInputDate(addValueValidTo)}
+                              onChange={e => setAddValueValidTo(fromInputDate(e.target.value))}
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
@@ -2225,25 +2245,27 @@ function DimensionsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
-                    Valid From <span className="text-gray-400 font-normal">(dd/mm/yyyy)</span>
+                    Valid From <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
                   <input
-                    type="text"
-                    value={editValueModal.valid_from}
-                    onChange={e => setEditValueModal(prev => prev ? { ...prev, valid_from: e.target.value } : null)}
-                    placeholder="e.g. 01/01/2025"
+                    type="date"
+                    value={toInputDate(editValueModal.valid_from)}
+                    onChange={e => setEditValueModal(prev =>
+                      prev ? { ...prev, valid_from: fromInputDate(e.target.value) } : null
+                    )}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
-                    Valid To <span className="text-gray-400 font-normal">(dd/mm/yyyy)</span>
+                    Valid To <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
                   <input
-                    type="text"
-                    value={editValueModal.valid_to}
-                    onChange={e => setEditValueModal(prev => prev ? { ...prev, valid_to: e.target.value } : null)}
-                    placeholder="e.g. 31/12/2025"
+                    type="date"
+                    value={toInputDate(editValueModal.valid_to)}
+                    onChange={e => setEditValueModal(prev =>
+                      prev ? { ...prev, valid_to: fromInputDate(e.target.value) } : null
+                    )}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
