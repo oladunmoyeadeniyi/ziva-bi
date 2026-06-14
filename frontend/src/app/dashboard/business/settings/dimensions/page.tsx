@@ -212,7 +212,7 @@ function DimensionsPage() {
   const [valuesSearch, setValuesSearch] = useState("");
   const [selectedValueIds, setSelectedValueIds] = useState<Set<string>>(new Set());
   const [valuesStatusFilter, setValuesStatusFilter] = useState<"all" | "active" | "inactive">("all");
-  const [valuesValidityFilter, setValuesValidityFilter] = useState<"all" | "this_year" | "no_expiry">("all");
+  const [valuesValidityFilter, setValuesValidityFilter] = useState<"all" | "no_expiry" | number>("all");
   const [activeGroupCollapsed, setActiveGroupCollapsed] = useState(false);
   const [inactiveGroupCollapsed, setInactiveGroupCollapsed] = useState(true);
   const [confirmModal, setConfirmModal] = useState<{
@@ -647,8 +647,6 @@ function DimensionsPage() {
     }
   };
 
-  const currentYear = new Date().getFullYear();
-
   const filteredValues = (dimValues[selectedDimForValues] ?? []).filter(v => {
     if (valuesSearch) {
       const q = valuesSearch.toLowerCase();
@@ -656,9 +654,18 @@ function DimensionsPage() {
     }
     if (valuesStatusFilter === "active" && !v.is_active) return false;
     if (valuesStatusFilter === "inactive" && v.is_active) return false;
-    if (valuesValidityFilter === "this_year") {
-      const fromOk = !v.valid_from || parseInt(v.valid_from.split("/")[2]) <= currentYear;
-      const toOk = !v.valid_to || parseInt(v.valid_to.split("/")[2]) >= currentYear;
+    if (typeof valuesValidityFilter === "number") {
+      const year = valuesValidityFilter;
+      const parseYear = (dateStr: string | null | undefined): number | null => {
+        if (!dateStr) return null;
+        if (dateStr.includes("-")) return parseInt(dateStr.split("-")[0]);
+        const parts = dateStr.split("/");
+        return parts.length === 3 ? parseInt(parts[2]) : null;
+      };
+      const fromYear = parseYear(v.valid_from);
+      const toYear = parseYear(v.valid_to);
+      const fromOk = fromYear === null || fromYear <= year;
+      const toOk = toYear === null || toYear >= year;
       if (!fromOk || !toOk) return false;
     }
     if (valuesValidityFilter === "no_expiry") {
@@ -669,6 +676,31 @@ function DimensionsPage() {
 
   const activeValues = filteredValues.filter(v => v.is_active);
   const inactiveValues = filteredValues.filter(v => !v.is_active);
+
+  const availableYears: number[] = (() => {
+    const allValues = dimValues[selectedDimForValues] ?? [];
+    const yearSet = new Set<number>();
+    for (const v of allValues) {
+      const parseYear = (dateStr: string | null | undefined): number | null => {
+        if (!dateStr) return null;
+        if (dateStr.includes("-")) {
+          const y = parseInt(dateStr.split("-")[0]);
+          return isNaN(y) ? null : y;
+        }
+        const parts = dateStr.split("/");
+        if (parts.length === 3) {
+          const y = parseInt(parts[2]);
+          return isNaN(y) ? null : y;
+        }
+        return null;
+      };
+      const fromYear = parseYear(v.valid_from);
+      const toYear = parseYear(v.valid_to);
+      if (fromYear) yearSet.add(fromYear);
+      if (toYear) yearSet.add(toYear);
+    }
+    return Array.from(yearSet).sort((a, b) => a - b);
+  })();
 
   const handleToggleValue = async (valueId: string) => {
     if (!accessToken || !selectedDimForValues) return;
@@ -842,6 +874,14 @@ function DimensionsPage() {
     return `${d}/${m}/${y}`;
   };
 
+  const formatDateDisplay = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return "—";
+    if (dateStr.includes("/")) return dateStr;
+    const [y, m, d] = dateStr.split("-");
+    if (!y || !m || !d) return dateStr;
+    return `${d}/${m}/${y}`;
+  };
+
   const renderValuesTable = (values: DimensionValue[]) => (
     <table className="w-full text-xs">
       <thead className="bg-gray-50 border-b border-gray-200">
@@ -888,8 +928,8 @@ function DimensionsPage() {
             </td>
             <td className="px-3 py-2 font-mono text-gray-700">{v.code}</td>
             <td className="px-3 py-2 text-gray-800">{v.name}</td>
-            <td className="px-3 py-2 text-gray-500 text-[11px]">{v.valid_from ?? "—"}</td>
-            <td className="px-3 py-2 text-gray-500 text-[11px]">{v.valid_to ?? "—"}</td>
+            <td className="px-3 py-2 text-gray-500 text-[11px]">{formatDateDisplay(v.valid_from)}</td>
+            <td className="px-3 py-2 text-gray-500 text-[11px]">{formatDateDisplay(v.valid_to)}</td>
             <td className="px-3 py-2">
               <div className="flex items-center justify-end gap-2">
                 <button
@@ -2038,15 +2078,45 @@ function DimensionsPage() {
                         <option value="active">Active only</option>
                         <option value="inactive">Inactive only</option>
                       </select>
-                      <select
-                        value={valuesValidityFilter}
-                        onChange={e => setValuesValidityFilter(e.target.value as "all" | "this_year" | "no_expiry")}
-                        className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none bg-white"
-                      >
-                        <option value="all">All validity</option>
-                        <option value="this_year">Valid in {new Date().getFullYear()}</option>
-                        <option value="no_expiry">No expiry</option>
-                      </select>
+                      {/* Validity filter — pill buttons */}
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setValuesValidityFilter("all")}
+                          className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                            valuesValidityFilter === "all"
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                          }`}
+                        >
+                          All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setValuesValidityFilter("no_expiry")}
+                          className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                            valuesValidityFilter === "no_expiry"
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                          }`}
+                        >
+                          No expiry
+                        </button>
+                        {availableYears.map(year => (
+                          <button
+                            key={year}
+                            type="button"
+                            onClick={() => setValuesValidityFilter(year)}
+                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                              valuesValidityFilter === year
+                                ? "bg-blue-600 text-white border-blue-600"
+                                : "bg-white text-gray-600 border-gray-300 hover:border-blue-400"
+                            }`}
+                          >
+                            {year}
+                          </button>
+                        ))}
+                      </div>
                       <span className="text-xs text-gray-400">{filteredValues.length} values</span>
                     </div>
 
