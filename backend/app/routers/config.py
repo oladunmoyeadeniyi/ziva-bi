@@ -817,10 +817,10 @@ async def update_dimension_value(
             detail=f"Invalid date format: '{raw}'. Use DD/MM/YYYY."
         )
 
-    if "valid_from" in payload and payload["valid_from"] is not None and payload["valid_from"] != "":
-        val.valid_from = parse_date(payload["valid_from"])
-    if "valid_to" in payload and payload["valid_to"] is not None and payload["valid_to"] != "":
-        val.valid_to = parse_date(payload["valid_to"])
+    if "valid_from" in payload:
+        val.valid_from = parse_date(payload["valid_from"]) if payload["valid_from"] else None
+    if "valid_to" in payload:
+        val.valid_to = parse_date(payload["valid_to"]) if payload["valid_to"] else None
 
     await db.flush()
     return {

@@ -511,12 +511,8 @@ function DimensionsPage() {
         description: editValueModal.description || null,
         is_active: editValueModal.is_active,
       };
-      if (editValueModal.valid_from.trim()) {
-        patchBody.valid_from = editValueModal.valid_from.trim();
-      }
-      if (editValueModal.valid_to.trim()) {
-        patchBody.valid_to = editValueModal.valid_to.trim();
-      }
+      patchBody.valid_from = editValueModal.valid_from.trim() || null;
+      patchBody.valid_to = editValueModal.valid_to.trim() || null;
       const res = await fetch(
         `${BASE}/api/config/dimensions/${selectedDimForValues}/values/${editValueModal.id}`,
         {
