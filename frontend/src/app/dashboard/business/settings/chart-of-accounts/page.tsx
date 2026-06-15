@@ -282,7 +282,7 @@ export default function ChartOfAccountsPage() {
     if (!accessToken) return;
     try {
       const [accs, dims] = await Promise.all([
-        apiFetch<GLAccount[]>(`/api/config/coa?active_only=false`, { token: accessToken }),
+        apiFetch<GLAccount[]>(`/api/config/coa?active_only=false&limit=10000`, { token: accessToken }),
         apiFetch<Dimension[]>("/api/config/dimensions", { token: accessToken }),
       ]);
       setAccounts(accs);
