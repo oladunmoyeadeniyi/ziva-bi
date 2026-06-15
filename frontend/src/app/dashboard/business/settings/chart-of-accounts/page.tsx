@@ -44,6 +44,64 @@ interface Dimension {
 }
 
 type CoATab = "accounts" | "groups" | "fs_mappings";
+type SortEntry = { col: string; dir: "asc" | "desc" };
+
+const SORT_STORAGE_KEY_ACCOUNTS = "ziva_coa_accounts_sort";
+const SORT_STORAGE_KEY_FS = "ziva_coa_fs_sort";
+
+const loadSort = (key: string): SortEntry[] => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as SortEntry[]) : [];
+  } catch { return []; }
+};
+
+const saveSort = (key: string, sort: SortEntry[]) => {
+  try { localStorage.setItem(key, JSON.stringify(sort)); } catch {}
+};
+
+const toggleSort = (
+  sort: SortEntry[],
+  setSort: (s: SortEntry[]) => void,
+  col: string
+) => {
+  const existing = sort.find(s => s.col === col);
+  if (!existing) {
+    setSort([...sort, { col, dir: "asc" }]);
+  } else if (existing.dir === "asc") {
+    setSort(sort.map(s => s.col === col ? { ...s, dir: "desc" } : s));
+  } else {
+    setSort(sort.filter(s => s.col !== col));
+  }
+};
+
+const applySort = <T extends Record<string, unknown>>(
+  list: T[],
+  sort: SortEntry[]
+): T[] => {
+  if (!sort.length) return list;
+  return [...list].sort((a, b) => {
+    for (const { col, dir } of sort) {
+      const aVal = String(a[col] ?? "");
+      const bVal = String(b[col] ?? "");
+      const cmp = aVal.localeCompare(bVal, undefined, { numeric: true });
+      if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
+    }
+    return 0;
+  });
+};
+
+const SortIndicator = ({ col, sort }: { col: string; sort: SortEntry[] }) => {
+  const entry = sort.find(s => s.col === col);
+  if (!entry) return null;
+  const priority = sort.indexOf(entry) + 1;
+  return (
+    <span style={{ fontSize: 10, marginLeft: 4, color: "#6b7280" }}>
+      {entry.dir === "asc" ? "↑" : "↓"}
+      {sort.length > 1 && <sup style={{ fontSize: 9 }}>{priority}</sup>}
+    </span>
+  );
+};
 
 const PL_CLASSIFICATIONS = [
   "Revenue",
@@ -259,8 +317,8 @@ export default function ChartOfAccountsPage() {
   const [fsFsHeadFilter, setFsFsHeadFilter] = useState("");
   const [filterFsNote, setFilterFsNote] = useState("");
   const [filterTbMapping, setFilterTbMapping] = useState("");
-  const [fsSortCol, setFsSortCol] = useState<string>("gl_number");
-  const [fsSortDir, setFsSortDir] = useState<"asc" | "desc">("asc");
+  const [accountsSort, setAccountsSort] = useState<SortEntry[]>(() => loadSort(SORT_STORAGE_KEY_ACCOUNTS));
+  const [fsMappingsSort, setFsMappingsSort] = useState<SortEntry[]>(() => loadSort(SORT_STORAGE_KEY_FS));
 
   // Account groups expand state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -308,6 +366,9 @@ export default function ChartOfAccountsPage() {
       .finally(() => setFsMappingsLoading(false));
   }, [coaTab, accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { saveSort(SORT_STORAGE_KEY_ACCOUNTS, accountsSort); }, [accountsSort]);
+  useEffect(() => { saveSort(SORT_STORAGE_KEY_FS, fsMappingsSort); }, [fsMappingsSort]);
+
   const toggleGroup = (name: string) => setExpandedGroups(prev => {
     const next = new Set(prev);
     if (next.has(name)) next.delete(name); else next.add(name);
@@ -332,12 +393,18 @@ export default function ChartOfAccountsPage() {
     });
   };
 
-  const toggleFsSort = (col: string) => {
-    if (fsSortCol === col) setFsSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setFsSortCol(col); setFsSortDir("asc"); }
+  const handleTypeChange = (val: string) => {
+    setFilterType(val);
+    setFilterGroup("");
+    setFilterClassification("");
   };
 
-  const handleTypeChange = (val: string) => {
+  const handleGroupChange = (val: string) => {
+    setFilterGroup(val);
+    setFilterClassification("");
+  };
+
+  const handleFsTypeChange = (val: string) => {
     setFsTypeFilter(val);
     setFsFsHeadFilter("");
     setFilterFsNote("");
@@ -600,28 +667,33 @@ export default function ChartOfAccountsPage() {
     }
   };
 
-  const filteredAccounts = accounts
-    .filter(a => {
+  // Cascading filter pipeline for Accounts tab
+  const acctAfterTypeFilter = useMemo(() =>
+    accounts.filter(a => !filterType || normaliseAccountType(a.account_type) === filterType)
+  , [accounts, filterType]);
+
+  const groupOptions = useMemo(() =>
+    Array.from(new Set(acctAfterTypeFilter.map(a => a.gl_group).filter((g): g is string => !!g))).sort()
+  , [acctAfterTypeFilter]);
+
+  const acctAfterGroupFilter = useMemo(() =>
+    acctAfterTypeFilter.filter(a => !filterGroup || a.gl_group === filterGroup)
+  , [acctAfterTypeFilter, filterGroup]);
+
+  const classificationOptions = useMemo(() =>
+    Array.from(new Set(acctAfterGroupFilter.map(a => a.account_classification).filter((c): c is string => !!c))).sort()
+  , [acctAfterGroupFilter]);
+
+  const filteredAccounts = useMemo(() =>
+    acctAfterGroupFilter.filter(a => {
       if (filterGL && !a.gl_number.toLowerCase().includes(filterGL.toLowerCase())) return false;
       if (filterName && !a.gl_name.toLowerCase().includes(filterName.toLowerCase())) return false;
-      if (filterGroup && !(a.gl_group ?? "").toLowerCase().includes(filterGroup.toLowerCase())) return false;
-      if (filterType && normaliseAccountType(a.account_type) !== filterType) return false;
-      if (filterClassification && !(a.account_classification ?? "").toLowerCase().includes(filterClassification.toLowerCase())) return false;
+      if (filterClassification && a.account_classification !== filterClassification) return false;
       if (filterStatus === "active" && !a.is_active) return false;
       if (filterStatus === "inactive" && a.is_active) return false;
       return true;
     })
-    .sort((a, b) => {
-      if (a.is_active && !b.is_active) return -1;
-      if (!a.is_active && b.is_active) return 1;
-      return a.gl_number.localeCompare(b.gl_number);
-    });
-
-  const groupOptions = useMemo(() => {
-    const groups = new Set<string>();
-    accounts.forEach(a => { if (a.gl_group) groups.add(a.gl_group); });
-    return Array.from(groups).sort();
-  }, [accounts]);
+  , [acctAfterGroupFilter, filterGL, filterName, filterClassification, filterStatus]);
 
   // Cascading filter pipeline — each step narrows options for the next dropdown
   const afterTypeFilter = useMemo(() =>
@@ -648,17 +720,23 @@ export default function ChartOfAccountsPage() {
     Array.from(new Set(afterFsNoteFilter.filter(a => a.tb_mapping).map(a => a.tb_mapping!))).sort()
   , [afterFsNoteFilter]);
 
+  const filteredFsMappings = useMemo(() =>
+    afterFsNoteFilter.filter(a => !filterTbMapping || a.tb_mapping === filterTbMapping)
+  , [afterFsNoteFilter, filterTbMapping]);
+
   const sortedFsMappings = useMemo(() =>
-    [...afterFsNoteFilter.filter(a => !filterTbMapping || a.tb_mapping === filterTbMapping)]
-      .sort((a, b) => {
-        if (!a.fs_head && b.fs_head) return 1;
-        if (a.fs_head && !b.fs_head) return -1;
-        const aVal = (a as unknown as Record<string, string>)[fsSortCol] ?? "";
-        const bVal = (b as unknown as Record<string, string>)[fsSortCol] ?? "";
-        const cmp = aVal.localeCompare(bVal);
-        return fsSortDir === "asc" ? cmp : -cmp;
-      })
-  , [afterFsNoteFilter, filterTbMapping, fsSortCol, fsSortDir]);
+    applySort(
+      filteredFsMappings.map(a => ({
+        ...a,
+        _unmapped: a.fs_head ? "0" : "1",
+      })),
+      [{ col: "_unmapped", dir: "asc" }, ...fsMappingsSort]
+    ) as FSMappingItem[]
+  , [filteredFsMappings, fsMappingsSort]);
+
+  const sortedAccounts = useMemo(() =>
+    applySort(filteredAccounts as unknown as Record<string, unknown>[], accountsSort) as unknown as GLAccount[]
+  , [filteredAccounts, accountsSort]);
 
   if (isLoading) {
     return (
@@ -832,23 +910,24 @@ export default function ChartOfAccountsPage() {
             onChange={e => setFilterName(e.target.value)}
             placeholder="GL name…"
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)}
+          <select value={filterGroup} onChange={e => handleGroupChange(e.target.value)}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">All groups</option>
             {groupOptions.map(g => (
               <option key={g} value={g}>{g}</option>
             ))}
           </select>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)}
+          <select value={filterType} onChange={e => handleTypeChange(e.target.value)}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">All types</option>
             <option value="PL">PL — Profit &amp; Loss</option>
             <option value="BS">BS — Balance Sheet</option>
           </select>
-          <input type="text" value={filterClassification}
-            onChange={e => setFilterClassification(e.target.value)}
-            placeholder="Classification…"
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <select value={filterClassification} onChange={e => setFilterClassification(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">All classifications</option>
+            {classificationOptions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "all" | "active" | "inactive")}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="all">All statuses</option>
@@ -856,21 +935,29 @@ export default function ChartOfAccountsPage() {
             <option value="inactive">Inactive only</option>
           </select>
         </div>
-        {(filterGL || filterName || filterGroup || filterType || filterClassification || filterStatus !== "all") && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">
-              {filteredAccounts.length} of {accounts.length} accounts
-            </span>
-            <button type="button"
-              onClick={() => {
-                setFilterGL(""); setFilterName(""); setFilterGroup("");
-                setFilterType(""); setFilterClassification(""); setFilterStatus("all");
-              }}
-              className="text-xs text-blue-600 hover:text-blue-800">
-              Clear filters
+        <div className="flex items-center gap-3 flex-wrap">
+          {(filterGL || filterName || filterGroup || filterType || filterClassification || filterStatus !== "all") && (
+            <>
+              <span className="text-xs text-gray-500">
+                {filteredAccounts.length} of {accounts.length} accounts
+              </span>
+              <button type="button"
+                onClick={() => {
+                  setFilterGL(""); setFilterName(""); setFilterGroup("");
+                  setFilterType(""); setFilterClassification(""); setFilterStatus("all");
+                }}
+                className="text-xs text-blue-600 hover:text-blue-800">
+                Clear filters
+              </button>
+            </>
+          )}
+          {accountsSort.length > 0 && (
+            <button type="button" onClick={() => setAccountsSort([])}
+              className="text-xs text-gray-500 hover:text-gray-700 underline">
+              Clear sorting
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Bulk action toolbar */}
@@ -1341,17 +1428,35 @@ export default function ChartOfAccountsPage() {
                     className="rounded border-gray-300"
                   />
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">GL Number</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">GL Name</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">Group</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">Classification</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                <th onClick={() => toggleSort(accountsSort, setAccountsSort, "gl_number")}
+                  className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:text-gray-700">
+                  GL Number <SortIndicator col="gl_number" sort={accountsSort} />
+                </th>
+                <th onClick={() => toggleSort(accountsSort, setAccountsSort, "gl_name")}
+                  className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:text-gray-700">
+                  GL Name <SortIndicator col="gl_name" sort={accountsSort} />
+                </th>
+                <th onClick={() => toggleSort(accountsSort, setAccountsSort, "gl_group")}
+                  className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell cursor-pointer select-none hover:text-gray-700">
+                  Group <SortIndicator col="gl_group" sort={accountsSort} />
+                </th>
+                <th onClick={() => toggleSort(accountsSort, setAccountsSort, "account_type")}
+                  className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:text-gray-700">
+                  Type <SortIndicator col="account_type" sort={accountsSort} />
+                </th>
+                <th onClick={() => toggleSort(accountsSort, setAccountsSort, "account_classification")}
+                  className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell cursor-pointer select-none hover:text-gray-700">
+                  Classification <SortIndicator col="account_classification" sort={accountsSort} />
+                </th>
+                <th onClick={() => toggleSort(accountsSort, setAccountsSort, "is_active")}
+                  className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:text-gray-700">
+                  Status <SortIndicator col="is_active" sort={accountsSort} />
+                </th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredAccounts.map((gl) => (
+              {sortedAccounts.map((gl) => (
                 <tr key={gl.id} className={`hover:bg-gray-50 ${!gl.is_active ? "opacity-50" : ""} ${selectedIds.has(gl.id) ? "bg-blue-50" : ""}`}>
                   <td className="px-3 py-3 w-8">
                     <input
@@ -1583,7 +1688,7 @@ export default function ChartOfAccountsPage() {
           </div>
 
           <div className="flex gap-2 mb-4 flex-wrap items-center">
-            <select value={fsTypeFilter} onChange={e => handleTypeChange(e.target.value)}
+            <select value={fsTypeFilter} onChange={e => handleFsTypeChange(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All account types</option>
               <option value="PL">PL — Profit &amp; Loss</option>
@@ -1610,6 +1715,12 @@ export default function ChartOfAccountsPage() {
                 Clear filters
               </button>
             )}
+            {fsMappingsSort.length > 0 && (
+              <button type="button" onClick={() => setFsMappingsSort([])}
+                className="text-xs text-gray-500 hover:text-gray-700 underline">
+                Clear sorting
+              </button>
+            )}
           </div>
 
           {fsMappingsLoading ? (
@@ -1629,13 +1740,10 @@ export default function ChartOfAccountsPage() {
                         { key: "tb_mapping", label: "TB Mapping" },
                       ].map(col => (
                         <th key={col.key}
-                          onClick={() => toggleFsSort(col.key)}
+                          onClick={() => toggleSort(fsMappingsSort, setFsMappingsSort, col.key)}
                           className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:text-gray-700 select-none">
                           {col.label}
-                          {fsSortCol === col.key && (
-                            <i className={`ti ${fsSortDir === "asc" ? "ti-sort-ascending" : "ti-sort-descending"} ml-1`}
-                               style={{ fontSize: 11 }} />
-                          )}
+                          <SortIndicator col={col.key} sort={fsMappingsSort} />
                         </th>
                       ))}
                     </tr>
