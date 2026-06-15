@@ -1438,19 +1438,17 @@ export default function ChartOfAccountsPage() {
                 </label>
               ))}
 
-              {/* Group account — only shown for subsidiaries */}
-              {isSubsidiary && (
-                <label className="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-50 rounded px-1">
-                  <input type="checkbox"
-                    className="w-3.5 h-3.5 accent-blue-600 flex-shrink-0"
-                    checked={templateCols.group_account}
-                    onChange={e => setTemplateCols(prev => ({
-                      ...prev, group_account: e.target.checked
-                    }))} />
-                  <span className="text-xs text-gray-800 flex-1">Group Account Mapping</span>
-                  <span className="text-[10px] text-gray-400">Group Number + Name</span>
-                </label>
-              )}
+              {/* Group account */}
+              <label className="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-50 rounded px-1">
+                <input type="checkbox"
+                  className="w-3.5 h-3.5 accent-blue-600 flex-shrink-0"
+                  checked={templateCols.group_account}
+                  onChange={e => setTemplateCols(prev => ({
+                    ...prev, group_account: e.target.checked
+                  }))} />
+                <span className="text-xs text-gray-800 flex-1">Group Account Mapping</span>
+                <span className="text-[10px] text-gray-400">Group Number + Name</span>
+              </label>
             </div>
 
             <div className="flex items-center justify-between mb-4">
