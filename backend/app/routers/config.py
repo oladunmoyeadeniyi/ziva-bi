@@ -1765,6 +1765,44 @@ async def list_coa(
     return [CoAListItem.from_orm(g) for g in result.scalars().all()]
 
 
+@router.get("/coa/fs-mappings")
+async def get_fs_mappings(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+    account_type: Optional[str] = Query(None),
+    fs_head: Optional[str] = Query(None),
+) -> list[dict]:
+    """Return all active GL accounts with FS mapping fields.
+    Accounts with fs_head set come first; unmapped accounts last."""
+    tenant_id = _require_tenant(current_user)
+    q = select(ChartOfAccount).where(
+        ChartOfAccount.tenant_id == tenant_id,
+        ChartOfAccount.is_active == True,  # noqa: E712
+    )
+    if account_type:
+        q = q.where(ChartOfAccount.account_type == account_type)
+    if fs_head:
+        q = q.where(ChartOfAccount.fs_head == fs_head)
+    q = q.order_by(
+        ChartOfAccount.fs_head.is_(None),
+        ChartOfAccount.fs_head,
+        ChartOfAccount.gl_number,
+    )
+    result = await db.execute(q)
+    return [
+        {
+            "id": str(a.id),
+            "gl_number": a.gl_number,
+            "gl_name": a.gl_name,
+            "account_type": a.account_type,
+            "fs_head": a.fs_head,
+            "fs_note": a.fs_note,
+            "tb_mapping": a.tb_mapping,
+        }
+        for a in result.scalars().all()
+    ]
+
+
 @router.get("/coa/{gl_id}", response_model=CoAResponse)
 async def get_coa(
     gl_id: uuid.UUID,

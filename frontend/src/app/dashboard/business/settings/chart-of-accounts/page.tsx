@@ -98,6 +98,16 @@ interface SkippedRow {
   reason: string;
 }
 
+interface FSMappingItem {
+  id: string;
+  gl_number: string;
+  gl_name: string;
+  account_type: string;
+  fs_head: string | null;
+  fs_note: string | null;
+  tb_mapping: string | null;
+}
+
 interface SheetResult {
   imported: number;
   updated: number;
@@ -252,6 +262,16 @@ export default function ChartOfAccountsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
 
+  // FS mappings tab
+  const [fsMappings, setFsMappings] = useState<FSMappingItem[]>([]);
+  const [fsMappingsLoading, setFsMappingsLoading] = useState(false);
+  const [fsTypeFilter, setFsTypeFilter] = useState("");
+  const [fsFsHeadFilter, setFsFsHeadFilter] = useState("");
+
+  // Account groups expand state
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedSubgroups, setExpandedSubgroups] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (!user) return;
     if (!user.is_tenant_admin && !user.is_super_admin) router.replace("/dashboard/business");
@@ -283,6 +303,30 @@ export default function ChartOfAccountsPage() {
   };
 
   useEffect(() => { load(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (coaTab !== "fs_mappings" || !accessToken) return;
+    setFsMappingsLoading(true);
+    apiFetch<FSMappingItem[]>("/api/config/coa/fs-mappings", { token: accessToken })
+      .then(data => setFsMappings(data))
+      .catch(() => setFsMappings([]))
+      .finally(() => setFsMappingsLoading(false));
+  }, [coaTab, accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleGroup = (name: string) => setExpandedGroups(prev => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
+
+  const toggleSubgroup = (group: string, sub: string) => {
+    const key = group + "||" + sub;
+    setExpandedSubgroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   const handleAdd = async () => {
     if (!accessToken || !addGL.trim() || !addName.trim()) return;
@@ -557,6 +601,36 @@ export default function ChartOfAccountsPage() {
 
   const isMultiSheetResult = uploadResult && "sheet1" in uploadResult;
 
+  const groupNodes = (() => {
+    const nodeMap = new Map<string, { count: number; subgroups: Map<string, { count: number; subSubgroups: Map<string, number> }> }>();
+    accounts.filter(a => a.is_active && a.gl_group).forEach(a => {
+      const g = a.gl_group!;
+      if (!nodeMap.has(g)) nodeMap.set(g, { count: 0, subgroups: new Map() });
+      const gNode = nodeMap.get(g)!;
+      gNode.count++;
+      if (a.gl_subgroup) {
+        if (!gNode.subgroups.has(a.gl_subgroup)) gNode.subgroups.set(a.gl_subgroup, { count: 0, subSubgroups: new Map() });
+        const sNode = gNode.subgroups.get(a.gl_subgroup)!;
+        sNode.count++;
+        if (a.gl_sub_subgroup) {
+          sNode.subSubgroups.set(a.gl_sub_subgroup, (sNode.subSubgroups.get(a.gl_sub_subgroup) ?? 0) + 1);
+        }
+      }
+    });
+    return Array.from(nodeMap.entries()).map(([name, gNode]) => ({
+      name,
+      count: gNode.count,
+      subgroups: Array.from(gNode.subgroups.entries()).map(([subName, sNode]) => ({
+        name: subName,
+        count: sNode.count,
+        subSubgroups: Array.from(sNode.subSubgroups.entries()).map(([ssName, count]) => ({
+          name: ssName,
+          count,
+        })),
+      })),
+    }));
+  })();
+
   return (
     <div className="px-6 py-8 max-w-5xl">
       <button
@@ -654,10 +728,7 @@ export default function ChartOfAccountsPage() {
         <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm space-y-2">
           <p className="font-medium text-green-800">Upload complete</p>
           {isMultiSheetResult ? (
-            <>
-              <SheetResultDisplay result={(uploadResult as { sheet1: SheetResult; sheet2: SheetResult }).sheet1} label="Sheet 1 — GL Accounts" />
-              <SheetResultDisplay result={(uploadResult as { sheet1: SheetResult; sheet2: SheetResult }).sheet2} label="Sheet 2 — Dimensions" />
-            </>
+            <SheetResultDisplay result={(uploadResult as { sheet1: SheetResult; sheet2: SheetResult }).sheet1} label="Sheet 1 — GL Accounts" />
           ) : (
             <SheetResultDisplay result={uploadResult as SheetResult} label="GL Accounts" />
           )}
@@ -1228,7 +1299,7 @@ export default function ChartOfAccountsPage() {
                       <button
                         type="button"
                         onClick={async () => {
-                          const fresh = await apiFetch<GLAccount>(`/api/config/coa/${gl.id}`, { token: accessToken });
+                          const fresh = await apiFetch<GLAccount>(`/api/config/coa/${gl.id}`, { token: accessToken! });
                           setEditId(fresh.id);
                           setEditGL(fresh.gl_number);
                           setEditName(fresh.gl_name);
@@ -1281,105 +1352,180 @@ export default function ChartOfAccountsPage() {
 
       {coaTab === "groups" && (
         <div className="max-w-3xl">
-          <p className="text-sm text-gray-500 mb-4">
-            GL groups, subgroups, and sub-subgroups used in your Chart of Accounts.
-            These are defined when adding or editing GL accounts and appear here automatically.
-          </p>
-          {(() => {
-            const groups = new Map<string, Map<string, Set<string>>>();
-            accounts.filter(a => a.is_active && a.gl_group).forEach(a => {
-              if (!groups.has(a.gl_group!)) groups.set(a.gl_group!, new Map());
-              const subMap = groups.get(a.gl_group!)!;
-              if (a.gl_subgroup) {
-                if (!subMap.has(a.gl_subgroup)) subMap.set(a.gl_subgroup, new Set());
-                if (a.gl_sub_subgroup) subMap.get(a.gl_subgroup)!.add(a.gl_sub_subgroup);
-              }
-            });
+          <div className="flex items-center justify-between px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 mb-4">
+            <span className="text-sm text-gray-600">GL group hierarchy — auto-derived from your chart of accounts</span>
+            <span className="text-xs text-gray-400">
+              {accounts.filter(a => a.is_active && a.gl_group).length} accounts · {groupNodes.length} groups
+            </span>
+          </div>
 
-            if (groups.size === 0) {
-              return (
-                <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                  <i className="ti ti-folder text-gray-300" style={{ fontSize: 32 }} />
-                  <p className="text-sm text-gray-500 mt-2">No GL groups defined yet.</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Add GL group names when creating or editing GL accounts on the Accounts tab.
-                  </p>
-                </div>
-              );
-            }
+          {groupNodes.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+              <i className="ti ti-folder text-gray-300" style={{ fontSize: 32 }} />
+              <p className="text-sm text-gray-500 mt-2">No GL groups defined yet.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Add GL group names when creating or editing GL accounts on the Accounts tab.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-gray-200 rounded-lg overflow-hidden divide-y divide-gray-100">
+              {groupNodes.map(group => (
+                <div key={group.name}>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.name)}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 text-left"
+                  >
+                    <i
+                      className={`ti ${expandedGroups.has(group.name) ? "ti-chevron-down" : "ti-chevron-right"}`}
+                      style={{ fontSize: 14, color: "#6b7280" }}
+                    />
+                    <span className="text-sm font-medium text-gray-800">{group.name}</span>
+                    <span className="ml-auto text-xs text-gray-400">{group.count} accounts</span>
+                  </button>
 
-            return (
-              <div className="space-y-3">
-                {Array.from(groups.entries()).map(([group, subMap]) => (
-                  <div key={group} className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
-                      <p className="text-sm font-medium text-gray-800">{group}</p>
-                      <p className="text-xs text-gray-400">
-                        {accounts.filter(a => a.gl_group === group && a.is_active).length} GL accounts
-                      </p>
+                  {expandedGroups.has(group.name) && group.subgroups.length > 0 && (
+                    <div className="ml-4">
+                      {group.subgroups.map(sub => (
+                        <div key={sub.name} className="ml-2 border-l border-gray-200 pl-3">
+                          <button
+                            type="button"
+                            onClick={() => toggleSubgroup(group.name, sub.name)}
+                            className="w-full flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50 text-left"
+                          >
+                            <i
+                              className={`ti ${expandedSubgroups.has(group.name + "||" + sub.name) ? "ti-chevron-down" : "ti-chevron-right"}`}
+                              style={{ fontSize: 13, color: "#9ca3af" }}
+                            />
+                            <span className="text-sm text-gray-700">{sub.name}</span>
+                            <span className="ml-auto text-xs text-gray-400">{sub.count} accounts</span>
+                          </button>
+
+                          {expandedSubgroups.has(group.name + "||" + sub.name) && sub.subSubgroups.length > 0 && (
+                            <div className="ml-4 border-l border-gray-100 pl-3">
+                              {sub.subSubgroups.map(ssub => (
+                                <div key={ssub.name} className="flex items-center gap-2 py-1.5 px-2">
+                                  <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
+                                  <span className="text-xs text-gray-600">{ssub.name}</span>
+                                  <span className="ml-auto text-xs text-gray-400">{ssub.count}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    {subMap.size > 0 && (
-                      <div className="divide-y divide-gray-50">
-                        {Array.from(subMap.entries()).map(([sub, subSubs]) => (
-                          <div key={sub} className="px-4 py-2">
-                            <p className="text-xs font-medium text-gray-700">
-                              <span className="text-gray-300 mr-1.5">└</span>{sub}
-                            </p>
-                            {subSubs.size > 0 && Array.from(subSubs).map(ss => (
-                              <p key={ss} className="text-xs text-gray-500 pl-5 mt-0.5">
-                                <span className="text-gray-200 mr-1.5">└</span>{ss}
-                              </p>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {coaTab === "fs_mappings" && (
-        <div className="max-w-3xl">
+        <div className="max-w-4xl">
           <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg mb-4">
             <i className="ti ti-info-circle text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
             <p className="text-xs text-blue-700">
-              FS Head, FS Note, and TB Mapping for each GL account are set on the Accounts tab when editing a GL account.
-              Per-year versioning and audit lock workflow will be available in a future release (Period Management module).
+              FS Head, FS Note, and TB Mapping are set when editing a GL account. Click a GL number to jump to that account. Amber rows have no FS Head set.
             </p>
           </div>
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <table className="min-w-full text-xs">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Number</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Name</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Head</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Note</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">TB Mapping</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {accounts
-                  .filter(a => a.is_active && (a.fs_head || a.fs_note || a.tb_mapping))
-                  .map(gl => (
-                    <tr key={gl.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-2.5 font-mono text-gray-600">{gl.gl_number}</td>
-                      <td className="px-4 py-2.5 text-gray-800">{gl.gl_name}</td>
-                      <td className="px-4 py-2.5 text-gray-600">{gl.fs_head || "—"}</td>
-                      <td className="px-4 py-2.5 text-gray-600">{gl.fs_note || "—"}</td>
-                      <td className="px-4 py-2.5 text-gray-600">{gl.tb_mapping || "—"}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
+
+          <div className="flex gap-2 mb-4 flex-wrap items-center">
+            <select value={fsTypeFilter} onChange={e => setFsTypeFilter(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All account types</option>
+              <option value="PL">PL — Profit &amp; Loss</option>
+              <option value="BS">BS — Balance Sheet</option>
+            </select>
+            <select value={fsFsHeadFilter} onChange={e => setFsFsHeadFilter(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All FS Heads</option>
+              {[...new Set(fsMappings.filter(m => m.fs_head).map(m => m.fs_head!))].sort().map(h => (
+                <option key={h} value={h}>{h}</option>
+              ))}
+            </select>
+            {(fsTypeFilter || fsFsHeadFilter) && (
+              <button type="button" onClick={() => { setFsTypeFilter(""); setFsFsHeadFilter(""); }}
+                className="text-xs text-blue-600 hover:text-blue-800">
+                Clear filters
+              </button>
+            )}
           </div>
-          <p className="text-xs text-gray-400 mt-3">
-            Showing {accounts.filter(a => a.is_active && (a.fs_head || a.fs_note || a.tb_mapping)).length} of {accounts.filter(a => a.is_active).length} active GL accounts with FS mappings configured.
-          </p>
+
+          {fsMappingsLoading ? (
+            <div className="py-10 text-center text-sm text-gray-400">Loading…</div>
+          ) : (
+            <>
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Number</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Name</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Type</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Head</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Note</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">TB Mapping</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {(() => {
+                      const filtered = fsMappings.filter(m => {
+                        if (fsTypeFilter && normaliseAccountType(m.account_type) !== fsTypeFilter) return false;
+                        if (fsFsHeadFilter && m.fs_head !== fsFsHeadFilter) return false;
+                        return true;
+                      });
+                      if (filtered.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-8 text-center text-xs text-gray-400">
+                              {fsMappings.length === 0 ? "No GL accounts found." : "No accounts match the current filters."}
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return filtered.map(m => {
+                        const isMapped = !!m.fs_head;
+                        return (
+                          <tr key={m.id} className={isMapped ? "hover:bg-gray-50" : "bg-amber-50 hover:bg-amber-100"}>
+                            <td className="px-4 py-2.5 font-mono">
+                              <button type="button"
+                                onClick={() => { setCoaTab("accounts"); setFilterGL(m.gl_number); }}
+                                className="text-blue-600 hover:text-blue-800 hover:underline">
+                                {m.gl_number}
+                              </button>
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-800">{m.gl_name}</td>
+                            <td className="px-4 py-2.5 text-gray-500">{normaliseAccountType(m.account_type)}</td>
+                            <td className="px-4 py-2.5 text-gray-700">
+                              {m.fs_head ?? <span className="italic text-gray-400">not set</span>}
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-700">
+                              {m.fs_note ?? <span className="italic text-gray-400">not set</span>}
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-700">
+                              {m.tb_mapping ?? <span className="italic text-gray-400">not set</span>}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+              {fsMappings.length > 0 && (
+                <p className="text-xs text-gray-400 mt-3">
+                  Showing {fsMappings.filter(m => {
+                    if (fsTypeFilter && normaliseAccountType(m.account_type) !== fsTypeFilter) return false;
+                    if (fsFsHeadFilter && m.fs_head !== fsFsHeadFilter) return false;
+                    return true;
+                  }).length} of {fsMappings.length} accounts · {fsMappings.filter(m => !m.fs_head).length} accounts have no FS Head set
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
 
