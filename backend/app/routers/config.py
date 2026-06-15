@@ -1444,10 +1444,9 @@ async def download_coa_template(
     try:
         import openpyxl
         from openpyxl.comments import Comment
-        from openpyxl.styles import Alignment, Font, PatternFill, Protection
+        from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
         from openpyxl.worksheet.datavalidation import DataValidation
-        from openpyxl.worksheet.protection import SheetProtection
     except ImportError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1482,25 +1481,6 @@ async def download_coa_template(
             cell = ws_target.cell(row=row_num, column=i, value=v)
             if font:
                 cell.font = font
-
-    def _protect_sheet(ws_target) -> None:
-        """Lock header/example/instruction rows (1-3), unlock data rows (4+)."""
-        for row_num in range(1, 4):
-            for cell in ws_target[row_num]:
-                cell.protection = Protection(locked=True)
-        for row in ws_target.iter_rows(min_row=4):
-            for cell in row:
-                cell.protection = Protection(locked=False)
-        ws_target.protection = SheetProtection(
-            sheet=True,
-            password="ziva",
-            selectLockedCells=True,
-            selectUnlockedCells=True,
-            sort=True,
-            autoFilter=True,
-            insertRows=True,
-            deleteRows=True,
-        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 1 — GL Accounts
