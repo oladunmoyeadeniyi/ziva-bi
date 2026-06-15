@@ -10,7 +10,7 @@
  *   - Account type display updated to SOCI/SOFP
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
@@ -45,38 +45,28 @@ interface Dimension {
 
 type CoATab = "accounts" | "groups" | "fs_mappings";
 
-const SOCI_CLASSIFICATIONS = [
-  "Revenue — trading",
-  "Revenue — other income",
-  "Revenue — capital gain",
+const PL_CLASSIFICATIONS = [
+  "Revenue",
   "Cost of sales",
+  "Gross profit",
   "Operating expense",
+  "EBITDA",
+  "Depreciation & amortisation",
+  "EBIT",
   "Finance income",
   "Finance cost",
-  "Tax charge — current",
-  "Tax charge — deferred",
+  "Tax expense",
+  "Other comprehensive income",
 ];
 
-const SOFP_CLASSIFICATIONS = [
-  "Fixed asset — tangible",
-  "Fixed asset — intangible",
-  "Fixed asset — right of use",
-  "Investment",
-  "Inventory",
-  "Trade receivable",
-  "Other receivable",
-  "Prepayment",
-  "Cash and bank",
-  "Trade payable",
-  "Other payable",
-  "Accrual",
-  "Tax payable — current",
-  "Tax payable — deferred",
-  "Borrowing",
-  "Lease liability",
-  "Share capital",
+const BS_CLASSIFICATIONS = [
+  "Non-current asset",
+  "Current asset",
+  "Cash & cash equivalent",
+  "Non-current liability",
+  "Current liability",
+  "Equity",
   "Retained earnings",
-  "Other reserve",
 ];
 
 const COMMON_CURRENCIES = [
@@ -267,6 +257,10 @@ export default function ChartOfAccountsPage() {
   const [fsMappingsLoading, setFsMappingsLoading] = useState(false);
   const [fsTypeFilter, setFsTypeFilter] = useState("");
   const [fsFsHeadFilter, setFsFsHeadFilter] = useState("");
+  const [filterFsNote, setFilterFsNote] = useState("");
+  const [filterTbMapping, setFilterTbMapping] = useState("");
+  const [fsSortCol, setFsSortCol] = useState<string>("gl_number");
+  const [fsSortDir, setFsSortDir] = useState<"asc" | "desc">("asc");
 
   // Account groups expand state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -336,6 +330,11 @@ export default function ChartOfAccountsPage() {
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
+  };
+
+  const toggleFsSort = (col: string) => {
+    if (fsSortCol === col) setFsSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setFsSortCol(col); setFsSortDir("asc"); }
   };
 
   const handleAdd = async () => {
@@ -600,6 +599,41 @@ export default function ChartOfAccountsPage() {
       return a.gl_number.localeCompare(b.gl_number);
     });
 
+  const groupOptions = useMemo(() => {
+    const groups = new Set<string>();
+    accounts.forEach(a => { if (a.gl_group) groups.add(a.gl_group); });
+    return Array.from(groups).sort();
+  }, [accounts]);
+
+  const fsNoteOptions = useMemo(() => {
+    const vals = new Set<string>();
+    fsMappings.forEach(a => { if (a.fs_note) vals.add(a.fs_note); });
+    return Array.from(vals).sort();
+  }, [fsMappings]);
+
+  const tbMappingOptions = useMemo(() => {
+    const vals = new Set<string>();
+    fsMappings.forEach(a => { if (a.tb_mapping) vals.add(a.tb_mapping); });
+    return Array.from(vals).sort();
+  }, [fsMappings]);
+
+  const filteredFsMappings = fsMappings.filter(a => {
+    if (fsTypeFilter && normaliseAccountType(a.account_type) !== fsTypeFilter) return false;
+    if (fsFsHeadFilter && a.fs_head !== fsFsHeadFilter) return false;
+    if (filterFsNote && a.fs_note !== filterFsNote) return false;
+    if (filterTbMapping && a.tb_mapping !== filterTbMapping) return false;
+    return true;
+  });
+
+  const sortedFsMappings = [...filteredFsMappings].sort((a, b) => {
+    const aVal = (a as unknown as Record<string, string>)[fsSortCol] ?? "";
+    const bVal = (b as unknown as Record<string, string>)[fsSortCol] ?? "";
+    if (!a.fs_head && b.fs_head) return 1;
+    if (a.fs_head && !b.fs_head) return -1;
+    const cmp = aVal.localeCompare(bVal);
+    return fsSortDir === "asc" ? cmp : -cmp;
+  });
+
   if (isLoading) {
     return (
       <div className="px-6 py-8 space-y-3">
@@ -772,10 +806,13 @@ export default function ChartOfAccountsPage() {
             onChange={e => setFilterName(e.target.value)}
             placeholder="GL name…"
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <input type="text" value={filterGroup}
-            onChange={e => setFilterGroup(e.target.value)}
-            placeholder="Group…"
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <select value={filterGroup} onChange={e => setFilterGroup(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">All groups</option>
+            {groupOptions.map(g => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </select>
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">All types</option>
@@ -927,7 +964,12 @@ export default function ChartOfAccountsPage() {
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
-                <select value={addType} onChange={(e) => setAddType(e.target.value as "PL" | "BS")}
+                <select value={addType} onChange={(e) => {
+                  const newType = e.target.value as "PL" | "BS";
+                  setAddType(newType);
+                  const validOptions = newType === "PL" ? PL_CLASSIFICATIONS : BS_CLASSIFICATIONS;
+                  if (addClassification && !validOptions.includes(addClassification)) setAddClassification("");
+                }}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="PL">PL — Profit &amp; Loss (SOCI)</option>
                   <option value="BS">BS — Balance Sheet (SOFP)</option>
@@ -981,12 +1023,9 @@ export default function ChartOfAccountsPage() {
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">— Select classification —</option>
-                  <optgroup label="Income statement (SOCI)">
-                    {SOCI_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </optgroup>
-                  <optgroup label="Balance sheet (SOFP)">
-                    {SOFP_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </optgroup>
+                  {(addType === "PL" ? PL_CLASSIFICATIONS : addType === "BS" ? BS_CLASSIFICATIONS : [...PL_CLASSIFICATIONS, ...BS_CLASSIFICATIONS]).map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   Used by all modules to determine how this GL is treated automatically.
@@ -1074,7 +1113,12 @@ export default function ChartOfAccountsPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
-                <select value={editType} onChange={(e) => setEditType(e.target.value as "PL" | "BS")}
+                <select value={editType} onChange={(e) => {
+                  const newType = e.target.value as "PL" | "BS";
+                  setEditType(newType);
+                  const validOptions = newType === "PL" ? PL_CLASSIFICATIONS : BS_CLASSIFICATIONS;
+                  if (editClassification && !validOptions.includes(editClassification)) setEditClassification("");
+                }}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="PL">PL — Profit &amp; Loss (SOCI)</option>
                   <option value="BS">BS — Balance Sheet (SOFP)</option>
@@ -1140,12 +1184,9 @@ export default function ChartOfAccountsPage() {
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">— Select classification —</option>
-                  <optgroup label="Income statement (SOCI)">
-                    {SOCI_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </optgroup>
-                  <optgroup label="Balance sheet (SOFP)">
-                    {SOFP_CLASSIFICATIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </optgroup>
+                  {(editType === "PL" ? PL_CLASSIFICATIONS : editType === "BS" ? BS_CLASSIFICATIONS : [...PL_CLASSIFICATIONS, ...BS_CLASSIFICATIONS]).map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   Used by all modules to determine how this GL is treated automatically.
@@ -1529,8 +1570,18 @@ export default function ChartOfAccountsPage() {
                 <option key={h} value={h}>{h}</option>
               ))}
             </select>
-            {(fsTypeFilter || fsFsHeadFilter) && (
-              <button type="button" onClick={() => { setFsTypeFilter(""); setFsFsHeadFilter(""); }}
+            <select value={filterFsNote} onChange={e => setFilterFsNote(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All FS Notes</option>
+              {fsNoteOptions.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <select value={filterTbMapping} onChange={e => setFilterTbMapping(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All TB Mappings</option>
+              {tbMappingOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            {(fsTypeFilter || fsFsHeadFilter || filterFsNote || filterTbMapping) && (
+              <button type="button" onClick={() => { setFsTypeFilter(""); setFsFsHeadFilter(""); setFilterFsNote(""); setFilterTbMapping(""); }}
                 className="text-xs text-blue-600 hover:text-blue-800">
                 Clear filters
               </button>
@@ -1545,66 +1596,64 @@ export default function ChartOfAccountsPage() {
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Number</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">GL Name</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">Type</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Head</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">FS Note</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-gray-500 uppercase tracking-wide text-[10px]">TB Mapping</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide text-[10px]">Type</th>
+                      {[
+                        { key: "gl_number", label: "GL Number" },
+                        { key: "gl_name", label: "GL Name" },
+                        { key: "fs_head", label: "FS Head" },
+                        { key: "fs_note", label: "FS Note" },
+                        { key: "tb_mapping", label: "TB Mapping" },
+                      ].map(col => (
+                        <th key={col.key}
+                          onClick={() => toggleFsSort(col.key)}
+                          className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:text-gray-700 select-none">
+                          {col.label}
+                          {fsSortCol === col.key && (
+                            <i className={`ti ${fsSortDir === "asc" ? "ti-sort-ascending" : "ti-sort-descending"} ml-1`}
+                               style={{ fontSize: 11 }} />
+                          )}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {(() => {
-                      const filtered = fsMappings.filter(m => {
-                        if (fsTypeFilter && normaliseAccountType(m.account_type) !== fsTypeFilter) return false;
-                        if (fsFsHeadFilter && m.fs_head !== fsFsHeadFilter) return false;
-                        return true;
-                      });
-                      if (filtered.length === 0) {
-                        return (
-                          <tr>
-                            <td colSpan={6} className="px-4 py-8 text-center text-xs text-gray-400">
-                              {fsMappings.length === 0 ? "No GL accounts found." : "No accounts match the current filters."}
-                            </td>
-                          </tr>
-                        );
-                      }
-                      return filtered.map(m => {
-                        const isMapped = !!m.fs_head;
-                        return (
-                          <tr key={m.id} className={isMapped ? "hover:bg-gray-50" : "bg-amber-50 hover:bg-amber-100"}>
-                            <td className="px-4 py-2.5 font-mono">
-                              <button type="button"
-                                onClick={() => { setCoaTab("accounts"); setFilterGL(m.gl_number); }}
-                                className="text-blue-600 hover:text-blue-800 hover:underline">
-                                {m.gl_number}
-                              </button>
-                            </td>
-                            <td className="px-4 py-2.5 text-gray-800">{m.gl_name}</td>
-                            <td className="px-4 py-2.5 text-gray-500">{normaliseAccountType(m.account_type)}</td>
-                            <td className="px-4 py-2.5 text-gray-700">
-                              {m.fs_head ?? <span className="italic text-gray-400">not set</span>}
-                            </td>
-                            <td className="px-4 py-2.5 text-gray-700">
-                              {m.fs_note ?? <span className="italic text-gray-400">not set</span>}
-                            </td>
-                            <td className="px-4 py-2.5 text-gray-700">
-                              {m.tb_mapping ?? <span className="italic text-gray-400">not set</span>}
-                            </td>
-                          </tr>
-                        );
-                      });
-                    })()}
+                    {sortedFsMappings.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-xs text-gray-400">
+                          {fsMappings.length === 0 ? "No GL accounts found." : "No accounts match the current filters."}
+                        </td>
+                      </tr>
+                    ) : sortedFsMappings.map(m => {
+                      const isMapped = !!m.fs_head;
+                      return (
+                        <tr key={m.id} className={isMapped ? "hover:bg-gray-50" : "bg-amber-50 hover:bg-amber-100"}>
+                          <td className="px-4 py-2.5 text-gray-500">{normaliseAccountType(m.account_type)}</td>
+                          <td className="px-4 py-2.5 font-mono">
+                            <button type="button"
+                              onClick={() => { setCoaTab("accounts"); setFilterGL(m.gl_number); }}
+                              className="text-blue-600 hover:text-blue-800 hover:underline">
+                              {m.gl_number}
+                            </button>
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-800">{m.gl_name}</td>
+                          <td className="px-4 py-2.5 text-gray-700">
+                            {m.fs_head ?? <span className="italic text-gray-400">not set</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-700">
+                            {m.fs_note ?? <span className="italic text-gray-400">not set</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-700">
+                            {m.tb_mapping ?? <span className="italic text-gray-400">not set</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
               {fsMappings.length > 0 && (
                 <p className="text-xs text-gray-400 mt-3">
-                  Showing {fsMappings.filter(m => {
-                    if (fsTypeFilter && normaliseAccountType(m.account_type) !== fsTypeFilter) return false;
-                    if (fsFsHeadFilter && m.fs_head !== fsFsHeadFilter) return false;
-                    return true;
-                  }).length} of {fsMappings.length} accounts · {fsMappings.filter(m => !m.fs_head).length} accounts have no FS Head set
+                  Showing {sortedFsMappings.length} of {fsMappings.length} accounts · {fsMappings.filter(m => !m.fs_head).length} accounts have no FS Head set
                 </p>
               )}
             </>
