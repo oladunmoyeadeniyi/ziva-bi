@@ -1796,6 +1796,116 @@ async def get_fs_mappings(
     ]
 
 
+@router.get("/coa/dimension-matrix")
+async def get_coa_dimension_matrix(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return all GL accounts with their dimension requirements as a matrix.
+
+    Used by the CoA Dimensions tab to render a GL × dimension grid where
+    each cell shows Required / Optional / N/A. Missing rows default to
+    'optional'.
+    """
+    tenant_id = _require_tenant(current_user)
+
+    dims_result = await db.execute(
+        select(TenantDimension)
+        .where(TenantDimension.tenant_id == tenant_id,
+               TenantDimension.is_active == True)  # noqa: E712
+        .order_by(TenantDimension.sort_order)
+    )
+    dimensions = dims_result.scalars().all()
+
+    gl_result = await db.execute(
+        select(ChartOfAccount)
+        .where(ChartOfAccount.tenant_id == tenant_id)
+        .order_by(ChartOfAccount.gl_number)
+    )
+    accounts = gl_result.scalars().all()
+
+    req_result = await db.execute(
+        select(GLDimensionRequirement)
+        .where(GLDimensionRequirement.tenant_id == tenant_id)
+    )
+    requirements = req_result.scalars().all()
+
+    req_map: dict[str, dict[str, str]] = {}
+    for r in requirements:
+        gl_key = str(r.gl_id)
+        if gl_key not in req_map:
+            req_map[gl_key] = {}
+        req_map[gl_key][str(r.dimension_id)] = r.requirement
+
+    return {
+        "dimensions": [
+            {"id": str(d.id), "name": d.display_name or d.name}
+            for d in dimensions
+        ],
+        "accounts": [
+            {
+                "id": str(a.id),
+                "gl_number": a.gl_number,
+                "gl_name": a.gl_name,
+                "account_type": a.account_type,
+                "gl_group": a.gl_group,
+                "is_active": a.is_active,
+                "requirements": {
+                    str(d.id): req_map.get(str(a.id), {}).get(str(d.id), "optional")
+                    for d in dimensions
+                },
+            }
+            for a in accounts
+        ],
+    }
+
+
+@router.patch("/coa/dimension-requirements/bulk")
+async def bulk_update_dimension_requirements(
+    data: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Bulk-set a dimension requirement for multiple GL accounts at once.
+
+    Payload: { gl_ids: [uuid, ...], dimension_id: uuid, requirement: required|optional|na }
+    Upserts rows in gl_dimension_requirements. Admin only.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    gl_ids = [uuid.UUID(i) for i in data["gl_ids"]]
+    dimension_id = uuid.UUID(data["dimension_id"])
+    requirement = data["requirement"]
+
+    if requirement not in ("required", "optional", "na"):
+        raise HTTPException(status_code=400, detail="Invalid requirement value.")
+
+    for gl_id in gl_ids:
+        req_result = await db.execute(
+            select(GLDimensionRequirement).where(
+                GLDimensionRequirement.gl_id == gl_id,
+                GLDimensionRequirement.dimension_id == dimension_id,
+                GLDimensionRequirement.tenant_id == tenant_id,
+            )
+        )
+        req_row = req_result.scalar_one_or_none()
+        if req_row:
+            req_row.requirement = requirement
+        else:
+            db.add(GLDimensionRequirement(
+                tenant_id=tenant_id,
+                gl_id=gl_id,
+                dimension_id=dimension_id,
+                requirement=requirement,
+            ))
+
+    await db.commit()
+    return {"updated": len(gl_ids)}
+
+
 @router.get("/coa/{gl_id}", response_model=CoAResponse)
 async def get_coa(
     gl_id: uuid.UUID,
