@@ -1653,15 +1653,22 @@ async def download_coa_template(
     for col_num in range(2, len(all_cols) + 1):
         ws1.cell(row=4, column=col_num).fill = marker_fill
 
-    # Lock rows 1-4 (header, example, instructions, marker), unlock rows 5+
+    # Lock rows 1-4 (header, example, instructions, marker)
+    for row_num in range(1, 5):
+        for col_num in range(1, len(all_cols) + 2):
+            ws1.cell(row=row_num, column=col_num).protection = Protection(locked=True)
+
+    # Anchor unlock: write locked=False to row 5 for all columns.
+    # This forces openpyxl to register the unlocked xf style in the workbook.
+    # Excel then applies this style to all subsequent empty cells in the column.
+    for col_num in range(1, len(all_cols) + 2):
+        ws1.cell(row=5, column=col_num).protection = Protection(locked=False)
+
+    # Enable sheet protection
     ws1.protection.sheet = True
     ws1.protection.password = "ziva"
     ws1.protection.selectLockedCells = False
     ws1.protection.selectUnlockedCells = False
-
-    for row_num in range(5, 10001):
-        for col_num in range(1, len(all_cols) + 1):
-            ws1.cell(row=row_num, column=col_num).protection = Protection(locked=False)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 2 — Instructions
