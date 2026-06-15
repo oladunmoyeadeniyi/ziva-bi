@@ -280,6 +280,13 @@ function DimensionsPage() {
     }
   }, [user, router]);
 
+  const updateUrl = (tab: string, dimId?: string) => {
+    const params = new URLSearchParams();
+    params.set("tab", tab);
+    if (dimId) params.set("dim", dimId);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
+
   const loadDimValues = useCallback(async (dimId: string) => {
     if (!accessToken) return;
     try {
@@ -995,7 +1002,7 @@ function DimensionsPage() {
       {/* Tabs */}
       <div className="flex gap-0 border-b border-gray-200 mb-5">
         {(["setup", "values"] as Tab[]).map(t => (
-          <button key={t} type="button" onClick={() => setActiveTab(t)}
+          <button key={t} type="button" onClick={() => { setActiveTab(t); updateUrl(t, t === "values" ? selectedDimForValues : undefined); }}
             className={`px-4 py-2 text-sm border-b-2 transition-colors ${
               activeTab === t
                 ? "border-blue-600 text-gray-900 font-medium"
@@ -1480,7 +1487,7 @@ function DimensionsPage() {
                               <i className="ti ti-edit" style={{ fontSize: 12 }} /> Edit
                             </button>
                             <button type="button"
-                              onClick={() => { setActiveTab("values"); setSelectedDimForValues(dim.id); }}
+                              onClick={() => { setActiveTab("values"); setSelectedDimForValues(dim.id); updateUrl("values", dim.id); }}
                               className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
                               <i className="ti ti-list" style={{ fontSize: 12 }} /> View values
                             </button>
@@ -1611,6 +1618,7 @@ function DimensionsPage() {
                 setSelectedValueIds(new Set());
                 setActiveGroupCollapsed(false);
                 setInactiveGroupCollapsed(true);
+                updateUrl("values", newDimId || undefined);
                 if (newDimId) {
                   const newDim = activeDims.find(d => d.id === newDimId);
                   const newSources = newDim?.dimension_sources ?? [];
