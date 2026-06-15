@@ -86,6 +86,8 @@ const toggleSort = (
   }
 };
 
+const REQ_ORDER: Record<string, number> = { required: 0, optional: 1, na: 2 };
+
 const applySort = <T extends Record<string, unknown>>(
   list: T[],
   sort: SortEntry[]
@@ -800,9 +802,26 @@ export default function ChartOfAccountsPage() {
     })
   , [dimAfterGroup, dimFilterReq]);
 
-  const dimSorted = useMemo(() =>
-    applySort(dimFiltered as unknown as Record<string, unknown>[], dimSort) as unknown as DimMatrixAccount[]
-  , [dimFiltered, dimSort]);
+  const dimSorted = useMemo(() => {
+    if (!dimSort.length) return dimFiltered;
+    return [...dimFiltered].sort((a, b) => {
+      for (const { col, dir } of dimSort) {
+        let cmp: number;
+        if (col.startsWith("req_")) {
+          const dimId = col.slice(4);
+          const aOrd = REQ_ORDER[a.requirements[dimId] ?? "optional"] ?? 1;
+          const bOrd = REQ_ORDER[b.requirements[dimId] ?? "optional"] ?? 1;
+          cmp = aOrd - bOrd;
+        } else {
+          const aVal = String((a as unknown as Record<string, unknown>)[col] ?? "");
+          const bVal = String((b as unknown as Record<string, unknown>)[col] ?? "");
+          cmp = aVal.localeCompare(bVal, undefined, { numeric: true });
+        }
+        if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
+      }
+      return 0;
+    });
+  }, [dimFiltered, dimSort]);
 
   const dimStats = useMemo(() => {
     const accs = dimMatrix?.accounts ?? [];
