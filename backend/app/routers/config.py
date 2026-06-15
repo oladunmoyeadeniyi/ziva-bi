@@ -1653,22 +1653,14 @@ async def download_coa_template(
     for col_num in range(2, len(all_cols) + 1):
         ws1.cell(row=4, column=col_num).fill = marker_fill
 
-    # Lock rows 1-4 (header, example, instructions, marker)
+    # Amber fill on rows 1-4 to visually indicate they are reference rows
+    ref_fill = PatternFill("solid", fgColor="FFF3CD")
+
     for row_num in range(1, 5):
         for col_num in range(1, len(all_cols) + 2):
-            ws1.cell(row=row_num, column=col_num).protection = Protection(locked=True)
-
-    # Anchor unlock: write locked=False to row 5 for all columns.
-    # This forces openpyxl to register the unlocked xf style in the workbook.
-    # Excel then applies this style to all subsequent empty cells in the column.
-    for col_num in range(1, len(all_cols) + 2):
-        ws1.cell(row=5, column=col_num).protection = Protection(locked=False)
-
-    # Enable sheet protection
-    ws1.protection.sheet = True
-    ws1.protection.password = "ziva"
-    ws1.protection.selectLockedCells = False
-    ws1.protection.selectUnlockedCells = False
+            cell = ws1.cell(row=row_num, column=col_num)
+            if cell.fill.fgColor.rgb == "00000000" or not cell.fill.patternType:
+                cell.fill = ref_fill  # only apply if no existing fill
 
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 2 — Instructions
@@ -1967,6 +1959,8 @@ async def upload_coa(
                 data_rows = all_rows[1:]
             else:
                 data_rows = all_rows[1:]
+
+            print(f"_load_sheet: total rows={len(all_rows)}, data rows={len(data_rows)}, first data row gl={data_rows[0][0] if data_rows else 'EMPTY'}")
 
             return [h.strip() for h in headers_row], data_rows
 
