@@ -271,6 +271,7 @@ export default function ChartOfAccountsPage() {
   // Account groups expand state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedSubgroups, setExpandedSubgroups] = useState<Set<string>>(new Set());
+  const [expandedSubSubgroups, setExpandedSubSubgroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user) return;
@@ -322,6 +323,15 @@ export default function ChartOfAccountsPage() {
   const toggleSubgroup = (group: string, sub: string) => {
     const key = group + "||" + sub;
     setExpandedSubgroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleSubSubgroup = (group: string, sub: string, ssub: string) => {
+    const key = group + "||" + sub + "||" + ssub;
+    setExpandedSubSubgroups(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
@@ -612,7 +622,7 @@ export default function ChartOfAccountsPage() {
         if (!gNode.subgroups.has(a.gl_subgroup)) gNode.subgroups.set(a.gl_subgroup, { count: 0, subSubgroups: new Map() });
         const sNode = gNode.subgroups.get(a.gl_subgroup)!;
         sNode.count++;
-        if (a.gl_sub_subgroup) {
+        if (a.gl_sub_subgroup && a.gl_sub_subgroup !== a.gl_subgroup) {
           sNode.subSubgroups.set(a.gl_sub_subgroup, (sNode.subSubgroups.get(a.gl_sub_subgroup) ?? 0) + 1);
         }
       }
@@ -1404,19 +1414,70 @@ export default function ChartOfAccountsPage() {
                           {expandedSubgroups.has(group.name + "||" + sub.name) && (
                             <div className="ml-4 border-l border-gray-100 pl-3">
                               {sub.subSubgroups.length > 0
-                                ? sub.subSubgroups.map(ssub => (
-                                    <div key={ssub.name} className="flex items-center gap-2 py-1.5 px-2">
-                                      <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
-                                      <span className="text-xs text-gray-600">{ssub.name}</span>
-                                      <span className="ml-auto text-xs text-gray-400">{ssub.count}</span>
-                                    </div>
-                                  ))
-                                : accounts
-                                    .filter(a => a.is_active && a.gl_group === group.name && a.gl_subgroup === sub.name)
+                                ? sub.subSubgroups.map(ssub => {
+                                    const ssKey = group.name + "||" + sub.name + "||" + ssub.name;
+                                    return (
+                                      <div key={ssub.name}>
+                                        {/* Level 3 — GL Sub-subgroup */}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleSubSubgroup(group.name, sub.name, ssub.name)}
+                                          className="w-full flex items-center gap-2 py-1.5 px-2 hover:bg-gray-50 text-left"
+                                        >
+                                          <i
+                                            className={`ti ${expandedSubSubgroups.has(ssKey) ? "ti-chevron-down" : "ti-chevron-right"}`}
+                                            style={{ fontSize: 12, color: "#d1d5db" }}
+                                          />
+                                          <span className="text-xs text-gray-600">{ssub.name}</span>
+                                          <span className="ml-auto text-xs text-gray-400">{ssub.count}</span>
+                                        </button>
+                                        {/* Level 4 — Individual GL accounts */}
+                                        {expandedSubSubgroups.has(ssKey) && (
+                                          <div className="ml-4 border-l border-gray-50 pl-3">
+                                            {accounts
+                                              .filter(a =>
+                                                a.is_active &&
+                                                a.gl_group === group.name &&
+                                                a.gl_subgroup === sub.name &&
+                                                a.gl_sub_subgroup === ssub.name
+                                              )
+                                              .map(a => (
+                                                <div key={a.id} className="flex items-center gap-2 py-1 px-2">
+                                                  <i className="ti ti-minus" style={{ fontSize: 11, color: "#e5e7eb" }} />
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => { setCoaTab("accounts"); setFilterGL(a.gl_number); }}
+                                                    className="font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                                  >
+                                                    {a.gl_number}
+                                                  </button>
+                                                  <span className="text-xs text-gray-500">{a.gl_name}</span>
+                                                </div>
+                                              ))
+                                            }
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })
+                                : /* Fallback — no valid sub-subgroups: show leaf GL accounts directly */
+                                  accounts
+                                    .filter(a =>
+                                      a.is_active &&
+                                      a.gl_group === group.name &&
+                                      a.gl_subgroup === sub.name &&
+                                      (!a.gl_sub_subgroup || a.gl_sub_subgroup === sub.name)
+                                    )
                                     .map(a => (
                                       <div key={a.id} className="flex items-center gap-2 py-1.5 px-2">
                                         <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
-                                        <span className="font-mono text-xs text-gray-500">{a.gl_number}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => { setCoaTab("accounts"); setFilterGL(a.gl_number); }}
+                                          className="font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                        >
+                                          {a.gl_number}
+                                        </button>
                                         <span className="text-xs text-gray-600 ml-1">{a.gl_name}</span>
                                       </div>
                                     ))
