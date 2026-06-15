@@ -1765,6 +1765,26 @@ async def list_coa(
     return [CoAListItem.from_orm(g) for g in result.scalars().all()]
 
 
+@router.get("/coa/{gl_id}", response_model=CoAResponse)
+async def get_coa(
+    gl_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CoAResponse:
+    """Return a single GL account by ID."""
+    tenant_id = _require_tenant(current_user)
+    result = await db.execute(
+        select(ChartOfAccount).where(
+            ChartOfAccount.id == gl_id,
+            ChartOfAccount.tenant_id == tenant_id,
+        )
+    )
+    gl = result.scalar_one_or_none()
+    if not gl:
+        raise HTTPException(status_code=404, detail="GL account not found.")
+    return CoAResponse.from_orm(gl)
+
+
 @router.post("/coa", response_model=CoAListItem, status_code=status.HTTP_201_CREATED)
 async def create_coa(
     data: CoACreate,
@@ -1915,32 +1935,7 @@ async def upload_coa(
                 return [], []
             headers_row = all_rows[0]
 
-            def _is_real_data_row(row: list[str]) -> bool:
-                """A real GL data row has a short non-empty first cell (GL number)
-                with no spaces and no long instruction-like text."""
-                first = (row[0] or "").strip()
-                return (
-                    bool(first)
-                    and len(first) <= 20
-                    and not any(c in first for c in [" ", "→", "Enter", "Unique"])
-                )
-
-            # Try to detect where real data starts
-            # Standard template: row2=example, row3=instructions, row4=marker, data from row5
-            # User-modified: may have data starting earlier
-            if len(all_rows) >= 5 and not _is_real_data_row(all_rows[1]):
-                # Rows 2-4 look like example/instructions/marker — data starts at row 5
-                data_rows = all_rows[4:]
-            elif len(all_rows) >= 4 and not _is_real_data_row(all_rows[1]):
-                # Rows 2-3 look like example/instructions — data starts at row 4
-                data_rows = all_rows[3:]
-            elif len(all_rows) >= 2 and _is_real_data_row(all_rows[1]):
-                # Row 2 looks like real data — start from row 2
-                data_rows = all_rows[1:]
-            else:
-                data_rows = all_rows[1:]
-
-            print(f"_load_sheet: total rows={len(all_rows)}, data rows={len(data_rows)}, first data row gl={data_rows[0][0] if data_rows else 'EMPTY'}")
+            data_rows = all_rows[4:]
 
             return [h.strip() for h in headers_row], data_rows
 

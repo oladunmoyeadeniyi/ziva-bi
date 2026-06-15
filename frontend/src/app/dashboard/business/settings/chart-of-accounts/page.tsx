@@ -1227,24 +1227,25 @@ export default function ChartOfAccountsPage() {
                     <div className="flex items-center gap-2 justify-end">
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditId(gl.id);
-                          setEditGL(gl.gl_number);
-                          setEditName(gl.gl_name);
-                          setEditType(normaliseAccountType(gl.account_type) as "PL" | "BS");
-                          setEditActive(gl.is_active);
-                          setEditGroup(gl.gl_group ?? "");
-                          setEditSubgroup(gl.gl_subgroup ?? "");
-                          setEditSubSubgroup(gl.gl_sub_subgroup ?? "");
-                          setEditFsHead(gl.fs_head ?? "");
-                          setEditFsNote(gl.fs_note ?? "");
-                          setEditTbMapping(gl.tb_mapping ?? "");
-                          setEditGroupAccNum(gl.group_account_number ?? "");
-                          setEditGroupAccName(gl.group_account_name ?? "");
-                          setEditClassification(gl.account_classification ?? "");
-                          setEditIsForeignCurrency(gl.is_foreign_currency ?? false);
-                          setEditForeignCurrencyCode(gl.foreign_currency_code ?? "");
-                          setEditRevalueAtPeriodEnd(gl.revalue_at_period_end ?? false);
+                        onClick={async () => {
+                          const fresh = await apiFetch<GLAccount>(`/api/config/coa/${gl.id}`, { token: accessToken });
+                          setEditId(fresh.id);
+                          setEditGL(fresh.gl_number);
+                          setEditName(fresh.gl_name);
+                          setEditType(normaliseAccountType(fresh.account_type) as "PL" | "BS");
+                          setEditActive(fresh.is_active);
+                          setEditGroup(fresh.gl_group ?? "");
+                          setEditSubgroup(fresh.gl_subgroup ?? "");
+                          setEditSubSubgroup(fresh.gl_sub_subgroup ?? "");
+                          setEditFsHead(fresh.fs_head ?? "");
+                          setEditFsNote(fresh.fs_note ?? "");
+                          setEditTbMapping(fresh.tb_mapping ?? "");
+                          setEditGroupAccNum(fresh.group_account_number ?? "");
+                          setEditGroupAccName(fresh.group_account_name ?? "");
+                          setEditClassification(fresh.account_classification ?? "");
+                          setEditIsForeignCurrency(fresh.is_foreign_currency ?? false);
+                          setEditForeignCurrencyCode(fresh.foreign_currency_code ?? "");
+                          setEditRevalueAtPeriodEnd(fresh.revalue_at_period_end ?? false);
                         }}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                       >
