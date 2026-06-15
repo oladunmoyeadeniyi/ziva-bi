@@ -1641,8 +1641,27 @@ async def download_coa_template(
         ws1.add_data_validation(dv_dim)
         dv_dim.sqref = f"{col_letter}4:{col_letter}10000"
 
-    # Protect Sheet 1 — lock rows 1-3, unlock data rows
-    _protect_sheet(ws1)
+    # Marker row (row 4) — visual cue showing where data entry starts
+    marker_font = Font(name="Arial", bold=True, size=10, color="1E3A5F", italic=True)
+    marker_fill = PatternFill("solid", fgColor="E8F0FE")
+
+    marker_cell = ws1.cell(row=4, column=1, value="→ Enter your GL accounts from row 5 onwards")
+    marker_cell.font = marker_font
+    marker_cell.fill = marker_fill
+    marker_cell.alignment = Alignment(horizontal="left")
+
+    for col_num in range(2, len(all_cols) + 1):
+        ws1.cell(row=4, column=col_num).fill = marker_fill
+
+    # Lock rows 1-4 (header, example, instructions, marker), unlock rows 5+
+    ws1.protection.sheet = True
+    ws1.protection.password = "ziva"
+    ws1.protection.selectLockedCells = False
+    ws1.protection.selectUnlockedCells = False
+
+    for row_num in range(5, 10001):
+        for col_num in range(1, len(all_cols) + 1):
+            ws1.cell(row=row_num, column=col_num).protection = Protection(locked=False)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 2 — Instructions
@@ -1917,24 +1936,28 @@ async def upload_coa(
                 return [], []
             headers_row = all_rows[0]
 
-            # Detect where real data starts.
-            # The Ziva template has row 2 = example, row 3 = instructions.
-            # But user-supplied files may have real data from row 2.
-            # Heuristic: if row 2's first cell looks like a real GL number
-            # (numeric or short alphanumeric, not a long instruction string),
-            # treat row 2 as real data. Otherwise skip rows 2 and 3.
+            def _is_real_data_row(row: list[str]) -> bool:
+                """A real GL data row has a short non-empty first cell (GL number)
+                with no spaces and no long instruction-like text."""
+                first = (row[0] or "").strip()
+                return (
+                    bool(first)
+                    and len(first) <= 20
+                    and not any(c in first for c in [" ", "→", "Enter", "Unique"])
+                )
 
-            def _looks_like_data_row(row: list[str]) -> bool:
-                first = row[0].strip() if row else ""
-                # Real GL numbers are typically short (<=20 chars) and don't contain spaces or long phrases
-                return bool(first) and len(first) <= 20 and " " not in first[:10]
-
-            if len(all_rows) > 1 and _looks_like_data_row(all_rows[1]):
-                # Row 2 looks like real data — use all rows from row 2
-                data_rows = all_rows[1:]
-            elif len(all_rows) > 3:
-                # Row 2 looks like an example, row 3 like instructions — skip both
+            # Try to detect where real data starts
+            # Standard template: row2=example, row3=instructions, row4=marker, data from row5
+            # User-modified: may have data starting earlier
+            if len(all_rows) >= 5 and not _is_real_data_row(all_rows[1]):
+                # Rows 2-4 look like example/instructions/marker — data starts at row 5
+                data_rows = all_rows[4:]
+            elif len(all_rows) >= 4 and not _is_real_data_row(all_rows[1]):
+                # Rows 2-3 look like example/instructions — data starts at row 4
                 data_rows = all_rows[3:]
+            elif len(all_rows) >= 2 and _is_real_data_row(all_rows[1]):
+                # Row 2 looks like real data — start from row 2
+                data_rows = all_rows[1:]
             else:
                 data_rows = all_rows[1:]
 
