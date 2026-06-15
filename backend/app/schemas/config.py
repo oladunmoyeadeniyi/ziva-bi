@@ -383,6 +383,7 @@ class CoAListItem(BaseModel):
     is_active: bool
     gl_group: str | None = None
     gl_subgroup: str | None = None
+    gl_sub_subgroup: str | None = None
     account_classification: Optional[str] = None
     is_foreign_currency: Optional[bool] = False
     foreign_currency_code: Optional[str] = None
@@ -402,6 +403,7 @@ class CoAListItem(BaseModel):
             is_active=g.is_active,
             gl_group=g.gl_group,
             gl_subgroup=g.gl_subgroup,
+            gl_sub_subgroup=g.gl_sub_subgroup,
             account_classification=g.account_classification,
             is_foreign_currency=g.is_foreign_currency or False,
             foreign_currency_code=g.foreign_currency_code,

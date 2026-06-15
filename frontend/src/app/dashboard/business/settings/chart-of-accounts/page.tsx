@@ -1401,15 +1401,26 @@ export default function ChartOfAccountsPage() {
                             <span className="ml-auto text-xs text-gray-400">{sub.count} accounts</span>
                           </button>
 
-                          {expandedSubgroups.has(group.name + "||" + sub.name) && sub.subSubgroups.length > 0 && (
+                          {expandedSubgroups.has(group.name + "||" + sub.name) && (
                             <div className="ml-4 border-l border-gray-100 pl-3">
-                              {sub.subSubgroups.map(ssub => (
-                                <div key={ssub.name} className="flex items-center gap-2 py-1.5 px-2">
-                                  <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
-                                  <span className="text-xs text-gray-600">{ssub.name}</span>
-                                  <span className="ml-auto text-xs text-gray-400">{ssub.count}</span>
-                                </div>
-                              ))}
+                              {sub.subSubgroups.length > 0
+                                ? sub.subSubgroups.map(ssub => (
+                                    <div key={ssub.name} className="flex items-center gap-2 py-1.5 px-2">
+                                      <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
+                                      <span className="text-xs text-gray-600">{ssub.name}</span>
+                                      <span className="ml-auto text-xs text-gray-400">{ssub.count}</span>
+                                    </div>
+                                  ))
+                                : accounts
+                                    .filter(a => a.is_active && a.gl_group === group.name && a.gl_subgroup === sub.name)
+                                    .map(a => (
+                                      <div key={a.id} className="flex items-center gap-2 py-1.5 px-2">
+                                        <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
+                                        <span className="font-mono text-xs text-gray-500">{a.gl_number}</span>
+                                        <span className="text-xs text-gray-600 ml-1">{a.gl_name}</span>
+                                      </div>
+                                    ))
+                              }
                             </div>
                           )}
                         </div>
