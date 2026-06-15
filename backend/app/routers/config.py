@@ -1487,7 +1487,7 @@ async def download_coa_template(
     # ══════════════════════════════════════════════════════════════════════════
     ws1 = wb.active
     ws1.title = "GL Accounts"
-    ws1.freeze_panes = "A2"
+    ws1.freeze_panes = "A4"
 
     # Build column list per-column from individual params
     # Each entry: (header_name, instruction_text)
@@ -1527,6 +1527,31 @@ async def download_coa_template(
 
     _write_headers(ws1, headers_for_write)
 
+    # Cell comments on header row — one example value per column
+    examples: dict[str, str] = {
+        "GL Number": "e.g. 400000",
+        "GL Name": "e.g. Sales domestic",
+        "Account Type": "e.g. PL or BS",
+        "Is Active": "e.g. Yes",
+        "GL Group": "e.g. PL2",
+        "GL Subgroup": "e.g. N.S.V",
+        "GL Sub-subgroup": "e.g. GSV",
+        "FS Head": "e.g. Revenue",
+        "FS Note": "e.g. Note 1 - Revenue",
+        "TB Mapping": "e.g. Domestic sales",
+        "Group Account Number": "e.g. 4000",
+        "Group Account Name": "e.g. Net Revenue",
+        "Account Classification": "e.g. Revenue",
+    }
+    for col_idx, (header, _instruction) in enumerate(all_cols, 1):
+        cell = ws1.cell(row=1, column=col_idx)
+        example = examples.get(header.replace("*", "").strip(), "")
+        if example:
+            comment = Comment(example, "Ziva BI")
+            comment.width = 200
+            comment.height = 60
+            cell.comment = comment
+
     # Add comment and data validation to Account Type header cell
     at_col_idx = header_row.index("Account Type*") + 1  # 1-based
     at_cell = ws1.cell(row=1, column=at_col_idx)
@@ -1545,31 +1570,9 @@ async def download_coa_template(
     at_comment.height = 120
     at_cell.comment = at_comment
 
-    # Example data row (only fill columns present in this template)
-    example_map: dict[str, str] = {
-        "GL Number*": "733060",
-        "GL Name*": "Marketing Expenses — Sponsoring",
-        "Account Type*": "PL",
-        "Is Active": "Yes",
-        "GL Group": "PL3 - Marketing",
-        "GL Subgroup": "Sponsoring",
-        "GL Sub-subgroup": "Sport Events",
-        "FS Head": "Operating Expenses",
-        "FS Note": "Note 4 - Marketing",
-        "TB Mapping": "OPEX",
-        "Group Account Number": "",
-        "Group Account Name": "",
-        "Account Classification": "Operating expense",
-        "Category": "Marketing",
-        "Subcategory": "Sponsoring",
-        "Is Default GL for Subcategory": "No",
-    }
-    example_values = [example_map.get(h, "Optional" if "(Dimension)" not in h else "Optional") for h in header_row]
-    _write_row(ws1, 2, example_values, font=example_font)
-
-    # Instruction sub-row
+    # Instruction sub-row (row 2 — no example row)
     for ci, instr in enumerate(instruction_row, 1):
-        cell = ws1.cell(row=3, column=ci, value=instr)
+        cell = ws1.cell(row=2, column=ci, value=instr)
         cell.font = instr_font
         cell.fill = opt_fill
 
@@ -1621,22 +1624,22 @@ async def download_coa_template(
         ws1.add_data_validation(dv_dim)
         dv_dim.sqref = f"{col_letter}4:{col_letter}10000"
 
-    # Marker row (row 4) — visual cue showing where data entry starts
+    # Marker row (row 3) — visual cue showing where data entry starts
     marker_font = Font(name="Arial", bold=True, size=10, color="1E3A5F", italic=True)
     marker_fill = PatternFill("solid", fgColor="E8F0FE")
 
-    marker_cell = ws1.cell(row=4, column=1, value="→ Enter your GL accounts from row 5 onwards")
+    marker_cell = ws1.cell(row=3, column=1, value="→ Enter your GL accounts from row 4 onwards")
     marker_cell.font = marker_font
     marker_cell.fill = marker_fill
     marker_cell.alignment = Alignment(horizontal="left")
 
     for col_num in range(2, len(all_cols) + 1):
-        ws1.cell(row=4, column=col_num).fill = marker_fill
+        ws1.cell(row=3, column=col_num).fill = marker_fill
 
-    # Amber fill on rows 1-4 to visually indicate they are reference rows
+    # Amber fill on rows 1-3 to visually indicate they are reference rows
     ref_fill = PatternFill("solid", fgColor="FFF3CD")
 
-    for row_num in range(1, 5):
+    for row_num in range(1, 4):
         for col_num in range(1, len(all_cols) + 2):
             cell = ws1.cell(row=row_num, column=col_num)
             if cell.fill.fgColor.rgb == "00000000" or not cell.fill.patternType:
@@ -1680,7 +1683,7 @@ async def download_coa_template(
         ["Duplicate GL numbers", "", "If a GL number already exists, its record will be updated (not duplicated)."],
         ["Sheet 2 is processed first", "", "Dimension values in Sheet 2 are imported before GL accounts, so category/dimension references in Sheet 1 will resolve correctly."],
         ["Required columns marked *", "", "Required columns have a light blue header. Optional columns have a light grey header."],
-        ["Locked rows", "", "Rows 1-3 (header, example, instructions) are protected. Enter your data from row 4 onwards."],
+        ["Locked rows", "", "Rows 1-3 (header, instructions, marker) are protected. Enter your data from row 4 onwards."],
     ]
     ws3.column_dimensions["A"].width = 35
     ws3.column_dimensions["B"].width = 12
@@ -1973,7 +1976,7 @@ async def upload_coa(
                 return [], []
             headers_row = all_rows[0]
 
-            data_rows = all_rows[4:]
+            data_rows = all_rows[3:]  # skip header, instructions, marker (no example row)
 
             return [h.strip() for h in headers_row], data_rows
 
@@ -2146,7 +2149,7 @@ async def upload_coa(
     VALID_REQUIREMENTS = {"required", "optional", "na", "n/a"}
     seen_gl_numbers: set[str] = set()
 
-    for i, row in enumerate(sheet1_rows, start=2):
+    for i, row in enumerate(sheet1_rows, start=4):
         if not any((c.strip() if c else "") for c in row):
             continue
 
