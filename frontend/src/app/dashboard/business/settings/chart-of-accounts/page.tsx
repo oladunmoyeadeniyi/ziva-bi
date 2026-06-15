@@ -337,6 +337,24 @@ export default function ChartOfAccountsPage() {
     else { setFsSortCol(col); setFsSortDir("asc"); }
   };
 
+  const handleTypeChange = (val: string) => {
+    setFsTypeFilter(val);
+    setFsFsHeadFilter("");
+    setFilterFsNote("");
+    setFilterTbMapping("");
+  };
+
+  const handleFsHeadChange = (val: string) => {
+    setFsFsHeadFilter(val);
+    setFilterFsNote("");
+    setFilterTbMapping("");
+  };
+
+  const handleFsNoteChange = (val: string) => {
+    setFilterFsNote(val);
+    setFilterTbMapping("");
+  };
+
   const handleAdd = async () => {
     if (!accessToken || !addGL.trim() || !addName.trim()) return;
     setAddingGL(true);
@@ -605,34 +623,42 @@ export default function ChartOfAccountsPage() {
     return Array.from(groups).sort();
   }, [accounts]);
 
-  const fsNoteOptions = useMemo(() => {
-    const vals = new Set<string>();
-    fsMappings.forEach(a => { if (a.fs_note) vals.add(a.fs_note); });
-    return Array.from(vals).sort();
-  }, [fsMappings]);
+  // Cascading filter pipeline — each step narrows options for the next dropdown
+  const afterTypeFilter = useMemo(() =>
+    fsMappings.filter(a => !fsTypeFilter || normaliseAccountType(a.account_type) === fsTypeFilter)
+  , [fsMappings, fsTypeFilter]);
 
-  const tbMappingOptions = useMemo(() => {
-    const vals = new Set<string>();
-    fsMappings.forEach(a => { if (a.tb_mapping) vals.add(a.tb_mapping); });
-    return Array.from(vals).sort();
-  }, [fsMappings]);
+  const fsHeadOptions = useMemo(() =>
+    Array.from(new Set(afterTypeFilter.filter(a => a.fs_head).map(a => a.fs_head!))).sort()
+  , [afterTypeFilter]);
 
-  const filteredFsMappings = fsMappings.filter(a => {
-    if (fsTypeFilter && normaliseAccountType(a.account_type) !== fsTypeFilter) return false;
-    if (fsFsHeadFilter && a.fs_head !== fsFsHeadFilter) return false;
-    if (filterFsNote && a.fs_note !== filterFsNote) return false;
-    if (filterTbMapping && a.tb_mapping !== filterTbMapping) return false;
-    return true;
-  });
+  const afterFsHeadFilter = useMemo(() =>
+    afterTypeFilter.filter(a => !fsFsHeadFilter || a.fs_head === fsFsHeadFilter)
+  , [afterTypeFilter, fsFsHeadFilter]);
 
-  const sortedFsMappings = [...filteredFsMappings].sort((a, b) => {
-    const aVal = (a as unknown as Record<string, string>)[fsSortCol] ?? "";
-    const bVal = (b as unknown as Record<string, string>)[fsSortCol] ?? "";
-    if (!a.fs_head && b.fs_head) return 1;
-    if (a.fs_head && !b.fs_head) return -1;
-    const cmp = aVal.localeCompare(bVal);
-    return fsSortDir === "asc" ? cmp : -cmp;
-  });
+  const fsNoteOptions = useMemo(() =>
+    Array.from(new Set(afterFsHeadFilter.filter(a => a.fs_note).map(a => a.fs_note!))).sort()
+  , [afterFsHeadFilter]);
+
+  const afterFsNoteFilter = useMemo(() =>
+    afterFsHeadFilter.filter(a => !filterFsNote || a.fs_note === filterFsNote)
+  , [afterFsHeadFilter, filterFsNote]);
+
+  const tbMappingOptions = useMemo(() =>
+    Array.from(new Set(afterFsNoteFilter.filter(a => a.tb_mapping).map(a => a.tb_mapping!))).sort()
+  , [afterFsNoteFilter]);
+
+  const sortedFsMappings = useMemo(() =>
+    [...afterFsNoteFilter.filter(a => !filterTbMapping || a.tb_mapping === filterTbMapping)]
+      .sort((a, b) => {
+        if (!a.fs_head && b.fs_head) return 1;
+        if (a.fs_head && !b.fs_head) return -1;
+        const aVal = (a as unknown as Record<string, string>)[fsSortCol] ?? "";
+        const bVal = (b as unknown as Record<string, string>)[fsSortCol] ?? "";
+        const cmp = aVal.localeCompare(bVal);
+        return fsSortDir === "asc" ? cmp : -cmp;
+      })
+  , [afterFsNoteFilter, filterTbMapping, fsSortCol, fsSortDir]);
 
   if (isLoading) {
     return (
@@ -1557,20 +1583,18 @@ export default function ChartOfAccountsPage() {
           </div>
 
           <div className="flex gap-2 mb-4 flex-wrap items-center">
-            <select value={fsTypeFilter} onChange={e => setFsTypeFilter(e.target.value)}
+            <select value={fsTypeFilter} onChange={e => handleTypeChange(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All account types</option>
               <option value="PL">PL — Profit &amp; Loss</option>
               <option value="BS">BS — Balance Sheet</option>
             </select>
-            <select value={fsFsHeadFilter} onChange={e => setFsFsHeadFilter(e.target.value)}
+            <select value={fsFsHeadFilter} onChange={e => handleFsHeadChange(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All FS Heads</option>
-              {[...new Set(fsMappings.filter(m => m.fs_head).map(m => m.fs_head!))].sort().map(h => (
-                <option key={h} value={h}>{h}</option>
-              ))}
+              {fsHeadOptions.map(h => <option key={h} value={h}>{h}</option>)}
             </select>
-            <select value={filterFsNote} onChange={e => setFilterFsNote(e.target.value)}
+            <select value={filterFsNote} onChange={e => handleFsNoteChange(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All FS Notes</option>
               {fsNoteOptions.map(n => <option key={n} value={n}>{n}</option>)}
