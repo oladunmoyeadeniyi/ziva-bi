@@ -2142,17 +2142,10 @@ async def upload_coa(
             gl_obj.is_active = is_active
             gl_obj.gl_group = s1get(gl_group_col) or gl_obj.gl_group
             gl_obj.gl_subgroup = s1get(gl_subgroup_col) or gl_obj.gl_subgroup
-            _sub = s1get(gl_sub_subgroup_col)
-            gl_obj.gl_sub_subgroup = _sub if _sub is not None else gl_obj.gl_sub_subgroup
-
-            _fsh = s1get(fs_head_col)
-            gl_obj.fs_head = _fsh if _fsh is not None else gl_obj.fs_head
-
-            _fsn = s1get(fs_note_col)
-            gl_obj.fs_note = _fsn if _fsn is not None else gl_obj.fs_note
-
-            _tbm = s1get(tb_mapping_col)
-            gl_obj.tb_mapping = _tbm if _tbm is not None else gl_obj.tb_mapping
+            gl_obj.gl_sub_subgroup = s1get(gl_sub_subgroup_col) or gl_obj.gl_sub_subgroup
+            gl_obj.fs_head = s1get(fs_head_col) or gl_obj.fs_head
+            gl_obj.fs_note = s1get(fs_note_col) or gl_obj.fs_note
+            gl_obj.tb_mapping = s1get(tb_mapping_col) or gl_obj.tb_mapping
             gl_obj.group_account_number = s1get(group_acct_num_col) or gl_obj.group_account_number
             gl_obj.group_account_name = s1get(group_acct_name_col) or gl_obj.group_account_name
             s1_result.updated += 1
