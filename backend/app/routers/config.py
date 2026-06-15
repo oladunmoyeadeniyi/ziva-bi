@@ -1913,13 +1913,31 @@ async def upload_coa(
             all_rows: list[list[str]] = []
             for row in ws_obj.iter_rows(values_only=True):
                 all_rows.append([str(c).strip() if c is not None else "" for c in row])
-            # Skip instruction rows (rows 2 and 3 = example and instruction in template)
-            # Find the first non-instruction data start — row index 3 (0-based) = spreadsheet row 4
             if not all_rows:
                 return [], []
             headers_row = all_rows[0]
-            # Row 2 (index 1) may be example, row 3 (index 2) may be instructions → data starts at index 3
-            data_rows = all_rows[3:]
+
+            # Detect where real data starts.
+            # The Ziva template has row 2 = example, row 3 = instructions.
+            # But user-supplied files may have real data from row 2.
+            # Heuristic: if row 2's first cell looks like a real GL number
+            # (numeric or short alphanumeric, not a long instruction string),
+            # treat row 2 as real data. Otherwise skip rows 2 and 3.
+
+            def _looks_like_data_row(row: list[str]) -> bool:
+                first = row[0].strip() if row else ""
+                # Real GL numbers are typically short (<=20 chars) and don't contain spaces or long phrases
+                return bool(first) and len(first) <= 20 and " " not in first[:10]
+
+            if len(all_rows) > 1 and _looks_like_data_row(all_rows[1]):
+                # Row 2 looks like real data — use all rows from row 2
+                data_rows = all_rows[1:]
+            elif len(all_rows) > 3:
+                # Row 2 looks like an example, row 3 like instructions — skip both
+                data_rows = all_rows[3:]
+            else:
+                data_rows = all_rows[1:]
+
             return [h.strip() for h in headers_row], data_rows
 
         sheet1_headers, sheet1_rows = _load_sheet("GL Accounts")
@@ -2091,7 +2109,7 @@ async def upload_coa(
     VALID_REQUIREMENTS = {"required", "optional", "na", "n/a"}
     seen_gl_numbers: set[str] = set()
 
-    for i, row in enumerate(sheet1_rows, start=4):
+    for i, row in enumerate(sheet1_rows, start=2):
         if not any((c.strip() if c else "") for c in row):
             continue
 
