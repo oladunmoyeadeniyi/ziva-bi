@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
@@ -224,6 +224,7 @@ function SheetResultDisplay({ result, label }: { result: SheetResult; label: str
 export default function ChartOfAccountsPage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [accounts, setAccounts] = useState<GLAccount[]>([]);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
@@ -309,7 +310,14 @@ export default function ChartOfAccountsPage() {
   const [dimModalLoading, setDimModalLoading] = useState(false);
 
   // Sub-tabs
-  const [coaTab, setCoaTab] = useState<CoATab>("accounts");
+  const initialTabParam = (searchParams.get("tab") as CoATab) || "accounts";
+  const [coaTab, setCoaTab] = useState<CoATab>(initialTabParam);
+
+  const updateCoaTabUrl = (tab: CoATab) => {
+    const params = new URLSearchParams();
+    params.set("tab", tab);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
 
   // Deactivate confirmation modal
   const [deactivateConfirmGl, setDeactivateConfirmGl] = useState<GLAccount | null>(null);
@@ -984,7 +992,7 @@ export default function ChartOfAccountsPage() {
           { key: "fs_mappings", label: "FS mappings" },
           { key: "dimensions",  label: "Dimensions" },
         ] as { key: CoATab; label: string }[]).map(t => (
-          <button key={t.key} type="button" onClick={() => setCoaTab(t.key)}
+          <button key={t.key} type="button" onClick={() => { setCoaTab(t.key); updateCoaTabUrl(t.key); }}
             className={`px-4 py-2 text-sm border-b-2 transition-colors ${
               coaTab === t.key
                 ? "border-blue-600 text-gray-900 font-medium"
@@ -1742,7 +1750,7 @@ export default function ChartOfAccountsPage() {
                                             <i className="ti ti-minus" style={{ fontSize: 11, color: "#e5e7eb" }} />
                                             <button
                                               type="button"
-                                              onClick={() => { setCoaTab("accounts"); setFilterGL(a.gl_number); }}
+                                              onClick={() => { setCoaTab("accounts"); updateCoaTabUrl("accounts"); setFilterGL(a.gl_number); }}
                                               className="font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline"
                                             >
                                               {a.gl_number}
@@ -1761,7 +1769,7 @@ export default function ChartOfAccountsPage() {
                                   <i className="ti ti-minus" style={{ fontSize: 12, color: "#d1d5db" }} />
                                   <button
                                     type="button"
-                                    onClick={() => { setCoaTab("accounts"); setFilterGL(a.gl_number); }}
+                                    onClick={() => { setCoaTab("accounts"); updateCoaTabUrl("accounts"); setFilterGL(a.gl_number); }}
                                     className="font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline"
                                   >
                                     {a.gl_number}
@@ -1778,7 +1786,7 @@ export default function ChartOfAccountsPage() {
                         <div
                           key={a.id}
                           className="flex items-center gap-2 py-1 pl-8 hover:bg-gray-50 cursor-pointer"
-                          onClick={() => { setCoaTab("accounts"); setFilterGL(a.gl_number); }}
+                          onClick={() => { setCoaTab("accounts"); updateCoaTabUrl("accounts"); setFilterGL(a.gl_number); }}
                         >
                           <span className="text-xs font-mono text-gray-400 w-16">{a.gl_number}</span>
                           <span className="text-xs text-gray-600">{a.gl_name}</span>
@@ -1877,7 +1885,7 @@ export default function ChartOfAccountsPage() {
                           <td className="px-4 py-2.5 text-gray-500">{normaliseAccountType(m.account_type)}</td>
                           <td className="px-4 py-2.5 font-mono">
                             <button type="button"
-                              onClick={() => { setCoaTab("accounts"); setFilterGL(m.gl_number); }}
+                              onClick={() => { setCoaTab("accounts"); updateCoaTabUrl("accounts"); setFilterGL(m.gl_number); }}
                               className="text-blue-600 hover:text-blue-800 hover:underline">
                               {m.gl_number}
                             </button>
