@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.2 Implementation Portal router.
+ZivaBI — M8.2/M8.3 Implementation Portal router.
 
 Registered at prefix /api/setup.
 
@@ -13,8 +13,12 @@ Endpoints:
   DELETE /api/setup/org-structure/{id}        Remove a node
   GET   /api/setup/org-structure/template     Download xlsx template
   POST  /api/setup/org-structure/upload       Upload structure from xlsx/csv
-  GET   /api/setup/fiscal-periods             List fiscal periods
-  POST  /api/setup/fiscal-periods/generate    Generate periods for a fiscal year
+  POST  /api/setup/periods/generate           Generate 12 monthly periods for a FY
+  GET   /api/setup/periods                    List accounting periods (filter by ?fiscal_year=)
+  GET   /api/setup/periods/check              Postability check for a date (?date=YYYY-MM-DD)
+  POST  /api/setup/periods/{id}/soft-close    Manually soft-close a period
+  POST  /api/setup/periods/{id}/hard-close    Hard-close a period (sequential enforcement)
+  POST  /api/setup/periods/{id}/reopen        Reopen a hard-closed period (consultant only)
   GET   /api/setup/modules                    Activated modules list (with is_licensed)
   PATCH /api/setup/modules                    Update module activations (checks is_licensed)
   POST  /api/setup/dimensions/not-applicable   Mark tenant as not using dimensions
@@ -35,12 +39,11 @@ Endpoints:
 
 All endpoints are tenant-scoped and require authentication.
 Admin-only: require is_tenant_admin or is_super_admin.
-go-live: require role_tier == 'consultant'.
+go-live / reopen: require role_tier == 'consultant'.
 """
 
 import io
 import uuid
-from calendar import monthrange
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -52,12 +55,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
 from app.models.auth import UserTenant, User, Tenant
+from app.services.periods import (
+    apply_auto_soft_close,
+    generate_monthly_periods,
+    initial_status_for,
+    is_date_postable,
+    parse_fy_start_year,
+)
 from app.models.expenses import TenantExpenseConfig
 from app.models.master_data import ChartOfAccount, Employee, TenantDimension
 from app.models.setup import (
+    AccountingPeriod,
     DocumentRule,
     EmployeeOnboardingToken,
-    FiscalPeriod,
     OrgStructureNode,
     TenantFxConfig,
     TenantModule,
@@ -65,11 +75,11 @@ from app.models.setup import (
     TenantTaxConfig,
 )
 from app.schemas.setup import (
+    AccountingPeriodResponse,
     BrandingUpdate,
     DocumentRuleCreate,
     DocumentRuleResponse,
     DocumentRuleUpdate,
-    FiscalPeriodResponse,
     FiscalYearUpdate,
     FxConfigResponse,
     FxConfigUpdate,
@@ -88,6 +98,7 @@ from app.schemas.setup import (
     OrgStructureUploadResult,
     PermissionMatrixResponse,
     PermissionMatrixUpdate,
+    PeriodCheckResponse,
     ProgressResponse,
     RoleAssignmentCreate,
     RoleAssignmentResponse,
@@ -957,49 +968,45 @@ async def upload_org_structure(
     return OrgStructureUploadResult(imported=imported, updated=updated, errors=errors)
 
 
-# ── Fiscal Periods ────────────────────────────────────────────────────────────
+# ── Accounting Periods (M8.3 Brief 1) ────────────────────────────────────────
 
-@router.get("/fiscal-periods", response_model=list[FiscalPeriodResponse])
-async def get_fiscal_periods(
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> list[FiscalPeriodResponse]:
-    """List all generated fiscal periods for this tenant."""
-    _require_admin(current_user)
-    tenant_id = _require_tenant(current_user)
-
-    result = await db.execute(
-        select(FiscalPeriod)
-        .where(FiscalPeriod.tenant_id == tenant_id)
-        .order_by(FiscalPeriod.start_date)
+def _period_to_response(p: AccountingPeriod) -> AccountingPeriodResponse:
+    """Map an AccountingPeriod ORM row to the API response schema."""
+    return AccountingPeriodResponse(
+        id=str(p.id),
+        tenant_id=str(p.tenant_id),
+        fiscal_year=p.fiscal_year,
+        period_no=p.period_no,
+        period_name=p.period_name,
+        start_date=p.start_date,
+        end_date=p.end_date,
+        status=p.status,
+        hard_closed_at=p.hard_closed_at,
+        hard_closed_by=str(p.hard_closed_by) if p.hard_closed_by else None,
+        soft_closed_at=p.soft_closed_at,
+        grace_expires_at=p.grace_expires_at,
+        reopened_count=p.reopened_count,
     )
-    periods = result.scalars().all()
-
-    return [
-        FiscalPeriodResponse(
-            id=str(p.id),
-            fiscal_year=p.fiscal_year,
-            period_name=p.period_name,
-            start_date=p.start_date,
-            end_date=p.end_date,
-            status=p.status,
-        )
-        for p in periods
-    ]
 
 
-@router.post("/fiscal-periods/generate", response_model=list[FiscalPeriodResponse], status_code=201)
-async def generate_fiscal_periods(
+@router.post("/periods/generate", response_model=list[AccountingPeriodResponse], status_code=201)
+async def generate_periods(
     data: GeneratePeriodsRequest,
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-) -> list[FiscalPeriodResponse]:
+) -> list[AccountingPeriodResponse]:
     """
-    Generate fiscal periods for a given fiscal year label.
+    Generate 12 monthly accounting periods for the given fiscal year label.
 
-    Reads the tenant's fiscal_year_start_month, fiscal_year_start_day, and
-    period_closing_frequency from org config. Deletes existing periods for
-    the same fiscal_year label before re-generating.
+    Reads fiscal_year_start_month, fiscal_year_start_day, and period_closing_frequency
+    from org config. Only monthly frequency is supported in M8.3 (422 otherwise).
+
+    Registration-date floor: REJECTED (422) if the fiscal year starts before
+    date_of_registration. Rationale: clamping creates a broken year with missing
+    early periods; rejection tells the user to choose a later FY.
+
+    Idempotent guard: if any period in the FY is already HARD_CLOSED, the FY
+    cannot be regenerated (409) — hard-close history is permanent.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
@@ -1014,86 +1021,68 @@ async def generate_fiscal_periods(
             detail="Fiscal year start month not configured. Set it on the Organisation page first.",
         )
 
+    frequency = org.period_closing_frequency or "Monthly"
+    if frequency != "Monthly":
+        raise HTTPException(
+            status_code=422,
+            detail="Only monthly periods are supported in M8.3. Quarterly/annual support will be added later.",
+        )
+
     start_month = org.fiscal_year_start_month
     start_day = org.fiscal_year_start_day or 1
-    frequency = org.period_closing_frequency or "Monthly"
-
-    # Determine how many years the label covers to find the calendar start year
-    # e.g. "FY2026" → year=2026, "2025/2026" → year=2025
     label = data.fiscal_year_label
-    import re
-    year_match = re.search(r"(\d{4})", label)
-    if not year_match:
+
+    start_year = parse_fy_start_year(label)
+    if start_year is None:
         raise HTTPException(status_code=422, detail="Could not parse year from fiscal_year_label.")
-    start_year = int(year_match.group(1))
 
     fy_start = date(start_year, start_month, start_day)
-    today = date.today()
 
-    if frequency == "Monthly":
-        num_periods = 12
-    elif frequency == "Quarterly":
-        num_periods = 4
-    else:
-        num_periods = 1
+    # ── Registration-date floor check (reject, not clamp) ────────────────────
+    if org.date_of_registration and fy_start < org.date_of_registration:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Fiscal year {label} starts on {fy_start}, which is before the organisation's "
+                f"date of registration ({org.date_of_registration}). Choose a later fiscal year."
+            ),
+        )
 
-    # Generate period date ranges
-    generated: list[tuple[str, date, date]] = []
-    current = fy_start
-    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    # ── Idempotent guard: refuse if any period is already HARD_CLOSED ────────
+    hc_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == label,
+            AccountingPeriod.status == "HARD_CLOSED",
+        )
+    )
+    if hc_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Fiscal year {label} has hard-closed periods and cannot be regenerated.",
+        )
 
-    for i in range(num_periods):
-        if frequency == "Monthly":
-            period_end_day = monthrange(current.year, current.month)[1]
-            period_end = date(current.year, current.month, period_end_day)
-            period_name = f"{month_names[current.month - 1]} {current.year}"
-            next_month = current.month + 1
-            next_year = current.year + (1 if next_month > 12 else 0)
-            next_month = next_month if next_month <= 12 else 1
-            next_start = date(next_year, next_month, start_day)
-        elif frequency == "Quarterly":
-            # 3 months per quarter
-            end_month = current.month + 2
-            end_year = current.year + (end_month - 1) // 12
-            end_month = ((end_month - 1) % 12) + 1
-            period_end = date(end_year, end_month, monthrange(end_year, end_month)[1])
-            period_name = f"Q{i + 1} {label}"
-            next_start = date(end_year, end_month, 1)
-            if end_month < 12:
-                next_start = date(end_year, end_month + 1, start_day)
-            else:
-                next_start = date(end_year + 1, 1, start_day)
-        else:
-            period_end_year = start_year + 1 if start_month > 1 else start_year
-            period_end_month = start_month - 1 if start_month > 1 else 12
-            period_end = date(period_end_year, period_end_month,
-                              monthrange(period_end_year, period_end_month)[1])
-            period_name = label
-            next_start = period_end  # only one period
-
-        generated.append((period_name, current, period_end))
-        current = next_start
-
-    # Delete existing periods for this fiscal year label
+    # ── Delete any existing (non-hard-closed) periods for this FY ────────────
     await db.execute(
-        delete(FiscalPeriod).where(
-            FiscalPeriod.tenant_id == tenant_id,
-            FiscalPeriod.fiscal_year == label,
+        delete(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == label,
         )
     )
 
-    created: list[FiscalPeriod] = []
-    for period_name, start, end in generated:
-        # Mark the period containing today as 'current'
-        period_status = "current" if start <= today <= end else "open"
-        p = FiscalPeriod(
+    # ── Generate the 12 monthly periods ──────────────────────────────────────
+    period_specs = generate_monthly_periods(fy_start, num_periods=12, start_day=start_day)
+
+    created: list[AccountingPeriod] = []
+    for period_no, period_name, start, end in period_specs:
+        p = AccountingPeriod(
             tenant_id=tenant_id,
             fiscal_year=label,
+            period_no=period_no,
             period_name=period_name,
             start_date=start,
             end_date=end,
-            status=period_status,
+            status=initial_status_for(start, end),
         )
         db.add(p)
         created.append(p)
@@ -1102,17 +1091,204 @@ async def generate_fiscal_periods(
     for p in created:
         await db.refresh(p)
 
-    return [
-        FiscalPeriodResponse(
-            id=str(p.id),
-            fiscal_year=p.fiscal_year,
-            period_name=p.period_name,
-            start_date=p.start_date,
-            end_date=p.end_date,
-            status=p.status,
+    return [_period_to_response(p) for p in created]
+
+
+@router.get("/periods", response_model=list[AccountingPeriodResponse])
+async def list_periods(
+    fiscal_year: Optional[str] = Query(default=None),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[AccountingPeriodResponse]:
+    """
+    List accounting periods for this tenant, optionally filtered by fiscal_year.
+
+    Auto-soft-closes any OPEN periods whose end_date has passed, persisting the
+    transition before returning results. Future: replace with a scheduled job.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    stmt = select(AccountingPeriod).where(AccountingPeriod.tenant_id == tenant_id)
+    if fiscal_year:
+        stmt = stmt.where(AccountingPeriod.fiscal_year == fiscal_year)
+    stmt = stmt.order_by(AccountingPeriod.start_date)
+
+    result = await db.execute(stmt)
+    periods = list(result.scalars().all())
+
+    # Auto-soft-close on read (no scheduler yet — future: move to cron/celery)
+    changed = False
+    for p in periods:
+        if await apply_auto_soft_close(p, db):
+            changed = True
+    if changed:
+        await db.commit()
+        for p in periods:
+            await db.refresh(p)
+
+    return [_period_to_response(p) for p in periods]
+
+
+@router.get("/periods/check", response_model=PeriodCheckResponse)
+async def check_period(
+    date_str: str = Query(alias="date", description="ISO date YYYY-MM-DD"),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PeriodCheckResponse:
+    """
+    Check whether a specific date is open for posting by this tenant.
+
+    Returns { postable: bool, reason: str }. The reason is empty when postable.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    try:
+        target = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date must be in YYYY-MM-DD format.")
+
+    postable, reason = await is_date_postable(tenant_id, target, db)
+    return PeriodCheckResponse(postable=postable, reason=reason)
+
+
+@router.post("/periods/{period_id}/soft-close", response_model=AccountingPeriodResponse)
+async def soft_close_period(
+    period_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> AccountingPeriodResponse:
+    """
+    Manually soft-close an OPEN period.
+
+    Normally automatic (triggered on read when today > end_date), but exposed
+    here for use cases where an admin wants to close ahead of time.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.id == period_id,
+            AccountingPeriod.tenant_id == tenant_id,
         )
-        for p in created
-    ]
+    )
+    period = result.scalar_one_or_none()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    if period.status == "HARD_CLOSED":
+        raise HTTPException(status_code=409, detail="Period is already hard-closed.")
+    if period.status == "SOFT_CLOSED":
+        raise HTTPException(status_code=409, detail="Period is already soft-closed.")
+
+    period.status = "SOFT_CLOSED"
+    period.soft_closed_at = datetime.now(timezone.utc)
+    db.add(period)
+    await db.commit()
+    await db.refresh(period)
+    return _period_to_response(period)
+
+
+@router.post("/periods/{period_id}/hard-close", response_model=AccountingPeriodResponse)
+async def hard_close_period(
+    period_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> AccountingPeriodResponse:
+    """
+    Hard-close a period. Sequential-close enforcement: any period with an earlier
+    start_date (across all FYs for this tenant) must already be HARD_CLOSED.
+
+    BRIEF-3: checklist gate — before allowing hard-close, call checklist_complete()
+    here to verify all close checklist items are ticked. No logic yet; stub below.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.id == period_id,
+            AccountingPeriod.tenant_id == tenant_id,
+        )
+    )
+    period = result.scalar_one_or_none()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    if period.status == "HARD_CLOSED":
+        raise HTTPException(status_code=409, detail="Period is already hard-closed.")
+
+    # ── Sequential-close enforcement ──────────────────────────────────────────
+    earlier_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.start_date < period.start_date,
+            AccountingPeriod.status != "HARD_CLOSED",
+        )
+    )
+    if earlier_result.scalars().first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Earlier periods must be hard-closed first.",
+        )
+
+    # BRIEF-3: checklist gate — replace the pass below with:
+    #   if not await checklist_complete(period_id, db):
+    #       raise HTTPException(status_code=409, detail="Close checklist incomplete.")
+    pass  # BRIEF-3: checklist gate
+
+    period.status = "HARD_CLOSED"
+    period.hard_closed_at = datetime.now(timezone.utc)
+    period.hard_closed_by = current_user.user_id
+    db.add(period)
+    await db.commit()
+    await db.refresh(period)
+    return _period_to_response(period)
+
+
+@router.post("/periods/{period_id}/reopen", response_model=AccountingPeriodResponse)
+async def reopen_period(
+    period_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> AccountingPeriodResponse:
+    """
+    Reopen a HARD_CLOSED period — restricted to consultant role.
+
+    Sets status back to SOFT_CLOSED and increments reopened_count.
+    BRIEF-4: audit log — after persisting, write an audit entry recording who
+    reopened the period and when. Stub comment: # BRIEF-4: audit log on reopen
+    """
+    if current_user.role_tier != "consultant":
+        raise HTTPException(status_code=403, detail="Only consultants may reopen hard-closed periods.")
+
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.id == period_id,
+            AccountingPeriod.tenant_id == tenant_id,
+        )
+    )
+    period = result.scalar_one_or_none()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    if period.status != "HARD_CLOSED":
+        raise HTTPException(status_code=409, detail="Only HARD_CLOSED periods can be reopened.")
+
+    period.status = "SOFT_CLOSED"
+    period.hard_closed_at = None
+    period.hard_closed_by = None
+    period.reopened_count += 1
+    db.add(period)
+    await db.commit()
+    await db.refresh(period)
+
+    # BRIEF-4: audit log on reopen — call audit_log.record(period, current_user, "REOPEN", db)
+    return _period_to_response(period)
 
 
 # ── Modules ────────────────────────────────────────────────────────────────────

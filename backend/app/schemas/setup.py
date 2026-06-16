@@ -1,13 +1,13 @@
 """
-ZivaBI — M8.2 Implementation Portal Pydantic schemas.
+ZivaBI — M8.2/M8.3 Implementation Portal Pydantic schemas.
 
 Request and response shapes for all /api/setup/* endpoints.
-Covers: progress, organisation, org structure, fiscal periods, modules,
+Covers: progress, organisation, org structure, accounting periods, modules,
 currencies/FX, tax, roles, documents, go-live, employee self-onboarding.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -181,23 +181,38 @@ class OrgStructureUploadResult(BaseModel):
     errors: list[dict[str, Any]]
 
 
-# ── Fiscal Periods ────────────────────────────────────────────────────────────
+# ── Accounting Periods (M8.3 Brief 1 — replaces FiscalPeriod schemas) ─────────
 
-class FiscalPeriodResponse(BaseModel):
-    """Single fiscal period row."""
+class AccountingPeriodResponse(BaseModel):
+    """Single accounting period row returned by /api/setup/periods endpoints."""
 
     id: str
+    tenant_id: str
     fiscal_year: str
+    period_no: int
     period_name: str
     start_date: date
     end_date: date
-    status: str  # 'open' | 'current' | 'closed'
+    # Status: FUTURE | OPEN | SOFT_CLOSED | OVERDUE | HARD_CLOSED
+    status: str
+    hard_closed_at: Optional[datetime] = None
+    hard_closed_by: Optional[str] = None
+    soft_closed_at: Optional[datetime] = None
+    grace_expires_at: Optional[datetime] = None
+    reopened_count: int = 0
 
 
 class GeneratePeriodsRequest(BaseModel):
-    """POST /api/setup/fiscal-periods/generate."""
+    """POST /api/setup/periods/generate."""
 
     fiscal_year_label: str  # e.g. "FY2026" or "2025/2026"
+
+
+class PeriodCheckResponse(BaseModel):
+    """GET /api/setup/periods/check?date=YYYY-MM-DD."""
+
+    postable: bool
+    reason: str
 
 
 # ── Modules ───────────────────────────────────────────────────────────────────
