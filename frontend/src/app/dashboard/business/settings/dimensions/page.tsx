@@ -281,10 +281,11 @@ function DimensionsPage() {
     }
   }, [user, router]);
 
-  const updateUrl = (tab: string, dimId?: string) => {
+  const updateUrl = (tab: string, dimId?: string, subTab?: string) => {
     const params = new URLSearchParams();
     params.set("tab", tab);
     if (dimId) params.set("dim", dimId);
+    if (subTab) params.set("subtab", subTab);
     router.replace(`?${params.toString()}`, { scroll: false });
   };
 
@@ -1619,18 +1620,19 @@ function DimensionsPage() {
                 setSelectedValueIds(new Set());
                 setActiveGroupCollapsed(false);
                 setInactiveGroupCollapsed(true);
-                updateUrl("values", newDimId || undefined);
                 if (newDimId) {
                   const newDim = activeDims.find(d => d.id === newDimId);
                   const newSources = newDim?.dimension_sources ?? [];
                   const hasOrg = newSources.some(s => s.source_type === "org_structure");
                   const hasEmp = newSources.some(s => s.source_type === "employee_master");
-                  if (hasOrg) setValuesSubTab("org_structure");
-                  else if (hasEmp) setValuesSubTab("employee_master");
-                  else setValuesSubTab("manual");
+                  const newSubTab = hasOrg ? "org_structure" : hasEmp ? "employee_master" : "manual";
+                  setValuesSubTab(newSubTab);
+                  updateUrl("values", newDimId, newSubTab);
                   loadInlineValues(newDimId);
                   loadDimValues(newDimId);
                   setSelectedValueIds(new Set());
+                } else {
+                  updateUrl("values", undefined);
                 }
               }}
               className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 max-w-xs">
@@ -1676,7 +1678,7 @@ function DimensionsPage() {
               <div>
                 <div className="flex gap-0 border-b border-gray-200 mb-4">
                   {allTabs.map(tab => (
-                    <button key={tab} type="button" onClick={() => setValuesSubTab(tab)}
+                    <button key={tab} type="button" onClick={() => { setValuesSubTab(tab); updateUrl("values", selectedDimForValues, tab); }}
                       className={`px-3 py-2 text-sm border-b-2 transition-colors ${
                         valuesSubTab === tab
                           ? "border-blue-600 text-gray-900 font-medium"
