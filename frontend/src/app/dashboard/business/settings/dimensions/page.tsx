@@ -2031,7 +2031,7 @@ function DimensionsPage() {
                               type="date"
                               defaultValue={toInputDate(addValueValidFrom)}
                               onBlur={e => {
-                                if (e.target.value) setAddValueValidFrom(fromInputDate(e.target.value));
+                                setAddValueValidFrom(fromInputDate(e.target.value));
                               }}
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
@@ -2044,7 +2044,7 @@ function DimensionsPage() {
                               type="date"
                               defaultValue={toInputDate(addValueValidTo)}
                               onBlur={e => {
-                                if (e.target.value) setAddValueValidTo(fromInputDate(e.target.value));
+                                setAddValueValidTo(fromInputDate(e.target.value));
                               }}
                               className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
@@ -2391,11 +2391,9 @@ function DimensionsPage() {
                     type="date"
                     defaultValue={toInputDate(editValueModal.valid_from)}
                     onBlur={e => {
-                      if (e.target.value) {
-                        setEditValueModal(prev =>
-                          prev ? { ...prev, valid_from: fromInputDate(e.target.value) } : null
-                        );
-                      }
+                      setEditValueModal(prev =>
+                        prev ? { ...prev, valid_from: fromInputDate(e.target.value) } : null
+                      );
                     }}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -2408,11 +2406,9 @@ function DimensionsPage() {
                     type="date"
                     defaultValue={toInputDate(editValueModal.valid_to)}
                     onBlur={e => {
-                      if (e.target.value) {
-                        setEditValueModal(prev =>
-                          prev ? { ...prev, valid_to: fromInputDate(e.target.value) } : null
-                        );
-                      }
+                      setEditValueModal(prev =>
+                        prev ? { ...prev, valid_to: fromInputDate(e.target.value) } : null
+                      );
                     }}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
