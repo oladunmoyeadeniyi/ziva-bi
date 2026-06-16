@@ -260,6 +260,7 @@ function DimensionsPage() {
       setDimensions(data);
       if (initialDimParam) {
         loadInlineValues(initialDimParam);
+        loadDimValues(initialDimParam);
         if (initialSubTabParam) {
           setValuesSubTab(initialSubTabParam);
         }
