@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.3 Period Engine service module (Briefs 1 & 2 of 4).
+ZivaBI — M8.3 Period Engine service module (Briefs 1, 2 & 3 of 4).
 
 Provides:
     is_date_postable   — reusable postability check for any posting engine to call.
@@ -8,6 +8,8 @@ Provides:
     compute_grace_expiry — converts (soft_closed_at, grace_value, grace_unit) to a
                            timezone-aware expiry datetime.
     get_matching_grace_row — finds the most-specific grace override row for a caller.
+    checklist_complete — checks all applicable close-checklist items are approved
+                         before hard-close (Brief 3).
     generate_monthly_periods — builds the 12 (period_no, name, start, end) tuples.
     initial_status_for — determines initial status by comparing dates to today.
     parse_fy_start_year — extracts starting calendar year from a FY label string.
@@ -16,8 +18,6 @@ Allowed module values (validated at endpoint layer; checked here for context):
     default | expense | manual_journal | future_exception
 
 Extension points for later briefs:
-    Brief 3 — close-checklist gate: in routers/setup.py hard_close_period.
-              Stub comment: # BRIEF-3: checklist gate
     Brief 4 — audit log on reopen: in routers/setup.py reopen_period.
               Stub comment: # BRIEF-4: audit log on reopen
 
@@ -36,7 +36,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.setup import (
     AccountingPeriod,
+    CloseChecklistItem,
     FuturePostingException,
+    PeriodChecklistCompletion,
     PeriodGraceOverride,
     TenantOrgConfig,
 )
@@ -321,6 +323,60 @@ async def is_date_postable(
             )
 
     return True, ""
+
+
+# ── Close checklist gate (Brief 3) ───────────────────────────────────────────
+
+async def checklist_complete(
+    period: AccountingPeriod,
+    db: AsyncSession,
+) -> tuple[bool, list[str]]:
+    """
+    Check whether all applicable close-checklist items are approved for this period.
+
+    "Applicable" means:
+        - is_active == True, AND
+        - applies_to == "every_close"  (always applicable), OR
+        - applies_to == "year_end_only" AND period.period_no == 12 (year-end detection).
+
+    Returns:
+        (True, [])               — if applicable list is empty or all are approved.
+        (False, [label, ...])    — if any applicable item lacks an approved completion.
+
+    Empty checklist ⇒ hard-close allowed. This is intentional: new tenants or tenants
+    that haven't configured a checklist are not blocked by this gate.
+    """
+    is_year_end = period.period_no == 12
+
+    stmt = select(CloseChecklistItem).where(
+        CloseChecklistItem.tenant_id == period.tenant_id,
+        CloseChecklistItem.is_active == True,  # noqa: E712
+    )
+    if not is_year_end:
+        # Non-year-end period: only "every_close" items apply.
+        stmt = stmt.where(CloseChecklistItem.applies_to == "every_close")
+
+    # For year-end: both "every_close" and "year_end_only" apply — no extra filter needed.
+
+    items_result = await db.execute(stmt)
+    items = items_result.scalars().all()
+
+    if not items:
+        return True, []
+
+    missing: list[str] = []
+    for item in items:
+        completion_result = await db.execute(
+            select(PeriodChecklistCompletion).where(
+                PeriodChecklistCompletion.period_id == period.id,
+                PeriodChecklistCompletion.checklist_item_id == item.id,
+                PeriodChecklistCompletion.status == "approved",
+            )
+        )
+        if completion_result.scalars().first() is None:
+            missing.append(item.label)
+
+    return (len(missing) == 0, missing)
 
 
 # ── Calendar helpers ──────────────────────────────────────────────────────────

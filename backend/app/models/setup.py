@@ -469,6 +469,92 @@ class FuturePostingException(Base):
     )
 
 
+class CloseChecklistItem(Base):
+    """
+    A tenant-defined close checklist template item (M8.3 Brief 3).
+
+    Defines what must be prepared+approved before a period can be hard-closed.
+    applies_to: "every_close" | "year_end_only" (year-end = period_no == 12).
+
+    Soft-deleted (is_active=False) rather than hard-deleted so completion history
+    in PeriodChecklistCompletion survives item changes. Deactivated items are
+    filtered out of future close checklists but old completion rows remain intact.
+    """
+
+    __tablename__ = "close_checklist_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    applies_to: Mapped[str] = mapped_column(String(20), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PeriodChecklistCompletion(Base):
+    """
+    Per-period sign-off record for a close checklist item (M8.3 Brief 3).
+
+    One row per (period_id, checklist_item_id) once work begins.
+    FK to close_checklist_items has NO CASCADE — completion rows survive item edits/deactivation.
+    item_label_snapshot captures the label at time of completion for history-proof auditing.
+
+    Segregation of duties: approved_by must differ from prepared_by (enforced in the router).
+    status: "pending" | "prepared" | "approved"
+    """
+
+    __tablename__ = "period_checklist_completions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("accounting_periods.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # No cascade on delete — completion rows must survive item deactivation/edit.
+    checklist_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("close_checklist_items.id"),
+        nullable=False,
+    )
+    item_label_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    prepared_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    prepared_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "period_id", "checklist_item_id",
+            name="uq_period_checklist_period_item",
+        ),
+    )
+
+
 class EmployeeOnboardingToken(Base):
     """
     Secure token for new hire self-onboarding.

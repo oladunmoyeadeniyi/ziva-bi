@@ -19,6 +19,13 @@ Endpoints:
   POST  /api/setup/periods/{id}/soft-close    Manually soft-close a period
   POST  /api/setup/periods/{id}/hard-close    Hard-close a period (sequential enforcement)
   POST  /api/setup/periods/{id}/reopen        Reopen a hard-closed period (consultant only)
+  GET   /api/setup/periods/checklist          List close checklist template items
+  POST  /api/setup/periods/checklist          Add a checklist item
+  PATCH /api/setup/periods/checklist/{id}     Update a checklist item
+  DELETE /api/setup/periods/checklist/{id}    Soft-delete a checklist item
+  GET   /api/setup/periods/{id}/checklist     Per-period checklist with completion state
+  POST  /api/setup/periods/{id}/checklist/{item_id}/prepare  Mark item prepared
+  POST  /api/setup/periods/{id}/checklist/{item_id}/approve  Mark item approved (preparer≠approver)
   GET   /api/setup/modules                    Activated modules list (with is_licensed)
   PATCH /api/setup/modules                    Update module activations (checks is_licensed)
   POST  /api/setup/dimensions/not-applicable   Mark tenant as not using dimensions
@@ -58,6 +65,7 @@ from app.models.auth import UserTenant, User, Tenant
 from app.services.periods import (
     ALLOWED_MODULES,
     apply_auto_soft_close,
+    checklist_complete,
     compute_grace_expiry,
     generate_monthly_periods,
     get_matching_grace_row,
@@ -69,10 +77,12 @@ from app.models.expenses import TenantExpenseConfig
 from app.models.master_data import ChartOfAccount, Employee, TenantDimension
 from app.models.setup import (
     AccountingPeriod,
+    CloseChecklistItem,
     DocumentRule,
     EmployeeOnboardingToken,
     FuturePostingException,
     OrgStructureNode,
+    PeriodChecklistCompletion,
     PeriodGraceOverride,
     TenantFxConfig,
     TenantModule,
@@ -82,6 +92,9 @@ from app.models.setup import (
 from app.schemas.setup import (
     AccountingPeriodResponse,
     BrandingUpdate,
+    CloseChecklistItemCreate,
+    CloseChecklistItemResponse,
+    CloseChecklistItemUpdate,
     DocumentRuleCreate,
     DocumentRuleResponse,
     DocumentRuleUpdate,
@@ -107,6 +120,8 @@ from app.schemas.setup import (
     OrgStructureUploadResult,
     PermissionMatrixResponse,
     PermissionMatrixUpdate,
+    PeriodChecklistCompletionResponse,
+    PeriodChecklistEntryResponse,
     PeriodCheckResponse,
     PeriodGraceOverrideCreate,
     PeriodGraceOverrideResponse,
@@ -1255,10 +1270,13 @@ async def hard_close_period(
             detail="Earlier periods must be hard-closed first.",
         )
 
-    # BRIEF-3: checklist gate — replace the pass below with:
-    #   if not await checklist_complete(period_id, db):
-    #       raise HTTPException(status_code=409, detail="Close checklist incomplete.")
-    pass  # BRIEF-3: checklist gate
+    # ── Checklist gate (Brief 3) ──────────────────────────────────────────────
+    ok, missing = await checklist_complete(period, db)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Close checklist incomplete: {', '.join(missing)}",
+        )
 
     period.status = "HARD_CLOSED"
     period.hard_closed_at = datetime.now(timezone.utc)
@@ -1690,6 +1708,402 @@ async def create_future_exception(
         module=exc.module,
         reason=exc.reason,
         created_at=exc.created_at,
+    )
+
+
+# ── Close checklist template CRUD (M8.3 Brief 3) ─────────────────────────────
+
+@router.get("/periods/checklist", response_model=list[CloseChecklistItemResponse])
+async def list_checklist_items(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[CloseChecklistItemResponse]:
+    """Return all close checklist template items for this tenant, ordered by sort_order."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(CloseChecklistItem)
+        .where(CloseChecklistItem.tenant_id == tenant_id)
+        .order_by(CloseChecklistItem.sort_order, CloseChecklistItem.created_at)
+    )
+    items = result.scalars().all()
+
+    return [
+        CloseChecklistItemResponse(
+            id=str(i.id),
+            tenant_id=str(i.tenant_id),
+            label=i.label,
+            description=i.description,
+            applies_to=i.applies_to,
+            sort_order=i.sort_order,
+            is_active=i.is_active,
+            created_at=i.created_at,
+        )
+        for i in items
+    ]
+
+
+@router.post("/periods/checklist", response_model=CloseChecklistItemResponse, status_code=201)
+async def create_checklist_item(
+    data: CloseChecklistItemCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CloseChecklistItemResponse:
+    """Add a close checklist template item. applies_to must be 'every_close' or 'year_end_only'."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    if data.applies_to not in ("every_close", "year_end_only"):
+        raise HTTPException(
+            status_code=422,
+            detail="applies_to must be 'every_close' or 'year_end_only'.",
+        )
+
+    item = CloseChecklistItem(
+        tenant_id=tenant_id,
+        label=data.label,
+        description=data.description,
+        applies_to=data.applies_to,
+        sort_order=data.sort_order,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    return CloseChecklistItemResponse(
+        id=str(item.id),
+        tenant_id=str(item.tenant_id),
+        label=item.label,
+        description=item.description,
+        applies_to=item.applies_to,
+        sort_order=item.sort_order,
+        is_active=item.is_active,
+        created_at=item.created_at,
+    )
+
+
+@router.patch("/periods/checklist/{item_id}", response_model=CloseChecklistItemResponse)
+async def update_checklist_item(
+    item_id: uuid.UUID,
+    data: CloseChecklistItemUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CloseChecklistItemResponse:
+    """Edit a close checklist template item. Setting is_active=False is the soft-delete path."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(CloseChecklistItem).where(
+            CloseChecklistItem.id == item_id,
+            CloseChecklistItem.tenant_id == tenant_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Checklist item not found.")
+
+    if data.applies_to is not None and data.applies_to not in ("every_close", "year_end_only"):
+        raise HTTPException(
+            status_code=422,
+            detail="applies_to must be 'every_close' or 'year_end_only'.",
+        )
+
+    if data.label is not None:
+        item.label = data.label
+    if data.description is not None:
+        item.description = data.description
+    if data.applies_to is not None:
+        item.applies_to = data.applies_to
+    if data.sort_order is not None:
+        item.sort_order = data.sort_order
+    if data.is_active is not None:
+        item.is_active = data.is_active
+
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+
+    return CloseChecklistItemResponse(
+        id=str(item.id),
+        tenant_id=str(item.tenant_id),
+        label=item.label,
+        description=item.description,
+        applies_to=item.applies_to,
+        sort_order=item.sort_order,
+        is_active=item.is_active,
+        created_at=item.created_at,
+    )
+
+
+@router.delete("/periods/checklist/{item_id}", status_code=204)
+async def delete_checklist_item(
+    item_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Soft-delete a close checklist item (sets is_active=False).
+
+    Completion history in period_checklist_completions is preserved intact because the
+    FK has no CASCADE and item_label_snapshot holds the label at time of sign-off.
+    Hard-delete is intentionally NOT used.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(CloseChecklistItem).where(
+            CloseChecklistItem.id == item_id,
+            CloseChecklistItem.tenant_id == tenant_id,
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Checklist item not found.")
+
+    item.is_active = False
+    db.add(item)
+    await db.commit()
+
+
+# ── Per-period checklist completion (M8.3 Brief 3) ───────────────────────────
+
+@router.get(
+    "/periods/{period_id}/checklist",
+    response_model=list[PeriodChecklistEntryResponse],
+)
+async def get_period_checklist(
+    period_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[PeriodChecklistEntryResponse]:
+    """
+    Return applicable checklist items for this period, with their current completion state.
+
+    "Applicable" = active items where applies_to=='every_close' OR
+    (applies_to=='year_end_only' AND period.period_no==12).
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    period_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.id == period_id,
+            AccountingPeriod.tenant_id == tenant_id,
+        )
+    )
+    period = period_result.scalar_one_or_none()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    is_year_end = period.period_no == 12
+    items_stmt = (
+        select(CloseChecklistItem)
+        .where(
+            CloseChecklistItem.tenant_id == tenant_id,
+            CloseChecklistItem.is_active == True,  # noqa: E712
+        )
+        .order_by(CloseChecklistItem.sort_order, CloseChecklistItem.created_at)
+    )
+    if not is_year_end:
+        items_stmt = items_stmt.where(CloseChecklistItem.applies_to == "every_close")
+
+    items_result = await db.execute(items_stmt)
+    items = items_result.scalars().all()
+
+    entries: list[PeriodChecklistEntryResponse] = []
+    for item in items:
+        comp_result = await db.execute(
+            select(PeriodChecklistCompletion).where(
+                PeriodChecklistCompletion.period_id == period_id,
+                PeriodChecklistCompletion.checklist_item_id == item.id,
+            )
+        )
+        comp = comp_result.scalar_one_or_none()
+
+        entries.append(
+            PeriodChecklistEntryResponse(
+                checklist_item_id=str(item.id),
+                label=item.label,
+                description=item.description,
+                applies_to=item.applies_to,
+                sort_order=item.sort_order,
+                completion_id=str(comp.id) if comp else None,
+                status=comp.status if comp else "pending",
+                prepared_by=str(comp.prepared_by) if comp and comp.prepared_by else None,
+                prepared_at=comp.prepared_at if comp else None,
+                approved_by=str(comp.approved_by) if comp and comp.approved_by else None,
+                approved_at=comp.approved_at if comp else None,
+            )
+        )
+
+    return entries
+
+
+@router.post(
+    "/periods/{period_id}/checklist/{item_id}/prepare",
+    response_model=PeriodChecklistCompletionResponse,
+)
+async def prepare_checklist_item(
+    period_id: uuid.UUID,
+    item_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PeriodChecklistCompletionResponse:
+    """
+    Mark a checklist item as prepared for this period.
+
+    Creates the completion row if it doesn't exist (snapshotting the item label).
+    If the item is already approved, returns 409.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    period_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.id == period_id,
+            AccountingPeriod.tenant_id == tenant_id,
+        )
+    )
+    period = period_result.scalar_one_or_none()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    item_result = await db.execute(
+        select(CloseChecklistItem).where(
+            CloseChecklistItem.id == item_id,
+            CloseChecklistItem.tenant_id == tenant_id,
+        )
+    )
+    item = item_result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Checklist item not found.")
+
+    comp_result = await db.execute(
+        select(PeriodChecklistCompletion).where(
+            PeriodChecklistCompletion.period_id == period_id,
+            PeriodChecklistCompletion.checklist_item_id == item_id,
+        )
+    )
+    comp = comp_result.scalar_one_or_none()
+
+    if comp and comp.status == "approved":
+        raise HTTPException(status_code=409, detail="Item is already approved and cannot be re-prepared.")
+
+    now = datetime.now(timezone.utc)
+    if comp is None:
+        comp = PeriodChecklistCompletion(
+            tenant_id=tenant_id,
+            period_id=period_id,
+            checklist_item_id=item_id,
+            item_label_snapshot=item.label,
+            prepared_by=current_user.user_id,
+            prepared_at=now,
+            status="prepared",
+        )
+        db.add(comp)
+    else:
+        comp.prepared_by = current_user.user_id
+        comp.prepared_at = now
+        comp.status = "prepared"
+        db.add(comp)
+
+    await db.commit()
+    await db.refresh(comp)
+
+    return PeriodChecklistCompletionResponse(
+        id=str(comp.id),
+        period_id=str(comp.period_id),
+        checklist_item_id=str(comp.checklist_item_id),
+        item_label_snapshot=comp.item_label_snapshot,
+        status=comp.status,
+        prepared_by=str(comp.prepared_by) if comp.prepared_by else None,
+        prepared_at=comp.prepared_at,
+        approved_by=str(comp.approved_by) if comp.approved_by else None,
+        approved_at=comp.approved_at,
+        created_at=comp.created_at,
+    )
+
+
+@router.post(
+    "/periods/{period_id}/checklist/{item_id}/approve",
+    response_model=PeriodChecklistCompletionResponse,
+)
+async def approve_checklist_item(
+    period_id: uuid.UUID,
+    item_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PeriodChecklistCompletionResponse:
+    """
+    Mark a checklist item as approved for this period.
+
+    Segregation of duties: the approver must be a different user than the preparer.
+    Returns 409 if the item is not yet prepared, or if the approver == preparer.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    period_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.id == period_id,
+            AccountingPeriod.tenant_id == tenant_id,
+        )
+    )
+    period = period_result.scalar_one_or_none()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found.")
+
+    item_result = await db.execute(
+        select(CloseChecklistItem).where(
+            CloseChecklistItem.id == item_id,
+            CloseChecklistItem.tenant_id == tenant_id,
+        )
+    )
+    if not item_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Checklist item not found.")
+
+    comp_result = await db.execute(
+        select(PeriodChecklistCompletion).where(
+            PeriodChecklistCompletion.period_id == period_id,
+            PeriodChecklistCompletion.checklist_item_id == item_id,
+        )
+    )
+    comp = comp_result.scalar_one_or_none()
+
+    if comp is None or comp.status == "pending":
+        raise HTTPException(status_code=409, detail="Item must be prepared before approval.")
+
+    if comp.status == "approved":
+        raise HTTPException(status_code=409, detail="Item is already approved.")
+
+    if comp.prepared_by == current_user.user_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Segregation of duties: the approver must be a different user than the preparer.",
+        )
+
+    now = datetime.now(timezone.utc)
+    comp.approved_by = current_user.user_id
+    comp.approved_at = now
+    comp.status = "approved"
+    db.add(comp)
+    await db.commit()
+    await db.refresh(comp)
+
+    return PeriodChecklistCompletionResponse(
+        id=str(comp.id),
+        period_id=str(comp.period_id),
+        checklist_item_id=str(comp.checklist_item_id),
+        item_label_snapshot=comp.item_label_snapshot,
+        status=comp.status,
+        prepared_by=str(comp.prepared_by) if comp.prepared_by else None,
+        prepared_at=comp.prepared_at,
+        approved_by=str(comp.approved_by) if comp.approved_by else None,
+        approved_at=comp.approved_at,
+        created_at=comp.created_at,
     )
 
 

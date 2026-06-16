@@ -299,6 +299,76 @@ class FuturePostingExceptionResponse(BaseModel):
     created_at: datetime
 
 
+# ── Close checklist (M8.3 Brief 3) ──────────────────────────────────────────
+
+class CloseChecklistItemCreate(BaseModel):
+    """POST /api/setup/periods/checklist — add a template item."""
+
+    label: str
+    description: Optional[str] = None
+    applies_to: str  # "every_close" | "year_end_only"
+    sort_order: int = 0
+
+
+class CloseChecklistItemUpdate(BaseModel):
+    """PATCH /api/setup/periods/checklist/{id}."""
+
+    label: Optional[str] = None
+    description: Optional[str] = None
+    applies_to: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class CloseChecklistItemResponse(BaseModel):
+    """Single close checklist template item."""
+
+    id: str
+    tenant_id: str
+    label: str
+    description: Optional[str] = None
+    applies_to: str
+    sort_order: int
+    is_active: bool
+    created_at: datetime
+
+
+class PeriodChecklistEntryResponse(BaseModel):
+    """One row returned by GET /api/setup/periods/{period_id}/checklist.
+
+    Combines the checklist item template fields with the current per-period
+    completion state (status, who prepared/approved, and when).
+    """
+
+    checklist_item_id: str
+    label: str
+    description: Optional[str] = None
+    applies_to: str
+    sort_order: int
+    # Completion state — None when no completion row exists yet (still "pending").
+    completion_id: Optional[str] = None
+    status: str  # "pending" | "prepared" | "approved"
+    prepared_by: Optional[str] = None
+    prepared_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+
+
+class PeriodChecklistCompletionResponse(BaseModel):
+    """Returned by prepare/approve endpoints."""
+
+    id: str
+    period_id: str
+    checklist_item_id: str
+    item_label_snapshot: str
+    status: str
+    prepared_by: Optional[str] = None
+    prepared_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    created_at: datetime
+
+
 # ── Modules ───────────────────────────────────────────────────────────────────
 
 class ModuleState(BaseModel):
