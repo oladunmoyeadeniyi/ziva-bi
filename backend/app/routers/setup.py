@@ -56,8 +56,11 @@ from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
 from app.models.auth import UserTenant, User, Tenant
 from app.services.periods import (
+    ALLOWED_MODULES,
     apply_auto_soft_close,
+    compute_grace_expiry,
     generate_monthly_periods,
+    get_matching_grace_row,
     initial_status_for,
     is_date_postable,
     parse_fy_start_year,
@@ -68,7 +71,9 @@ from app.models.setup import (
     AccountingPeriod,
     DocumentRule,
     EmployeeOnboardingToken,
+    FuturePostingException,
     OrgStructureNode,
+    PeriodGraceOverride,
     TenantFxConfig,
     TenantModule,
     TenantOrgConfig,
@@ -81,10 +86,14 @@ from app.schemas.setup import (
     DocumentRuleResponse,
     DocumentRuleUpdate,
     FiscalYearUpdate,
+    FuturePostingExceptionCreate,
+    FuturePostingExceptionResponse,
     FxConfigResponse,
     FxConfigUpdate,
     GeneratePeriodsRequest,
     GoLiveResponse,
+    JournalBlockResponse,
+    JournalBlockUpdate,
     ModuleState,
     ModulesResponse,
     ModulesUpdate,
@@ -99,6 +108,9 @@ from app.schemas.setup import (
     PermissionMatrixResponse,
     PermissionMatrixUpdate,
     PeriodCheckResponse,
+    PeriodGraceOverrideCreate,
+    PeriodGraceOverrideResponse,
+    PeriodGraceOverrideUpdate,
     ProgressResponse,
     RoleAssignmentCreate,
     RoleAssignmentResponse,
@@ -1133,11 +1145,15 @@ async def list_periods(
 @router.get("/periods/check", response_model=PeriodCheckResponse)
 async def check_period(
     date_str: str = Query(alias="date", description="ISO date YYYY-MM-DD"),
+    module: Optional[str] = Query(default=None, description="Posting module, e.g. expense | manual_journal"),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PeriodCheckResponse:
     """
     Check whether a specific date is open for posting by this tenant.
+
+    Optional query params (Brief 2):
+        module — enables module-specific grace rows and the manual-journal block check.
 
     Returns { postable: bool, reason: str }. The reason is empty when postable.
     """
@@ -1149,7 +1165,12 @@ async def check_period(
     except ValueError:
         raise HTTPException(status_code=422, detail="date must be in YYYY-MM-DD format.")
 
-    postable, reason = await is_date_postable(tenant_id, target, db)
+    postable, reason = await is_date_postable(
+        tenant_id, target, db,
+        user_id=current_user.user_id,
+        module=module,
+        role_tier=current_user.role_tier,
+    )
     return PeriodCheckResponse(postable=postable, reason=reason)
 
 
@@ -1289,6 +1310,387 @@ async def reopen_period(
 
     # BRIEF-4: audit log on reopen — call audit_log.record(period, current_user, "REOPEN", db)
     return _period_to_response(period)
+
+
+# ── Grace overrides (M8.3 Brief 2) ───────────────────────────────────────────
+
+_VALID_APPLIES_TO = {"all", "role", "user"}
+_VALID_PERIOD_TYPES = {"regular", "year_end"}
+_VALID_GRACE_UNITS = {"workdays", "calendar_days"}
+_VALID_ROLE_TIERS = {"consultant", "power_admin", "functional_admin"}
+
+
+async def _seed_default_grace_row(tenant_id: uuid.UUID, db: AsyncSession) -> PeriodGraceOverride:
+    """Create and persist the default grace row (3 workdays, regular, all) if absent."""
+    row = PeriodGraceOverride(
+        tenant_id=tenant_id,
+        module="default",
+        applies_to_type="all",
+        applies_to_role=None,
+        applies_to_user_id=None,
+        period_type="regular",
+        grace_value=3,
+        grace_unit="workdays",
+        is_default=True,
+    )
+    db.add(row)
+    await db.flush()
+    await db.refresh(row)
+    return row
+
+
+async def _resolve_grace_response(
+    row: PeriodGraceOverride, db: AsyncSession
+) -> PeriodGraceOverrideResponse:
+    """Build the response schema for a grace row, resolving user_id → name."""
+    user_name: Optional[str] = None
+    if row.applies_to_user_id:
+        u_result = await db.execute(
+            select(User).where(User.id == row.applies_to_user_id)
+        )
+        user = u_result.scalar_one_or_none()
+        if user:
+            user_name = getattr(user, "full_name", None) or getattr(user, "email", None)
+
+    return PeriodGraceOverrideResponse(
+        id=str(row.id),
+        tenant_id=str(row.tenant_id),
+        module=row.module,
+        applies_to_type=row.applies_to_type,
+        applies_to_role=row.applies_to_role,
+        applies_to_user_id=str(row.applies_to_user_id) if row.applies_to_user_id else None,
+        applies_to_user_name=user_name,
+        period_type=row.period_type,
+        grace_value=row.grace_value,
+        grace_unit=row.grace_unit,
+        is_default=row.is_default,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/periods/grace", response_model=list[PeriodGraceOverrideResponse])
+async def list_grace_overrides(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[PeriodGraceOverrideResponse]:
+    """
+    List all grace override rows for this tenant. Seeds the default row if none exist.
+
+    The default row (is_default=True) is always present after first access:
+        module="default", applies_to_type="all", period_type="regular",
+        grace_value=3, grace_unit="workdays".
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(PeriodGraceOverride)
+        .where(PeriodGraceOverride.tenant_id == tenant_id)
+        .order_by(PeriodGraceOverride.created_at)
+    )
+    rows = list(result.scalars().all())
+
+    if not rows:
+        default_row = await _seed_default_grace_row(tenant_id, db)
+        await db.commit()
+        await db.refresh(default_row)
+        rows = [default_row]
+
+    return [await _resolve_grace_response(r, db) for r in rows]
+
+
+@router.post("/periods/grace", response_model=PeriodGraceOverrideResponse, status_code=201)
+async def create_grace_override(
+    data: PeriodGraceOverrideCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PeriodGraceOverrideResponse:
+    """
+    Add a grace override row. Validates module + enums + conditional required fields.
+    Refuses exact-duplicate rows (same module + applies_to + period_type).
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    if data.module not in ALLOWED_MODULES:
+        raise HTTPException(status_code=422, detail=f"Invalid module '{data.module}'. Allowed: {sorted(ALLOWED_MODULES)}")
+    if data.applies_to_type not in _VALID_APPLIES_TO:
+        raise HTTPException(status_code=422, detail=f"Invalid applies_to_type '{data.applies_to_type}'.")
+    if data.period_type not in _VALID_PERIOD_TYPES:
+        raise HTTPException(status_code=422, detail=f"Invalid period_type '{data.period_type}'.")
+    if data.grace_unit not in _VALID_GRACE_UNITS:
+        raise HTTPException(status_code=422, detail=f"Invalid grace_unit '{data.grace_unit}'.")
+
+    if data.applies_to_type == "role":
+        if not data.applies_to_role:
+            raise HTTPException(status_code=422, detail="applies_to_role is required when applies_to_type='role'.")
+        if data.applies_to_role not in _VALID_ROLE_TIERS:
+            raise HTTPException(status_code=422, detail=f"Invalid applies_to_role '{data.applies_to_role}'.")
+    if data.applies_to_type == "user" and not data.applies_to_user_id:
+        raise HTTPException(status_code=422, detail="applies_to_user_id is required when applies_to_type='user'.")
+
+    # Duplicate check (same module + applies_to_type + applies_to_role/user + period_type)
+    dup_stmt = select(PeriodGraceOverride).where(
+        PeriodGraceOverride.tenant_id == tenant_id,
+        PeriodGraceOverride.module == data.module,
+        PeriodGraceOverride.applies_to_type == data.applies_to_type,
+        PeriodGraceOverride.period_type == data.period_type,
+    )
+    if data.applies_to_role:
+        dup_stmt = dup_stmt.where(PeriodGraceOverride.applies_to_role == data.applies_to_role)
+    if data.applies_to_user_id:
+        try:
+            uid = uuid.UUID(data.applies_to_user_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="applies_to_user_id must be a valid UUID.")
+        dup_stmt = dup_stmt.where(PeriodGraceOverride.applies_to_user_id == uid)
+
+    dup_result = await db.execute(dup_stmt)
+    if dup_result.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="An identical grace override row already exists.")
+
+    user_uuid: Optional[uuid.UUID] = None
+    if data.applies_to_user_id:
+        user_uuid = uuid.UUID(data.applies_to_user_id)
+
+    row = PeriodGraceOverride(
+        tenant_id=tenant_id,
+        module=data.module,
+        applies_to_type=data.applies_to_type,
+        applies_to_role=data.applies_to_role if data.applies_to_type == "role" else None,
+        applies_to_user_id=user_uuid if data.applies_to_type == "user" else None,
+        period_type=data.period_type,
+        grace_value=data.grace_value,
+        grace_unit=data.grace_unit,
+        is_default=False,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return await _resolve_grace_response(row, db)
+
+
+@router.patch("/periods/grace/{grace_id}", response_model=PeriodGraceOverrideResponse)
+async def update_grace_override(
+    grace_id: uuid.UUID,
+    data: PeriodGraceOverrideUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PeriodGraceOverrideResponse:
+    """
+    Edit a grace override row.
+
+    The default row's module, applies_to, and period_type are locked — only
+    grace_value and grace_unit may be changed. All fields editable on non-default rows.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(PeriodGraceOverride).where(
+            PeriodGraceOverride.id == grace_id,
+            PeriodGraceOverride.tenant_id == tenant_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Grace override not found.")
+
+    if row.is_default:
+        # Locked fields on the default row.
+        for locked in ("module", "applies_to_type", "applies_to_role", "applies_to_user_id", "period_type"):
+            if getattr(data, locked) is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Field '{locked}' cannot be changed on the default grace row.",
+                )
+
+    if data.grace_value is not None:
+        if data.grace_value < 0:
+            raise HTTPException(status_code=422, detail="grace_value must be non-negative.")
+        row.grace_value = data.grace_value
+    if data.grace_unit is not None:
+        if data.grace_unit not in _VALID_GRACE_UNITS:
+            raise HTTPException(status_code=422, detail=f"Invalid grace_unit '{data.grace_unit}'.")
+        row.grace_unit = data.grace_unit
+
+    if not row.is_default:
+        if data.module is not None:
+            if data.module not in ALLOWED_MODULES:
+                raise HTTPException(status_code=422, detail=f"Invalid module '{data.module}'.")
+            row.module = data.module
+        if data.applies_to_type is not None:
+            if data.applies_to_type not in _VALID_APPLIES_TO:
+                raise HTTPException(status_code=422, detail=f"Invalid applies_to_type '{data.applies_to_type}'.")
+            row.applies_to_type = data.applies_to_type
+        if data.applies_to_role is not None:
+            row.applies_to_role = data.applies_to_role
+        if data.applies_to_user_id is not None:
+            try:
+                row.applies_to_user_id = uuid.UUID(data.applies_to_user_id)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="applies_to_user_id must be a valid UUID.")
+        if data.period_type is not None:
+            if data.period_type not in _VALID_PERIOD_TYPES:
+                raise HTTPException(status_code=422, detail=f"Invalid period_type '{data.period_type}'.")
+            row.period_type = data.period_type
+
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return await _resolve_grace_response(row, db)
+
+
+@router.delete("/periods/grace/{grace_id}", status_code=204)
+async def delete_grace_override(
+    grace_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a grace override row. Refuses deletion of the default row (409)."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(PeriodGraceOverride).where(
+            PeriodGraceOverride.id == grace_id,
+            PeriodGraceOverride.tenant_id == tenant_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Grace override not found.")
+    if row.is_default:
+        raise HTTPException(status_code=409, detail="The default grace row cannot be deleted.")
+
+    await db.delete(row)
+    await db.commit()
+
+
+# ── Manual-journal block toggle (M8.3 Brief 2) ───────────────────────────────
+
+@router.get("/periods/journal-block", response_model=JournalBlockResponse)
+async def get_journal_block(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JournalBlockResponse:
+    """Return the current manual-journal block setting for this tenant."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = result.scalar_one_or_none()
+    enabled = org.block_journal_into_open_prior if org else True
+    return JournalBlockResponse(enabled=enabled)
+
+
+@router.patch("/periods/journal-block", response_model=JournalBlockResponse)
+async def set_journal_block(
+    data: JournalBlockUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JournalBlockResponse:
+    """
+    Enable or disable the manual-journal block for this tenant.
+
+    When enabled (default): blocks manual journal entries into a period while
+    any earlier period remains open. When disabled: allows free-form journal dating.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not configured.")
+
+    org.block_journal_into_open_prior = data.enabled
+    db.add(org)
+    await db.commit()
+    return JournalBlockResponse(enabled=data.enabled)
+
+
+# ── Future-dated posting exception (M8.3 Brief 2) ────────────────────────────
+
+def _can_post_future(current_user: CurrentUser, grace_rows: list[PeriodGraceOverride]) -> bool:
+    """
+    Return True if the current user is permitted to grant a future-dated exception.
+
+    Default: consultant only. Override: any grace row with module="future_exception"
+    and applies_to matching this user/role/all.
+    """
+    if current_user.role_tier == "consultant":
+        return True
+    for row in grace_rows:
+        if row.module != "future_exception":
+            continue
+        if row.applies_to_type == "all":
+            return True
+        if row.applies_to_type == "role" and row.applies_to_role == current_user.role_tier:
+            return True
+        if row.applies_to_type == "user" and row.applies_to_user_id == current_user.user_id:
+            return True
+    return False
+
+
+@router.post("/periods/future-exception", response_model=FuturePostingExceptionResponse, status_code=201)
+async def create_future_exception(
+    data: FuturePostingExceptionCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FuturePostingExceptionResponse:
+    """
+    Record a permission grant for a future-dated posting.
+
+    Access: consultant by default, or any user/role covered by a
+    future_exception grace row. Returns 403 otherwise.
+
+    This endpoint records the *intent* only — it does NOT itself create a journal entry.
+    The posting engine (a later brief) will verify a valid exception exists before
+    allowing a journal entry dated in a FUTURE period.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    if data.module not in ALLOWED_MODULES:
+        raise HTTPException(status_code=422, detail=f"Invalid module '{data.module}'.")
+
+    # Load grace rows for permission check.
+    grace_result = await db.execute(
+        select(PeriodGraceOverride).where(PeriodGraceOverride.tenant_id == tenant_id)
+    )
+    grace_rows = list(grace_result.scalars().all())
+
+    if not _can_post_future(current_user, grace_rows):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not permitted to create future-dated posting exceptions.",
+        )
+
+    exc = FuturePostingException(
+        tenant_id=tenant_id,
+        created_by=current_user.user_id,
+        target_date=data.target_date,
+        module=data.module,
+        reason=data.reason,
+    )
+    db.add(exc)
+    await db.commit()
+    await db.refresh(exc)
+
+    return FuturePostingExceptionResponse(
+        id=str(exc.id),
+        tenant_id=str(exc.tenant_id),
+        created_by=str(exc.created_by),
+        target_date=exc.target_date,
+        module=exc.module,
+        reason=exc.reason,
+        created_at=exc.created_at,
+    )
 
 
 # ── Modules ────────────────────────────────────────────────────────────────────

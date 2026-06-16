@@ -291,6 +291,11 @@ class TenantOrgConfig(Base):
     branding: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     # Configuration tab — financial features, tax applicability, governance
     org_configuration: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # M8.3 Brief 2 — manual-journal block: when True, block manual journal entries into a
+    # period when any earlier period is not yet HARD_CLOSED. Default ON (conservative).
+    block_journal_into_open_prior: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true", default=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -388,6 +393,79 @@ class AccountingPeriod(Base):
             "tenant_id", "fiscal_year", "period_no",
             name="uq_accounting_periods_tenant_year_no"
         ),
+    )
+
+
+class PeriodGraceOverride(Base):
+    """
+    Grace-window override rows for the period close engine (M8.3 Brief 2).
+
+    Each row defines how many days after soft-close posting is allowed, for a
+    specific combination of module, applies_to, and period_type.
+
+    Exactly one row per tenant should be the system default:
+        module="default", applies_to_type="all", period_type="regular", is_default=True.
+    That row is auto-seeded when the tenant first fetches GET /periods/grace.
+
+    Allowed module values: default | expense | manual_journal | future_exception
+    applies_to_type: all | role | user
+    period_type: regular | year_end
+    grace_unit: workdays | calendar_days
+    """
+
+    __tablename__ = "period_grace_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    module: Mapped[str] = mapped_column(String(50), nullable=False)
+    applies_to_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    applies_to_role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    applies_to_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    period_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    grace_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    grace_unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FuturePostingException(Base):
+    """
+    Audit log of deliberate future-dated posting grants (M8.3 Brief 2).
+
+    A permitted role calls POST /periods/future-exception to create a row here,
+    recording that they intend to post a journal entry into a FUTURE period.
+    The posting engine (later briefs) will check for a valid row before allowing
+    the dated entry.
+
+    created_by references users.id (not FK-constrained to avoid cross-schema deps).
+    """
+
+    __tablename__ = "future_posting_exceptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    module: Mapped[str] = mapped_column(String(50), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

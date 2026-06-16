@@ -215,6 +215,90 @@ class PeriodCheckResponse(BaseModel):
     reason: str
 
 
+# ── Grace overrides (M8.3 Brief 2) ───────────────────────────────────────────
+
+class PeriodGraceOverrideResponse(BaseModel):
+    """Single grace override row."""
+
+    id: str
+    tenant_id: str
+    module: str
+    applies_to_type: str
+    applies_to_role: Optional[str] = None
+    applies_to_user_id: Optional[str] = None
+    applies_to_user_name: Optional[str] = None  # resolved from users table
+    period_type: str
+    grace_value: int
+    grace_unit: str
+    is_default: bool
+    created_at: datetime
+
+
+class PeriodGraceOverrideCreate(BaseModel):
+    """POST /api/setup/periods/grace."""
+
+    module: str
+    applies_to_type: str
+    applies_to_role: Optional[str] = None
+    applies_to_user_id: Optional[str] = None
+    period_type: str
+    grace_value: int
+    grace_unit: str
+
+
+class PeriodGraceOverrideUpdate(BaseModel):
+    """PATCH /api/setup/periods/grace/{id}.
+
+    Only grace_value and grace_unit are editable on the default row.
+    All fields editable on non-default rows.
+    """
+
+    grace_value: Optional[int] = None
+    grace_unit: Optional[str] = None
+    # Non-default rows only:
+    module: Optional[str] = None
+    applies_to_type: Optional[str] = None
+    applies_to_role: Optional[str] = None
+    applies_to_user_id: Optional[str] = None
+    period_type: Optional[str] = None
+
+
+# ── Manual-journal block (M8.3 Brief 2) ──────────────────────────────────────
+
+class JournalBlockUpdate(BaseModel):
+    """PATCH /api/setup/periods/journal-block."""
+
+    enabled: bool
+
+
+class JournalBlockResponse(BaseModel):
+    """Response for GET/PATCH /api/setup/periods/journal-block."""
+
+    enabled: bool
+
+
+# ── Future-dated posting exception (M8.3 Brief 2) ────────────────────────────
+
+class FuturePostingExceptionCreate(BaseModel):
+    """POST /api/setup/periods/future-exception."""
+
+    target_date: date
+    module: str
+    reason: str
+
+
+class FuturePostingExceptionResponse(BaseModel):
+    """Returned by POST /api/setup/periods/future-exception."""
+
+    id: str
+    tenant_id: str
+    created_by: str
+    target_date: date
+    module: str
+    reason: str
+    created_at: datetime
+
+
 # ── Modules ───────────────────────────────────────────────────────────────────
 
 class ModuleState(BaseModel):
