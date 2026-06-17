@@ -369,6 +369,62 @@ class PeriodChecklistCompletionResponse(BaseModel):
     created_at: datetime
 
 
+# ── Year-end two-stage close + audit log (M8.3 Brief 4) ─────────────────────
+
+class ReopenRequest(BaseModel):
+    """Optional body for POST /api/setup/periods/{id}/reopen — reason for audit trail."""
+
+    reason: Optional[str] = None
+
+
+class FiscalYearStateResponse(BaseModel):
+    """Returned by year-state GET/PATCH and management/statutory-close POST."""
+
+    id: Optional[str] = None
+    tenant_id: str
+    fiscal_year: str
+    status: str  # OPEN | AUDIT_PENDING | AUDIT_OVERDUE | STATUTORY_CLOSED
+    management_closed_at: Optional[datetime] = None
+    management_closed_by: Optional[str] = None
+    audit_grace_months: int
+    audit_grace_expires_at: Optional[datetime] = None
+    statutory_closed_at: Optional[datetime] = None
+    statutory_closed_by: Optional[str] = None
+    retained_earnings_rolled: bool = False
+    created_at: Optional[datetime] = None
+
+
+class ManagementCloseRequest(BaseModel):
+    """POST /api/setup/periods/management-close."""
+
+    fiscal_year_label: str
+
+
+class StatutoryCloseRequest(BaseModel):
+    """POST /api/setup/periods/statutory-close."""
+
+    fiscal_year_label: str
+
+
+class AuditGraceUpdate(BaseModel):
+    """PATCH /api/setup/periods/year-state/{fiscal_year} — update per-year grace window."""
+
+    audit_grace_months: int
+
+
+class PeriodAuditLogResponse(BaseModel):
+    """Single period audit log entry."""
+
+    id: str
+    tenant_id: str
+    fiscal_year: Optional[str] = None
+    period_id: Optional[str] = None
+    action: str
+    actor_id: str
+    detail: Optional[str] = None
+    created_at: datetime
+
+
 # ── Modules ───────────────────────────────────────────────────────────────────
 
 class ModuleState(BaseModel):

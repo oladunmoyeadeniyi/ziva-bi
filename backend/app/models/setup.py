@@ -10,6 +10,12 @@ Tables:
     tenant_org_config            — organisation identity, org structure, branding, fiscal year
     org_structure                — hierarchical org nodes (M8.2 fixes)
     accounting_periods           — period state machine (M8.3 Brief 1 — replaces fiscal_periods)
+    period_grace_overrides       — per-tenant/user/role grace windows (M8.3 Brief 2)
+    future_posting_exceptions    — deliberate future-dated posting grants (M8.3 Brief 2)
+    close_checklist_items        — tenant close-checklist template (M8.3 Brief 3)
+    period_checklist_completions — per-period sign-off records (M8.3 Brief 3)
+    fiscal_year_states           — year-level two-stage close state (M8.3 Brief 4)
+    period_audit_logs            — append-only audit trail for period actions (M8.3 Brief 4)
     employee_onboarding_tokens   — secure self-onboarding tokens for new hires (M8.2 fixes)
 
 All tables are tenant-scoped via tenant_id FK → tenants(id).
@@ -20,6 +26,12 @@ Period status values (accounting_periods.status):
     SOFT_CLOSED — month ended but not hard-closed; posting still allowed (Brief 2 refines this)
     OVERDUE     — informational flag: grace expired without hard-close (Brief 2 sets this)
     HARD_CLOSED — manually hard-closed; no posting allowed
+
+FiscalYearState status values:
+    OPEN             — year running normally
+    AUDIT_PENDING    — December hard-closed; audit grace window active
+    AUDIT_OVERDUE    — audit grace expired; visual flag only (new year keeps running)
+    STATUTORY_CLOSED — permanently locked; all periods in this FY refuse posting/reopen
 """
 
 import uuid
@@ -296,6 +308,11 @@ class TenantOrgConfig(Base):
     block_journal_into_open_prior: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true", default=True
     )
+    # M8.3 Brief 4 — default audit grace months: how many whole months after management close
+    # before the fiscal year is flagged AUDIT_OVERDUE (visual only). Seeds FiscalYearState.audit_grace_months.
+    default_audit_grace_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="3", default=3
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -552,6 +569,89 @@ class PeriodChecklistCompletion(Base):
             "period_id", "checklist_item_id",
             name="uq_period_checklist_period_item",
         ),
+    )
+
+
+class FiscalYearState(Base):
+    """
+    Year-level status wrapper for the two-stage year-end close (M8.3 Brief 4).
+
+    Tracks a fiscal year through: OPEN → AUDIT_PENDING → AUDIT_OVERDUE → STATUTORY_CLOSED.
+
+    Management close (stage 1): December hard-closed → year enters AUDIT_PENDING.
+    Audit grace window: tenant-configurable (default 3 months from management_closed_at).
+    AUDIT_OVERDUE: auto-transition on read when grace expires — visual only, nothing blocked.
+    Statutory close (stage 2): permanent lock — is_date_postable refuses any date in this FY.
+
+    audit_grace_months seeds from TenantOrgConfig.default_audit_grace_months at management
+    close and can be overridden per-year via PATCH /periods/year-state/{fy}.
+    """
+
+    __tablename__ = "fiscal_year_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    fiscal_year: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
+    management_closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    management_closed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # audit_grace_months: seeded from TenantOrgConfig.default_audit_grace_months at management close.
+    audit_grace_months: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    audit_grace_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    statutory_closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    statutory_closed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # Guard against double roll-forward postings (GL journal stub for M8.x).
+    retained_earnings_rolled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "fiscal_year",
+            name="uq_fiscal_year_states_tenant_year",
+        ),
+    )
+
+
+class PeriodAuditLog(Base):
+    """
+    Append-only audit trail for period management actions (M8.3 Brief 4).
+
+    Satisfies the # BRIEF-4: audit log on reopen hook and captures year-end events.
+    Recorded actions: REOPEN | MANAGEMENT_CLOSE | STATUTORY_CLOSE | HARD_CLOSE
+
+    fiscal_year and period_id are both nullable:
+        - REOPEN sets both fiscal_year and period_id
+        - MANAGEMENT_CLOSE / STATUTORY_CLOSE set fiscal_year only
+    actor_id references users.id (no FK constraint — avoids cross-schema deps).
+    """
+
+    __tablename__ = "period_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    fiscal_year: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    period_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

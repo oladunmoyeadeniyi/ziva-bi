@@ -18,7 +18,12 @@ Endpoints:
   GET   /api/setup/periods/check              Postability check for a date (?date=YYYY-MM-DD)
   POST  /api/setup/periods/{id}/soft-close    Manually soft-close a period
   POST  /api/setup/periods/{id}/hard-close    Hard-close a period (sequential enforcement)
-  POST  /api/setup/periods/{id}/reopen        Reopen a hard-closed period (consultant only)
+  POST  /api/setup/periods/{id}/reopen        Reopen a hard-closed period (consultant only; writes audit log)
+  POST  /api/setup/periods/management-close   Stage 1 year-end close (Dec must be hard-closed)
+  POST  /api/setup/periods/statutory-close    Stage 2 permanent year lock
+  GET   /api/setup/periods/year-state         FiscalYearState (seeds OPEN if absent)
+  PATCH /api/setup/periods/year-state/{fy}    Update audit grace months
+  GET   /api/setup/periods/audit-log          Period audit log (filterable)
   GET   /api/setup/periods/checklist          List close checklist template items
   POST  /api/setup/periods/checklist          Add a checklist item
   PATCH /api/setup/periods/checklist/{id}     Update a checklist item
@@ -54,7 +59,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func as sqlfunc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,7 +69,9 @@ from app.middleware.auth import CurrentUser, require_auth
 from app.models.auth import UserTenant, User, Tenant
 from app.services.periods import (
     ALLOWED_MODULES,
+    add_months,
     apply_auto_soft_close,
+    check_audit_overdue,
     checklist_complete,
     compute_grace_expiry,
     generate_monthly_periods,
@@ -80,8 +87,10 @@ from app.models.setup import (
     CloseChecklistItem,
     DocumentRule,
     EmployeeOnboardingToken,
+    FiscalYearState,
     FuturePostingException,
     OrgStructureNode,
+    PeriodAuditLog,
     PeriodChecklistCompletion,
     PeriodGraceOverride,
     TenantFxConfig,
@@ -91,6 +100,7 @@ from app.models.setup import (
 )
 from app.schemas.setup import (
     AccountingPeriodResponse,
+    AuditGraceUpdate,
     BrandingUpdate,
     CloseChecklistItemCreate,
     CloseChecklistItemResponse,
@@ -98,6 +108,7 @@ from app.schemas.setup import (
     DocumentRuleCreate,
     DocumentRuleResponse,
     DocumentRuleUpdate,
+    FiscalYearStateResponse,
     FiscalYearUpdate,
     FuturePostingExceptionCreate,
     FuturePostingExceptionResponse,
@@ -107,6 +118,7 @@ from app.schemas.setup import (
     GoLiveResponse,
     JournalBlockResponse,
     JournalBlockUpdate,
+    ManagementCloseRequest,
     ModuleState,
     ModulesResponse,
     ModulesUpdate,
@@ -120,6 +132,7 @@ from app.schemas.setup import (
     OrgStructureUploadResult,
     PermissionMatrixResponse,
     PermissionMatrixUpdate,
+    PeriodAuditLogResponse,
     PeriodChecklistCompletionResponse,
     PeriodChecklistEntryResponse,
     PeriodCheckResponse,
@@ -127,10 +140,12 @@ from app.schemas.setup import (
     PeriodGraceOverrideResponse,
     PeriodGraceOverrideUpdate,
     ProgressResponse,
+    ReopenRequest,
     RoleAssignmentCreate,
     RoleAssignmentResponse,
     RoleAssignmentUpdate,
     SectionStatus,
+    StatutoryCloseRequest,
     TaxConfigResponse,
     TaxConfigUpdate,
 )
@@ -1290,6 +1305,7 @@ async def hard_close_period(
 @router.post("/periods/{period_id}/reopen", response_model=AccountingPeriodResponse)
 async def reopen_period(
     period_id: uuid.UUID,
+    data: Optional[ReopenRequest] = Body(default=None),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> AccountingPeriodResponse:
@@ -1297,8 +1313,9 @@ async def reopen_period(
     Reopen a HARD_CLOSED period — restricted to consultant role.
 
     Sets status back to SOFT_CLOSED and increments reopened_count.
-    BRIEF-4: audit log — after persisting, write an audit entry recording who
-    reopened the period and when. Stub comment: # BRIEF-4: audit log on reopen
+    Refuses (409) if the period's fiscal year is STATUTORY_CLOSED.
+    Accepts an optional body: { reason: string } for the audit trail.
+    Writes a PeriodAuditLog REOPEN entry (Brief 4 — fills the hook).
     """
     if current_user.role_tier != "consultant":
         raise HTTPException(status_code=403, detail="Only consultants may reopen hard-closed periods.")
@@ -1318,16 +1335,314 @@ async def reopen_period(
     if period.status != "HARD_CLOSED":
         raise HTTPException(status_code=409, detail="Only HARD_CLOSED periods can be reopened.")
 
+    # ── Statutory-closed guard (Brief 4) ─────────────────────────────────────
+    fy_result = await db.execute(
+        select(FiscalYearState).where(
+            FiscalYearState.tenant_id == tenant_id,
+            FiscalYearState.fiscal_year == period.fiscal_year,
+        )
+    )
+    fy_state = fy_result.scalar_one_or_none()
+    if fy_state and fy_state.status == "STATUTORY_CLOSED":
+        raise HTTPException(
+            status_code=409,
+            detail="This period's fiscal year is permanently locked (statutory closed) and cannot be reopened.",
+        )
+
     period.status = "SOFT_CLOSED"
     period.hard_closed_at = None
     period.hard_closed_by = None
     period.reopened_count += 1
     db.add(period)
+
+    # ── Audit log (Brief 4 — fills # BRIEF-4: audit log on reopen hook) ──────
+    audit = PeriodAuditLog(
+        tenant_id=tenant_id,
+        period_id=period.id,
+        fiscal_year=period.fiscal_year,
+        action="REOPEN",
+        actor_id=current_user.user_id,
+        detail=data.reason if data and data.reason else None,
+    )
+    db.add(audit)
     await db.commit()
     await db.refresh(period)
-
-    # BRIEF-4: audit log on reopen — call audit_log.record(period, current_user, "REOPEN", db)
     return _period_to_response(period)
+
+
+# ── Year-end helpers (M8.3 Brief 4) ─────────────────────────────────────────
+
+async def _get_or_seed_fy_state(
+    tenant_id: uuid.UUID,
+    fiscal_year: str,
+    db: AsyncSession,
+    org: Optional[TenantOrgConfig] = None,
+) -> FiscalYearState:
+    """Return the FiscalYearState for this tenant+FY, seeding an OPEN row if absent."""
+    result = await db.execute(
+        select(FiscalYearState).where(
+            FiscalYearState.tenant_id == tenant_id,
+            FiscalYearState.fiscal_year == fiscal_year,
+        )
+    )
+    fy = result.scalar_one_or_none()
+    if fy is None:
+        grace = org.default_audit_grace_months if org else 3
+        fy = FiscalYearState(
+            tenant_id=tenant_id,
+            fiscal_year=fiscal_year,
+            status="OPEN",
+            audit_grace_months=grace,
+        )
+        db.add(fy)
+        await db.commit()
+        await db.refresh(fy)
+    return fy
+
+
+def _fy_state_to_response(fy: FiscalYearState) -> FiscalYearStateResponse:
+    """Convert a FiscalYearState ORM row to its response schema."""
+    return FiscalYearStateResponse(
+        id=str(fy.id),
+        tenant_id=str(fy.tenant_id),
+        fiscal_year=fy.fiscal_year,
+        status=fy.status,
+        management_closed_at=fy.management_closed_at,
+        management_closed_by=str(fy.management_closed_by) if fy.management_closed_by else None,
+        audit_grace_months=fy.audit_grace_months,
+        audit_grace_expires_at=fy.audit_grace_expires_at,
+        statutory_closed_at=fy.statutory_closed_at,
+        statutory_closed_by=str(fy.statutory_closed_by) if fy.statutory_closed_by else None,
+        retained_earnings_rolled=fy.retained_earnings_rolled,
+        created_at=fy.created_at,
+    )
+
+
+# ── Year-end endpoints (M8.3 Brief 4) ────────────────────────────────────────
+
+@router.post("/periods/management-close", response_model=FiscalYearStateResponse)
+async def management_close(
+    data: ManagementCloseRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FiscalYearStateResponse:
+    """
+    Stage 1 of year-end close: management close of a fiscal year.
+
+    Precondition: December (period_no 12) of the FY must be HARD_CLOSED.
+    Transitions FiscalYearState OPEN → AUDIT_PENDING. Sets audit_grace_expires_at.
+    Sets retained_earnings_rolled=True; actual GL roll-forward journal is stubbed below.
+    Writes a MANAGEMENT_CLOSE PeriodAuditLog entry.
+    Idempotent: returns 409 if already AUDIT_PENDING or STATUTORY_CLOSED.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+    fiscal_year = data.fiscal_year_label.strip()
+
+    org_result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+
+    fy = await _get_or_seed_fy_state(tenant_id, fiscal_year, db, org)
+
+    if fy.status in ("AUDIT_PENDING", "AUDIT_OVERDUE", "STATUTORY_CLOSED"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Fiscal year {fiscal_year} is already in status {fy.status}.",
+        )
+
+    # December (period_no 12) must be HARD_CLOSED before management close.
+    dec_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == fiscal_year,
+            AccountingPeriod.period_no == 12,
+        )
+    )
+    dec = dec_result.scalar_one_or_none()
+    if not dec or dec.status != "HARD_CLOSED":
+        raise HTTPException(
+            status_code=409,
+            detail="December (period 12) must be hard-closed before management close.",
+        )
+
+    now = datetime.now(timezone.utc)
+    fy.status = "AUDIT_PENDING"
+    fy.management_closed_at = now
+    fy.management_closed_by = current_user.user_id
+    fy.audit_grace_expires_at = add_months(now, fy.audit_grace_months)
+    fy.retained_earnings_rolled = True
+    db.add(fy)
+
+    audit = PeriodAuditLog(
+        tenant_id=tenant_id,
+        fiscal_year=fiscal_year,
+        action="MANAGEMENT_CLOSE",
+        actor_id=current_user.user_id,
+        detail=f"Management close of {fiscal_year}; audit grace {fy.audit_grace_months} months.",
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(fy)
+
+    # M8.x: post retained-earnings roll-forward journal here (posting engine required)
+
+    return _fy_state_to_response(fy)
+
+
+@router.post("/periods/statutory-close", response_model=FiscalYearStateResponse)
+async def statutory_close(
+    data: StatutoryCloseRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FiscalYearStateResponse:
+    """
+    Stage 2 of year-end close: statutory (permanent) close of a fiscal year.
+
+    Precondition: FiscalYearState must be AUDIT_PENDING or AUDIT_OVERDUE.
+    Once STATUTORY_CLOSED: is_date_postable refuses any date in this FY; periods cannot be reopened.
+
+    Audit-artifact prerequisites (audited TB, signed AFS, CFO sign-off) are gated in M8.4.
+    This brief leaves the artifact gate open with a clearly-marked stub.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+    fiscal_year = data.fiscal_year_label.strip()
+
+    org_result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+
+    fy = await _get_or_seed_fy_state(tenant_id, fiscal_year, db, org)
+
+    if fy.status not in ("AUDIT_PENDING", "AUDIT_OVERDUE"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Statutory close requires AUDIT_PENDING or AUDIT_OVERDUE status; "
+                f"current: {fy.status}."
+            ),
+        )
+
+    # M8.4: require audited TB + signed AFS + CFO sign-off before allowing statutory close
+    # (artifact checks will be inserted here in M8.4 — gate is open in this brief)
+
+    now = datetime.now(timezone.utc)
+    fy.status = "STATUTORY_CLOSED"
+    fy.statutory_closed_at = now
+    fy.statutory_closed_by = current_user.user_id
+    db.add(fy)
+
+    audit = PeriodAuditLog(
+        tenant_id=tenant_id,
+        fiscal_year=fiscal_year,
+        action="STATUTORY_CLOSE",
+        actor_id=current_user.user_id,
+        detail=f"Statutory close of {fiscal_year}. Year permanently locked.",
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(fy)
+    return _fy_state_to_response(fy)
+
+
+@router.get("/periods/year-state", response_model=FiscalYearStateResponse)
+async def get_year_state(
+    fiscal_year: str = Query(...),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FiscalYearStateResponse:
+    """
+    Return the FiscalYearState for a given fiscal_year label.
+    Seeds an OPEN row if none exists (so the UI is never gated on prior management-close).
+    Auto-transitions AUDIT_PENDING → AUDIT_OVERDUE on read if grace has expired.
+    # FUTURE: move overdue check to a scheduled job (cron/celery).
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    org_result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+
+    fy = await _get_or_seed_fy_state(tenant_id, fiscal_year.strip(), db, org)
+    changed = await check_audit_overdue(fy, db)
+    if changed:
+        await db.commit()
+    return _fy_state_to_response(fy)
+
+
+@router.patch("/periods/year-state/{fiscal_year}", response_model=FiscalYearStateResponse)
+async def update_year_state(
+    fiscal_year: str,
+    data: AuditGraceUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FiscalYearStateResponse:
+    """
+    Update audit_grace_months for a fiscal year (consultant or admin).
+    Recomputes audit_grace_expires_at if the year is already management-closed.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    org_result = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org = org_result.scalar_one_or_none()
+
+    fy = await _get_or_seed_fy_state(tenant_id, fiscal_year.strip(), db, org)
+    fy.audit_grace_months = data.audit_grace_months
+
+    if fy.management_closed_at:
+        fy.audit_grace_expires_at = add_months(fy.management_closed_at, data.audit_grace_months)
+
+    db.add(fy)
+    await db.commit()
+    await db.refresh(fy)
+    return _fy_state_to_response(fy)
+
+
+@router.get("/periods/audit-log", response_model=list[PeriodAuditLogResponse])
+async def get_period_audit_log(
+    fiscal_year: Optional[str] = Query(default=None),
+    period_id: Optional[uuid.UUID] = Query(default=None),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[PeriodAuditLogResponse]:
+    """List period audit log entries; filterable by fiscal_year and/or period_id."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    stmt = (
+        select(PeriodAuditLog)
+        .where(PeriodAuditLog.tenant_id == tenant_id)
+        .order_by(PeriodAuditLog.created_at.desc())
+    )
+    if fiscal_year:
+        stmt = stmt.where(PeriodAuditLog.fiscal_year == fiscal_year)
+    if period_id:
+        stmt = stmt.where(PeriodAuditLog.period_id == period_id)
+
+    result = await db.execute(stmt)
+    logs = result.scalars().all()
+
+    return [
+        PeriodAuditLogResponse(
+            id=str(lg.id),
+            tenant_id=str(lg.tenant_id),
+            fiscal_year=lg.fiscal_year,
+            period_id=str(lg.period_id) if lg.period_id else None,
+            action=lg.action,
+            actor_id=str(lg.actor_id),
+            detail=lg.detail,
+            created_at=lg.created_at,
+        )
+        for lg in logs
+    ]
 
 
 # ── Grace overrides (M8.3 Brief 2) ───────────────────────────────────────────

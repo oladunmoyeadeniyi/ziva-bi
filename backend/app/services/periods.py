@@ -1,25 +1,21 @@
 """
-ZivaBI — M8.3 Period Engine service module (Briefs 1, 2 & 3 of 4).
+ZivaBI — M8.3 Period Engine service module (Briefs 1–4 of 4).
 
 Provides:
-    is_date_postable   — reusable postability check for any posting engine to call.
-    apply_auto_soft_close — transitions an OPEN period to SOFT_CLOSED when today
-                            has moved past its end_date; also computes grace_expires_at.
-    compute_grace_expiry — converts (soft_closed_at, grace_value, grace_unit) to a
-                           timezone-aware expiry datetime.
+    is_date_postable      — reusable postability check for any posting engine to call.
+                            Now includes statutory-closed FY check (Brief 4).
+    apply_auto_soft_close — transitions OPEN → SOFT_CLOSED when today passes end_date.
+    compute_grace_expiry  — converts (soft_closed_at, grace_value, grace_unit) to expiry.
     get_matching_grace_row — finds the most-specific grace override row for a caller.
-    checklist_complete — checks all applicable close-checklist items are approved
-                         before hard-close (Brief 3).
+    checklist_complete    — checks all applicable close-checklist items are approved (Brief 3).
+    check_audit_overdue   — transitions AUDIT_PENDING → AUDIT_OVERDUE on read when grace expired (Brief 4).
+    add_months            — adds N calendar months to a datetime (used for audit-grace expiry).
     generate_monthly_periods — builds the 12 (period_no, name, start, end) tuples.
-    initial_status_for — determines initial status by comparing dates to today.
-    parse_fy_start_year — extracts starting calendar year from a FY label string.
+    initial_status_for    — determines initial status by comparing dates to today.
+    parse_fy_start_year   — extracts starting calendar year from a FY label string.
 
 Allowed module values (validated at endpoint layer; checked here for context):
     default | expense | manual_journal | future_exception
-
-Extension points for later briefs:
-    Brief 4 — audit log on reopen: in routers/setup.py reopen_period.
-              Stub comment: # BRIEF-4: audit log on reopen
 
 This module MUST NOT be imported from inside routers at module load time to avoid
 circular imports — always import at the top of the router file, not inside functions.
@@ -37,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.setup import (
     AccountingPeriod,
     CloseChecklistItem,
+    FiscalYearState,
     FuturePostingException,
     PeriodChecklistCompletion,
     PeriodGraceOverride,
@@ -261,6 +258,17 @@ async def is_date_postable(
     if period is None:
         return False, "No accounting period defined for this date."
 
+    # ── 2b. Statutory-closed fiscal year check (Brief 4) ─────────────────────
+    fy_result = await db.execute(
+        select(FiscalYearState).where(
+            FiscalYearState.tenant_id == tenant_id,
+            FiscalYearState.fiscal_year == period.fiscal_year,
+        )
+    )
+    fy_state = fy_result.scalar_one_or_none()
+    if fy_state and fy_state.status == "STATUTORY_CLOSED":
+        return False, "Fiscal year is permanently locked (statutory closed)."
+
     # Auto-soft-close in case the period slipped past while still OPEN.
     if await apply_auto_soft_close(period, db):
         await db.commit()
@@ -377,6 +385,45 @@ async def checklist_complete(
             missing.append(item.label)
 
     return (len(missing) == 0, missing)
+
+
+# ── Month arithmetic (Brief 4) ────────────────────────────────────────────────
+
+def add_months(dt: datetime, months: int) -> datetime:
+    """
+    Add a whole number of calendar months to a datetime, clamping day if needed.
+
+    Example: March 31 + 1 month → April 30 (not an error).
+    Preserves time-of-day and timezone.
+    """
+    total = dt.month - 1 + months
+    year = dt.year + total // 12
+    month = total % 12 + 1
+    day = min(dt.day, monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+# ── Audit-grace overdue transition (Brief 4) ─────────────────────────────────
+
+async def check_audit_overdue(fy_state: FiscalYearState, db: AsyncSession) -> bool:
+    """
+    If the fiscal year is AUDIT_PENDING and audit_grace_expires_at has passed,
+    transition to AUDIT_OVERDUE and persist. Visual only — does not block posting.
+
+    Returns True if the transition was made, False otherwise.
+    # FUTURE: move this to a scheduled job (cron/celery) when infrastructure allows.
+    """
+    if fy_state.status != "AUDIT_PENDING":
+        return False
+    if not fy_state.audit_grace_expires_at:
+        return False
+    if datetime.now(timezone.utc) <= fy_state.audit_grace_expires_at:
+        return False
+
+    fy_state.status = "AUDIT_OVERDUE"
+    db.add(fy_state)
+    await db.flush()
+    return True
 
 
 # ── Calendar helpers ──────────────────────────────────────────────────────────
