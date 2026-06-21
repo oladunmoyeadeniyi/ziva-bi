@@ -3,11 +3,8 @@
 /**
  * Signup page — ZivaBI.
  *
- * Two-step registration form:
- *   Step 1: Account type selection (Individual or Business)
- *   Step 2: Registration details (adapts based on chosen type)
- *
- * On success, the user is logged in automatically and redirected to their dashboard.
+ * Business accounts only. Individual account signup removed (out of scope).
+ * On success, user is logged in and redirected to /dashboard.
  */
 
 import { useState, useEffect } from "react";
@@ -65,16 +62,10 @@ const COUNTRY_CURRENCY_MAP: Record<string, { code: string; name: string }> = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-type AccountType = "individual" | "business";
-
 export default function SignupPage() {
   const { signup } = useAuth();
   const router = useRouter();
 
-  const [step, setStep] = useState<1 | 2>(1);
-  const [accountType, setAccountType] = useState<AccountType>("individual");
-
-  // Form fields
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -93,86 +84,17 @@ export default function SignupPage() {
         if (!res.ok) throw new Error("Failed");
         const data = await res.json();
         const detectedCode = data.country_code as string;
-        // Only set if the detected country exists in our COUNTRIES list
-        const exists = COUNTRIES.some((c) => c.code === detectedCode);
-        if (exists) {
+        if (COUNTRIES.some((c) => c.code === detectedCode)) {
           setCompanyCountry(detectedCode);
         }
       } catch {
-        // Silently fall back to blank — user selects manually
+        // Silently fall back — user selects manually
       } finally {
         setCountryLoading(false);
       }
     };
     detectCountry();
   }, []);
-
-  // ── Step 1: Account type selection ─────────────────────────────────────────
-
-  if (step === 1) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-        <div className="w-full max-w-2xl">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">ZivaBI</h1>
-            <p className="mt-2 text-sm text-gray-500">
-              Choose your account type to get started
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Individual card */}
-            <button
-              onClick={() => { setAccountType("individual"); setStep(2); }}
-              className="group text-left bg-white rounded-2xl border-2 border-gray-200 p-6 hover:border-blue-500 hover:shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <div className="text-3xl mb-3">👤</div>
-              <h2 className="text-lg font-semibold text-gray-900 group-hover:text-blue-700">
-                Individual
-              </h2>
-              <p className="mt-2 text-sm text-gray-500 leading-relaxed">
-                Track your personal finances — expenses, income, budgets,
-                bank reconciliation, and tax prep. Mobile-first.
-              </p>
-              <div className="mt-4 text-xs font-medium text-blue-600">
-                Personal account →
-              </div>
-            </button>
-
-            {/* Business card */}
-            <button
-              onClick={() => { setAccountType("business"); setStep(2); }}
-              className="group text-left bg-white rounded-2xl border-2 border-gray-200 p-6 hover:border-blue-500 hover:shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <div className="text-3xl mb-3">🏢</div>
-              <h2 className="text-lg font-semibold text-gray-900 group-hover:text-blue-700">
-                Business
-              </h2>
-              <p className="mt-2 text-sm text-gray-500 leading-relaxed">
-                Full finance and operations platform — expense management,
-                AP/AR, payroll, multi-tenant workflows, and more.
-              </p>
-              <div className="mt-4 text-xs font-medium text-blue-600">
-                Company account →
-              </div>
-            </button>
-          </div>
-
-          <p className="mt-8 text-center text-sm text-gray-500">
-            Already have an account?{" "}
-            <Link
-              href="/auth/login"
-              className="font-semibold text-blue-600 hover:text-blue-700"
-            >
-              Sign in
-            </Link>
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Step 2: Registration form ───────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,14 +108,12 @@ export default function SignupPage() {
     setLoading(true);
 
     const payload: SignupData = {
-      account_type: accountType,
+      account_type: "business",
       email,
       password,
       full_name: fullName,
-      ...(accountType === "business" && {
-        company_name: companyName,
-        company_country: companyCountry,
-      }),
+      company_name: companyName,
+      company_country: companyCountry,
     };
 
     try {
@@ -211,34 +131,19 @@ export default function SignupPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">ZivaBI</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            {accountType === "individual"
-              ? "Create your personal account"
-              : "Create your business account"}
-          </p>
+          <p className="mt-2 text-sm text-gray-500">Create your business account</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
-          {/* Back to step 1 */}
-          <button
-            onClick={() => { setStep(1); setError(""); }}
-            className="mb-6 flex items-center text-sm text-gray-500 hover:text-gray-700"
-          >
-            ← Change account type
-          </button>
-
-          {/* Account type badge */}
-          <div className="mb-5 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-            {accountType === "individual" ? "👤 Personal" : "🏢 Business"}
-          </div>
-
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Full name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Your full name
               </label>
-              <p className="text-xs text-gray-500 mb-1">This will be your admin account for the company.</p>
+              <p className="text-xs text-gray-500 mb-1">
+                This will be your admin account for the company.
+              </p>
               <input
                 type="text"
                 required
@@ -260,67 +165,64 @@ export default function SignupPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="you@example.com"
+                placeholder="you@company.com"
               />
             </div>
 
-            {/* Business-only fields */}
-            {accountType === "business" && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Company name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={companyName}
-                    onChange={(e) => setCompanyName(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Acme Corporation"
-                  />
-                </div>
+            {/* Company name */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Company name
+              </label>
+              <input
+                type="text"
+                required
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Acme Corporation"
+              />
+            </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Country
-                  </label>
-                  {countryLoading ? (
-                    <div className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-400 bg-gray-50">
-                      Detecting your location…
-                    </div>
-                  ) : (
-                    <select
-                      required
-                      value={companyCountry}
-                      onChange={(e) => setCompanyCountry(e.target.value)}
-                      className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">— Select country —</option>
-                      {COUNTRIES.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+            {/* Country */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Country
+              </label>
+              {countryLoading ? (
+                <div className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-400 bg-gray-50">
+                  Detecting your location…
                 </div>
+              ) : (
+                <select
+                  required
+                  value={companyCountry}
+                  onChange={(e) => setCompanyCountry(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">— Select country —</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
 
-                {companyCountry && COUNTRY_CURRENCY_MAP[companyCountry] && (
-                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
-                    <p className="text-xs font-medium text-amber-800 mb-1">
-                      Functional currency — locked after go-live (IAS 21)
-                    </p>
-                    <p className="text-sm font-semibold text-amber-900">
-                      {COUNTRY_CURRENCY_MAP[companyCountry].code} —{" "}
-                      {COUNTRY_CURRENCY_MAP[companyCountry].name}
-                    </p>
-                    <p className="text-xs text-amber-700 mt-1">
-                      Auto-detected from your country. This cannot be changed after go-live.
-                    </p>
-                  </div>
-                )}
-              </>
+            {companyCountry && COUNTRY_CURRENCY_MAP[companyCountry] && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                <p className="text-xs font-medium text-amber-800 mb-1">
+                  Functional currency — locked after go-live (IAS 21)
+                </p>
+                <p className="text-sm font-semibold text-amber-900">
+                  {COUNTRY_CURRENCY_MAP[companyCountry].code} —{" "}
+                  {COUNTRY_CURRENCY_MAP[companyCountry].name}
+                </p>
+                <p className="text-xs text-amber-700 mt-1">
+                  Auto-detected from your country. This cannot be changed after go-live.
+                </p>
+              </div>
             )}
 
             {/* Password */}
@@ -354,20 +256,18 @@ export default function SignupPage() {
               />
             </div>
 
-            {/* Error */}
             {error && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
                 {error}
               </div>
             )}
 
-            {/* Submit */}
             <button
               type="submit"
               disabled={loading}
               className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors mt-2"
             >
-              {loading ? "Creating account…" : "Create account"}
+              {loading ? "Creating account…" : "Create business account"}
             </button>
           </form>
 

@@ -1,6 +1,6 @@
 # MASTER CONTEXT — Ziva BI
 > Single source of truth. If anything conflicts with this, **this wins**.
-> Last updated: May 2026 — full rewrite by Claude (planning assistant)
+> Last updated: June 2026 — updated after OS reload + M8.3 Currencies & FX completion
 
 ---
 
@@ -293,6 +293,25 @@ All endpoints tenant-scoped via JWT. Base: /api/
 - api.ts: Omit<RequestInit, 'body'> fix for proper object body passing
 - Alembic migration l2m3n4o5p6q7: org_structure, fiscal_periods, employee_onboarding_tokens + new columns on tenants + tenant_org_config + tenant_modules
 
+### M8.3 — Currencies & FX ✅ COMPLETE (UI built; backend DB tables pending)
+
+Full rebuild of the Currencies & FX implementation portal section. Four tabs:
+
+1. **Currencies** — ISO 4217 dropdown to add active currencies per tenant; functional currency locked (IAS 21); reporting currency editable via dropdown
+2. **FX Rates** — rate entry form with date, currency pair, rate type (spot / average / closing / budget); rate history table per pair
+3. **Revaluation Rules** — one collapsible card per balance type (trade receivables, trade payables, cash & bank, intercompany, other). Each card: revaluation method selector, GL accounts for realized/unrealized gain/loss (CoA GL search), reversal GL preference, NGN settlement note for NGN-denominated FX. **Directional netting is the default revaluation method.** Complete/incomplete badge per card.
+4. **BDC Register** — bureau de change transaction log for NGN FX compliance
+
+Key decisions captured:
+- Directional netting is the default revaluation method (not gross)
+- All revaluation cards are independently collapsible
+- GL selection uses live CoA search (not hardcoded lists)
+- NGN-denominated FX balances show a settlement note (CBN compliance)
+
+**Backend status:** No new DB tables yet. Currencies, FX rates, revaluation rules, and BDC entries will require a new migration (tenant_currencies, tenant_fx_rates, tenant_revaluation_rules, tenant_bdc_entries) before the backend router is wired.
+
+---
+
 ### M8.2 Post-release Fixes ✅ COMPLETE
 All committed and pushed in May 2026 session.
 
@@ -323,36 +342,18 @@ All committed and pushed in May 2026 session.
 - Template generator rebuilt: 2-sheet xlsx (Instructions + Org Structure), Node Type dropdown validation, conditional formatting (amber row + red cell for Cost center nodes missing Cost Center Code, green cell when present), Entity Code column added
 - Upload handler reads 7 columns (was 5); `VALID_TYPES` updated to include "Division / Business unit"
 
-## 10. NEXT MILESTONE — M9 (already complete — see above)
+## 10. NEXT MILESTONE — M8.3 Backend + M8.4 Tax & Statutory
 
-Redesign the Tenant Portal to properly implement the Implementation Portal flow.
+### M8.3 Backend (immediate — unblock the Currencies & FX UI)
+The Currencies & FX UI is fully built but has no backend storage. This milestone creates the DB layer:
 
-### What changes
-1. Settings section restructured into: Common Data | Workflow & Access | Module Setup | Go-live
-2. Setup Dashboard with progress tracker and locked/unlocked checklist cards
-3. Implementation Mode banner for Consultant role
-4. Locked settings: visual lock icon + "Contact your Ziva BI consultant to modify"
-5. Org Structure page: tree view, upload, cost center mapping
-6. Fiscal Year & Periods page
-7. Currencies & FX page
-8. Tax & Statutory page
-9. Document Rules page
-10. All Module Setup pages (one per activated module — 14 total)
-11. Readiness & Go-live page with blocking/non-blocking checklist
-12. Role tier system (Consultant / Power Admin / Functional Admin)
+1. Alembic migration: `tenant_currencies`, `tenant_fx_rates`, `tenant_revaluation_rules`, `tenant_bdc_entries` tables
+2. FastAPI router: `/api/setup/currencies/*` — CRUD for all four entities
+3. Wire frontend API calls (currently returning mock/empty state)
+4. Validation: functional currency cannot be deleted; rate pair uniqueness per date
 
-### Wireframe decisions (approved — CC must match exactly)
-- Sidebar groups: Common Data | Workflow & Access | Module Setup | Go-live
-- Dimensions screen: 3 tabs (Dimension setup / Master data values / Not using dimensions?)
-- Organisation screen: 4 tabs (Identity / Structure / Branding / Fiscal year)
-- Employees screen: 4 tabs (Employee list / Upload & template / Transfers & changes / Code config)
-- Real orders and Statistical orders shown as SEPARATE sub-panels within IO dimension card
-- "Not using dimensions?" tab for companies that don't use analytical dimensions
-- Line manager assigned in employee upload — NOT in org structure
-- All 14 module setup items in sidebar (only activated ones visible)
-- Setup dashboard shows checklist cards with locked/unlocked state and progress bar
-- Locked cards show greyed state with "Requires X first" message
-- Go-live page shows blocking vs non-blocking items; "Mark live" button disabled until blocking items complete
+### M8.4 Tax & Statutory
+Implementation portal section for VAT, WHT, PAYE, and non-resident withholding rules. One card per tax type, configurable per tenant.
 
 ---
 
@@ -375,10 +376,31 @@ Redesign the Tenant Portal to properly implement the Implementation Portal flow.
 
 ## 12. KNOWN ISSUES / TECH DEBT
 
-- **Migrations not applied to production** — migrations `m3n4o5p6q7r8` (first_name) and `n4o5p6q7r8s9` (entity_code) are pushed to GitHub but must be applied on Render with `alembic upgrade head`
+- **Local DB is fresh** — OS reload in June 2026 wiped the local `ziva_dev` database. All migrations must be reapplied clean (`alembic upgrade head`). No seed data exists — tenant must be recreated via signup.
+- **Production Render DB** — run `alembic upgrade head` via the Render shell to apply latest migrations (through `f2g3h4i5j6k7`).
 - "Invalid or expired token" errors on some admin pages — restart backend + re-login
 - UI polish deferred to dedicated milestone — do not fix piecemeal
 
 ---
 
-*End of Master Context. Last updated: May 2026.*
+## 13. CURRENCY SINGLE SOURCE OF TRUTH (June 2026)
+
+Migration `f2g3h4i5j6k7` consolidated all currency identity into `tenant_org_config`:
+
+- `tenant_org_config.functional_currency` — THE authority (protected since M8.2 post-release)
+- `tenant_org_config.enabled_currencies` — NEW JSONB column: sorted list of ISO codes the tenant transacts in (e.g. `["EUR", "NGN", "USD"]`). Functional currency is always included.
+- `tenant_org_config.reporting_currency` — single authority (was duplicated in fx_config; fx_config copy dropped)
+
+`tenant_fx_config` now holds ONLY FX mechanics: `fx_rates` and `revaluation_rules`.
+
+Dropped from `tenant_fx_config`: `functional_currency`, `additional_currencies`, `reporting_currency`.
+
+Canonical read endpoint: `GET /api/setup/currencies` returns all three currency fields from `tenant_org_config` plus `fx_rates`/`revaluation_rules` from `tenant_fx_config`.
+
+`PATCH /api/setup/currencies` routes `enabled_currencies` and `reporting_currency` to `org_config`; `fx_rates`/`revaluation_rules` to `fx_config`.
+
+Bank-accounts page now reads `enabled_currencies` from the single canonical endpoint — no more multi-source merge.
+
+---
+
+*End of Master Context. Last updated: June 2026.*

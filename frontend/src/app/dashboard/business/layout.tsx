@@ -8,11 +8,13 @@
  * Implementation Mode banner for consultant role (36px, amber).
  */
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import Link from "next/link";
+import { useEffect, useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
+import type { ImpersonationState } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import AppHeader from "@/components/AppHeader";
 
 interface ApprovalQueueItem {
   approval_id: string;
@@ -70,23 +72,65 @@ const MODULE_ROUTES: Record<string, string> = {
 };
 
 
+// ── Impersonation banner ──────────────────────────────────────────────────────
+
+function ImpersonationBanner({
+  impersonation,
+  onExit,
+}: {
+  impersonation: ImpersonationState;
+  onExit: () => void;
+}) {
+  const isSupport = impersonation.mode === "support";
+  const bg = isSupport ? "#fffbeb" : "#eff6ff";
+  const border = isSupport ? "#fcd34d" : "#93c5fd";
+  const color = isSupport ? "#92400e" : "#1e40af";
+  const label = isSupport
+    ? `Support · read-only (live)`
+    : `Implementation · edit${impersonation.environment === "test" ? " · TEST" : ""}`;
+
+  return (
+    <div
+      className="flex items-center justify-between gap-2 px-4 shrink-0"
+      style={{ height: 36, background: bg, borderBottom: `0.5px solid ${border}` }}
+    >
+      <div className="flex items-center gap-2">
+        <i
+          className={`ti ti-${isSupport ? "eye" : "shield-check"}`}
+          style={{ fontSize: 13, color }}
+        />
+        <span style={{ fontSize: 11, color }}>
+          Viewing <strong>{impersonation.tenantName}</strong> — {label}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onExit}
+        style={{ fontSize: 11, color, border: `1px solid ${border}` }}
+        className="px-2 py-0.5 rounded bg-white bg-opacity-60 hover:bg-opacity-100 font-medium transition-colors"
+      >
+        Exit to platform
+      </button>
+    </div>
+  );
+}
+
+
 export default function BusinessLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, logout, accessToken } = useAuth();
+  const { user, accessToken, impersonation, exitImpersonation } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [pendingCount, setPendingCount] = useState<number>(0);
-  const [showUserMenu, setShowUserMenu] = useState(false);
   const [activeModules, setActiveModules] = useState<ModuleState[] | null>(null);
-  const [companyName, setCompanyName] = useState<string | null>(null);
   const [orgConfig, setOrgConfig] = useState<{ use_dimensions?: boolean; use_multi_currency?: boolean } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  const isAdmin = user?.is_tenant_admin || user?.is_super_admin;
-  const isConsultant = user?.role_tier === "consultant";
+  // M9.3c: config access requires super admin (impersonating or native) or power_admin tier.
+  // is_tenant_admin alone no longer grants config access (backend enforces same rule).
+  const isAdmin = user?.is_super_admin || !!impersonation || user?.role_tier === "power_admin";
 
   // Fetch pending approval badge
   useEffect(() => {
@@ -113,23 +157,6 @@ export default function BusinessLayout({
     fetchModules();
   }, [fetchModules]);
 
-  // Fetch company name from org config for profile dropdown
-  const fetchCompanyName = useCallback(async () => {
-    if (!accessToken || !isAdmin) return;
-    try {
-      const data = await apiFetch<{ legal_name?: string }>("/api/setup/org", {
-        token: accessToken,
-      });
-      if (data.legal_name) setCompanyName(data.legal_name);
-    } catch {
-      // silently fail — fall back to tenant name
-    }
-  }, [accessToken, isAdmin]);
-
-  useEffect(() => {
-    fetchCompanyName();
-  }, [fetchCompanyName]);
-
   // Fetch org configuration to conditionally show/hide sidebar links
   const fetchOrgConfig = useCallback(async () => {
     if (!accessToken || !isAdmin) return;
@@ -146,22 +173,6 @@ export default function BusinessLayout({
   useEffect(() => {
     fetchOrgConfig();
   }, [fetchOrgConfig]);
-
-  // Close dropdown on click-away
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowUserMenu(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const handleLogout = async () => {
-    await logout();
-    router.push("/");
-  };
 
   const isActive = (href: string, exact = false) =>
     exact
@@ -209,101 +220,50 @@ export default function BusinessLayout({
     </p>
   );
 
-  const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role;
+  // isExclusivelyAdmin was previously used to gate the staff nav — this was a bug:
+  // tenant founders with only the system tenant_admin role (no operational roles) got
+  // is_tenant_admin=true and has_non_admin_role=false, making isExclusivelyAdmin=true
+  // and hiding WORKSPACE + ACCOUNT entirely. Fix: WORKSPACE + ACCOUNT always render
+  // for any authenticated business user regardless of role composition.
+  const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role; // kept for future RBAC use; no longer gates the sidebar
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
 
-      {/* Implementation Mode banner — 36px, amber, consultant only */}
-      {isConsultant && (
-        <div
-          className="flex items-center gap-2 px-4 shrink-0"
-          style={{
-            height: 36,
-            background: "var(--color-background-warning, #fffbeb)",
-            borderBottom: "0.5px solid var(--color-border-warning, #fcd34d)",
-          }}
-        >
-          <Icon name="shield-check" size={13} />
-          <span style={{ fontSize: 11, color: "var(--color-text-warning, #92400e)" }}>
-            Implementation mode — you have full override access. All changes are logged against your consultant account.
-          </span>
-        </div>
+      {/* Impersonation banner — visible whenever a super admin is inside a tenant */}
+      {impersonation && (
+        <ImpersonationBanner
+          impersonation={impersonation}
+          onExit={() => { exitImpersonation(); router.push("/platform"); }}
+        />
       )}
 
-      {/* Top header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shrink-0">
-        <span className="text-lg font-bold text-gray-900">ZivaBI</span>
-
-        {/* User + company menu */}
-        <div className="relative" ref={menuRef}>
-          <button
-            type="button"
-            onClick={() => setShowUserMenu((v) => !v)}
-            className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 focus:outline-none"
-          >
-            <span className="font-medium">{user?.full_name}</span>
-            {companyName && (
-              <span className="text-gray-400 text-xs hidden sm:inline">— {companyName}</span>
-            )}
-            <Icon name="chevron-down" size={13} />
-          </button>
-
-          {showUserMenu && (
-            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
-              {/* Close button */}
-              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
-                <span className="text-xs font-medium text-gray-500 truncate max-w-[140px]">
-                  {companyName || user?.full_name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowUserMenu(false)}
-                  className="text-gray-400 hover:text-gray-600 ml-2 flex-shrink-0"
-                >
-                  <Icon name="x" size={13} />
-                </button>
-              </div>
-              <Link
-                href="/dashboard/profile"
-                onClick={() => setShowUserMenu(false)}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                <Icon name="user" size={13} />
-                Profile
-              </Link>
-              <hr className="my-1 border-gray-100" />
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
-              >
-                <Icon name="logout" size={13} />
-                Sign out
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
+      <AppHeader context="business" />
 
       {/* Body: sidebar + content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar — 240px, scrolls independently */}
         <nav className="w-60 shrink-0 bg-gray-50 border-r border-gray-200 py-2 flex flex-col overflow-y-auto h-full">
 
-          {/* User-facing items */}
-          {!isExclusivelyAdmin && (
-            <div className="px-2">
-              <NavLink href="/dashboard/business" label="Overview" icon="home" exact />
-              <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
-              <NavLink
-                href="/dashboard/business/approvals"
-                label="Approvals"
-                icon="checks"
-                badge={pendingCount}
-              />
-            </div>
-          )}
+          {/* WORKSPACE — always visible for every business user (staff and admin) */}
+          <div className="px-2">
+            <SectionLabel label="Workspace" />
+            <NavLink href="/dashboard/business" label="Home" icon="home" exact />
+            <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
+            {/* RBAC: gate Approvals to approvers once RBAC is available */}
+            <NavLink
+              href="/dashboard/business/approvals"
+              label="Approvals"
+              icon="checks"
+              badge={pendingCount}
+            />
+          </div>
+
+          {/* ACCOUNT — always visible */}
+          <div className="px-2">
+            <SectionLabel label="Account" />
+            <NavLink href="/dashboard/profile" label="Profile" icon="user" />
+          </div>
 
           {/* Admin setup sections */}
           {isAdmin && (
@@ -323,6 +283,8 @@ export default function BusinessLayout({
                   <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
                 )}
                 <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
+                <NavLink href="/dashboard/business/setup/bank-accounts" label="Bank accounts" icon="building-bank" />
+                <NavLink href="/dashboard/business/setup/account-mapping" label="Account mapping" icon="arrows-transfer-up" />
                 <NavLink href="/dashboard/business/setup/periods" label="Period management" icon="calendar" />
                 {orgConfig?.use_multi_currency && (
                   <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />

@@ -49,8 +49,10 @@ from app.schemas.auth import (
     MessageResponse,
     RefreshTokenRequest,
     SignupRequest,
+    SwitchEnvironmentRequest,
     UserResponse,
 )
+from app.middleware.auth import CurrentUser, require_auth
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -129,6 +131,7 @@ def _build_access_token(
     *,
     is_tenant_admin: bool = False,
     has_non_admin_role: bool = False,
+    environment: str = "live",
 ) -> str:
     """Assemble the JWT payload and sign it."""
     return create_access_token({
@@ -142,6 +145,8 @@ def _build_access_token(
         "has_non_admin_role": has_non_admin_role,
         # M8.2: role tier for implementation portal
         "role_tier": getattr(user_tenant, "role_tier", None),
+        # M9.0: active tenant environment
+        "environment": environment,
     })
 
 
@@ -310,6 +315,7 @@ async def signup(
         user, user_tenant, session,
         is_tenant_admin=admin_flag,
         has_non_admin_role=False,
+        environment=getattr(tenant, "environment", "live") if tenant else "live",
     )
 
     # ── 7. Audit log ──────────────────────────────────────────────────────────
@@ -404,7 +410,25 @@ async def login(
             detail="Invalid email or password.",
         )
 
-    # ── 5. Successful login ───────────────────────────────────────────────────
+    # ── 5. TOTP 2FA check (runs only when totp_enabled=True) ─────────────────
+    # Non-2FA users: totp_code is optional and ignored — no behaviour change.
+    # 2FA users: totp_code must be present and valid or login is rejected.
+    if getattr(user, "totp_enabled", False):
+        import pyotp as _pyotp
+        totp_code = getattr(data, "totp_code", None)
+        if not totp_code:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="2FA code required. Enter the 6-digit code from your authenticator app.",
+            )
+        if not _pyotp.TOTP(user.totp_secret).verify(totp_code, valid_window=1):
+            await _log_event("login.2fa_failed", db, request, user=user, tenant_id=user_tenant.tenant_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid 2FA code.",
+            )
+
+    # ── 6. Successful login ───────────────────────────────────────────────────
     user_tenant.failed_login_attempts = 0
     user_tenant.locked_until = None
     user_tenant.last_login_at = now
@@ -412,10 +436,22 @@ async def login(
     session, raw_token, _ = await _create_session_and_tokens(user_tenant, db, request)
     admin_flag = await _is_tenant_admin(user_tenant.id, db)
     non_admin_flag = await _has_non_admin_roles(user_tenant.id, db)
+    # M9.0/M9.1: read tenant, check suspension, extract environment for JWT
+    login_env = "live"
+    if user_tenant.tenant_id:
+        _t_res = await db.execute(select(Tenant).where(Tenant.id == user_tenant.tenant_id))
+        _t = _t_res.scalar_one_or_none()
+        if _t and getattr(_t, "lifecycle_status", None) == "suspended":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is suspended. Contact support.",
+            )
+        login_env = getattr(_t, "environment", "live") if _t else "live"
     access_token = _build_access_token(
         user, user_tenant, session,
         is_tenant_admin=admin_flag,
         has_non_admin_role=non_admin_flag,
+        environment=login_env,
     )
 
     await _log_event("login.success", db, request, user=user, tenant_id=user_tenant.tenant_id)
@@ -516,10 +552,22 @@ async def refresh_token(
 
     admin_flag = await _is_tenant_admin(user_tenant.id, db)
     non_admin_flag = await _has_non_admin_roles(user_tenant.id, db)
+    # M9.0/M9.1: read tenant, check suspension, extract environment for JWT
+    refresh_env = "live"
+    if user_tenant.tenant_id:
+        _rt_res = await db.execute(select(Tenant).where(Tenant.id == user_tenant.tenant_id))
+        _rt = _rt_res.scalar_one_or_none()
+        if _rt and getattr(_rt, "lifecycle_status", None) == "suspended":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is suspended. Contact support.",
+            )
+        refresh_env = getattr(_rt, "environment", "live") if _rt else "live"
     access_token = _build_access_token(
         user, user_tenant, session,
         is_tenant_admin=admin_flag,
         has_non_admin_role=non_admin_flag,
+        environment=refresh_env,
     )
     await _log_event("token.refreshed", db, request, user=user, tenant_id=user_tenant.tenant_id)
 
@@ -569,3 +617,128 @@ async def logout(
                 await _log_event("logout", db, request, user=user, tenant_id=ut.tenant_id)
 
     return MessageResponse(message="Logged out successfully.")
+
+
+# ── Switch environment (M9.0) ─────────────────────────────────────────────────
+
+@router.post("/switch-environment", response_model=AuthResponse)
+async def switch_environment(
+    data: SwitchEnvironmentRequest,
+    request: Request,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """
+    Switch the active token between live and test environments.
+
+    Resolves the counterpart tenant (live ↔ test shadow), verifies the caller
+    has a UserTenant on it, then mints a fresh access + refresh token pair
+    pointed at that tenant. The new JWT carries environment="live"|"test".
+
+    Returns the same AuthResponse shape as login so the frontend can store the
+    new token without special-casing the switch.
+    """
+    if current_user.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Environment switching requires a business account.",
+        )
+
+    # ── Load current tenant ───────────────────────────────────────────────────
+    cur_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    current_tenant: Tenant | None = cur_result.scalar_one_or_none()
+    if not current_tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Current tenant not found.")
+
+    current_env = getattr(current_tenant, "environment", "live")
+    if current_env == data.target:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Already in the {data.target} environment.",
+        )
+
+    # ── Resolve target tenant ─────────────────────────────────────────────────
+    target_tenant: Tenant | None = None
+    if current_env == "live" and data.target == "test":
+        # Shadow test tenant is the one whose parent_tenant_id points here
+        t_res = await db.execute(
+            select(Tenant).where(
+                Tenant.parent_tenant_id == current_tenant.id,
+                Tenant.environment == "test",  # type: ignore[arg-type]
+            )
+        )
+        target_tenant = t_res.scalar_one_or_none()
+        if not target_tenant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No test environment found. Create one via POST /api/tenant/create-test-environment.",
+            )
+    else:
+        # Current is test — live parent is current_tenant.parent_tenant_id
+        if not current_tenant.parent_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Test tenant has no live parent configured.",
+            )
+        t_res = await db.execute(
+            select(Tenant).where(Tenant.id == current_tenant.parent_tenant_id)
+        )
+        target_tenant = t_res.scalar_one_or_none()
+        if not target_tenant:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live parent tenant not found.")
+
+    # ── M9.1: block switch into a suspended tenant ────────────────────────────
+    if getattr(target_tenant, "lifecycle_status", None) == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The target environment's tenant is suspended. Contact support.",
+        )
+
+    # ── Verify caller has access to the target tenant ─────────────────────────
+    ut_res = await db.execute(
+        select(UserTenant).where(
+            UserTenant.user_id == current_user.user_id,
+            UserTenant.tenant_id == target_tenant.id,
+            UserTenant.is_active.is_(True),
+        )
+    )
+    target_ut: UserTenant | None = ut_res.scalar_one_or_none()
+    if not target_ut:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to the target environment.",
+        )
+
+    # ── Load the user record ──────────────────────────────────────────────────
+    user_res = await db.execute(select(User).where(User.id == current_user.user_id))
+    user: User = user_res.scalar_one()
+
+    # ── Create a fresh session + refresh token for the target tenant ──────────
+    session, raw_token, _ = await _create_session_and_tokens(target_ut, db, request)
+
+    admin_flag = await _is_tenant_admin(target_ut.id, db)
+    non_admin_flag = await _has_non_admin_roles(target_ut.id, db)
+    access_token = _build_access_token(
+        user, target_ut, session,
+        is_tenant_admin=admin_flag,
+        has_non_admin_role=non_admin_flag,
+        environment=target_tenant.environment,
+    )
+
+    await _log_event(
+        "environment.switched",
+        db, request, user=user,
+        tenant_id=target_tenant.id,
+        metadata={"from": current_env, "to": data.target},
+    )
+
+    return AuthResponse(
+        access_token=access_token,
+        refresh_token=raw_token,
+        user=UserResponse.from_orm_pair(
+            user, target_tenant.id,
+            is_tenant_admin=admin_flag,
+            has_non_admin_role=non_admin_flag,
+            role_tier=getattr(target_ut, "role_tier", None),
+        ),
+    )

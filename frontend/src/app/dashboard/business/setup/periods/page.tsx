@@ -155,7 +155,7 @@ function daysUntil(isoDate: string): number {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PeriodsPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const router = useRouter();
 
   const [tab, setTab] = useState<Tab>("periods");
@@ -178,6 +178,7 @@ export default function PeriodsPage() {
   const [closingStat, setClosingStat] = useState(false);
   const [hardClosing, setHardClosing] = useState<string | null>(null);
   const [hardCloseMsg, setHardCloseMsg] = useState<string | null>(null);
+  const [reopening, setReopening] = useState<string | null>(null);
 
   // ── Grace overrides state ─────────────────────────────────────────────────
   const [graceRows, setGraceRows] = useState<GraceOverride[]>([]);
@@ -361,6 +362,24 @@ export default function PeriodsPage() {
       setHardCloseMsg(e instanceof Error ? e.message : "Hard close failed");
     } finally {
       setHardClosing(null);
+    }
+  };
+
+  const requestReopen = async (periodId: string) => {
+    if (!accessToken) return;
+    setReopening(periodId);
+    setHardCloseMsg(null);
+    try {
+      await apiFetch(`/api/setup/periods/${periodId}/reopen`, {
+        method: "POST",
+        token: accessToken,
+      });
+      await loadPeriods();
+      await loadFyState(selectedFY);
+    } catch (e) {
+      setHardCloseMsg(e instanceof Error ? e.message : "Reopen request failed");
+    } finally {
+      setReopening(null);
     }
   };
 
@@ -753,6 +772,18 @@ export default function PeriodsPage() {
                                 {hardClosing === p.id ? "Closing…" : "Hard close"}
                               </button>
                             )}
+                            {p.status === "HARD_CLOSED" &&
+                              user?.is_super_admin &&
+                              fyState?.status !== "STATUTORY_CLOSED" && (
+                                <button
+                                  type="button"
+                                  onClick={() => requestReopen(p.id)}
+                                  disabled={reopening === p.id}
+                                  className="px-2.5 py-1 rounded text-[11px] font-medium bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50 transition-colors"
+                                >
+                                  {reopening === p.id ? "Requesting…" : "Request reopen"}
+                                </button>
+                              )}
                           </td>
                         </tr>
                       );

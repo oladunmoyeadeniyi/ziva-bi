@@ -1,15 +1,10 @@
 @import "tailwindcss";
 
+/* Force light mode app-wide. Full dark mode support is a separate future milestone. */
 :root {
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #0a0a0a;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

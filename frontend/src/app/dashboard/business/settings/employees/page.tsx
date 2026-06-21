@@ -3,14 +3,21 @@
 /**
  * Employees — /dashboard/business/settings/employees
  *
- * M8.1: Employee master data management.
- * Table with search, filter, bulk actions, add/edit/upload/transfer/code-update modals.
+ * M8.1 + Brief employee_costcenter_listupgrade:
+ *   - Cost center is now a real dropdown sourced from /api/hr/cost-centers/options
+ *     everywhere: Add modal, Invite modal, Transfer modal, list filter.
+ *   - Employee list: column-header sort, status filter, Edit modal, bulk delete.
+ *   - Bulk upload template now has in-Excel CC dropdown + Head-of-Cost-Center column.
+ *   - Upload result shows head_assignments count.
+ *   - Matches CoA page patterns for sort / bulk delete / edit modal / status filter.
  */
 
-import { useEffect, useRef, useState, Suspense } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Employee {
   id: string;
@@ -28,7 +35,7 @@ interface Employee {
   resumption_date: string | null;
 }
 
-interface DimensionValue {
+interface CostCenterOption {
   id: string;
   code: string;
   name: string;
@@ -39,6 +46,7 @@ interface UploadResult {
   updated: number;
   skipped: number;
   errors: { row: number; reason: string }[];
+  head_assignments?: number;
 }
 
 interface CodeHistory {
@@ -64,6 +72,60 @@ interface EmployeeHistory {
 }
 
 type EmpTab = "add" | "list" | "transfers" | "config";
+type SortEntry = { col: string; dir: "asc" | "desc" };
+
+// ── Sort helpers (same pattern as CoA page) ───────────────────────────────────
+
+const SORT_KEY = "ziva_employees_sort";
+
+const loadSort = (): SortEntry[] => {
+  try { const r = localStorage.getItem(SORT_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
+};
+const saveSort = (s: SortEntry[]) => {
+  try { localStorage.setItem(SORT_KEY, JSON.stringify(s)); } catch {}
+};
+const toggleSort = (sort: SortEntry[], setSort: (s: SortEntry[]) => void, col: string) => {
+  const existing = sort.find(s => s.col === col);
+  let next: SortEntry[];
+  if (!existing) next = [...sort, { col, dir: "asc" }];
+  else if (existing.dir === "asc") next = sort.map(s => s.col === col ? { ...s, dir: "desc" as const } : s);
+  else next = sort.filter(s => s.col !== col);
+  saveSort(next);
+  setSort(next);
+};
+const applySort = (list: Employee[], sort: SortEntry[]): Employee[] => {
+  if (!sort.length) return list;
+  return [...list].sort((a, b) => {
+    for (const { col, dir } of sort) {
+      let av = "", bv = "";
+      if (col === "name")   { av = `${a.last_name} ${a.first_name}`; bv = `${b.last_name} ${b.first_name}`; }
+      if (col === "code")   { av = a.employee_code ?? ""; bv = b.employee_code ?? ""; }
+      if (col === "cc")     { av = a.cost_center_name ?? ""; bv = b.cost_center_name ?? ""; }
+      if (col === "status") { av = a.is_active ? "active" : "inactive"; bv = b.is_active ? "active" : "inactive"; }
+      const cmp = av.localeCompare(bv);
+      if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
+    }
+    return 0;
+  });
+};
+
+function SortIndicator({ col, sort }: { col: string; sort: SortEntry[] }) {
+  const entry = sort.find(s => s.col === col);
+  if (!entry) return <i className="ti ti-arrows-sort text-gray-300 ml-0.5" style={{ fontSize: 11 }} />;
+  const priority = sort.indexOf(entry) + 1;
+  return (
+    <span className="inline-flex items-center text-blue-600 ml-0.5">
+      <i className={`ti ti-sort-${entry.dir === "asc" ? "ascending" : "descending"}`} style={{ fontSize: 11 }} />
+      {sort.length > 1 && <sup style={{ fontSize: 9 }}>{priority}</sup>}
+    </span>
+  );
+}
+
+// ── Input style helper ────────────────────────────────────────────────────────
+const inputCls = "w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+const selectCls = inputCls + " bg-white";
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 function EmployeesPage() {
   const { user, accessToken } = useAuth();
@@ -73,22 +135,20 @@ function EmployeesPage() {
 
   const [activeTab, setActiveTab] = useState<EmpTab>("add");
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [costCenters, setCostCenters] = useState<DimensionValue[]>([]);
+  const [costCenterOptions, setCostCenterOptions] = useState<CostCenterOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Filters & sort
   const [search, setSearch] = useState("");
   const [filterCostCenter, setFilterCostCenter] = useState("");
-
-  // Self-onboarding invite
-  const [showInvite, setShowInvite] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ first_name: "", last_name: "", email: "", cost_center_id: "", start_date: "" });
-  const [inviting, setInviting] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("active");
+  const [sort, setSort] = useState<SortEntry[]>(loadSort);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkAction, setBulkAction] = useState<"activate" | "deactivate" | null>(null);
+  const [bulkAction, setBulkAction] = useState<"activate" | "deactivate" | "delete" | null>(null);
+  const [bulkConfirmText, setBulkConfirmText] = useState("");
   const [bulkProcessing, setBulkProcessing] = useState(false);
 
   // Add modal
@@ -96,6 +156,12 @@ function EmployeesPage() {
   const [addForm, setAddForm] = useState({ first_name: "", last_name: "", email: "", phone: "", employee_code: "", cost_center_id: "", resumption_date: "" });
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+
+  // Edit modal (matching CoA pattern)
+  const [editEmpId, setEditEmpId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ first_name: "", last_name: "", other_name: "", preferred_name: "", phone: "", cost_center_id: "", resumption_date: "" });
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Upload
   const [uploading, setUploading] = useState(false);
@@ -123,6 +189,13 @@ function EmployeesPage() {
   const [history, setHistory] = useState<EmployeeHistory | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Self-onboarding invite
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ first_name: "", last_name: "", email: "", cost_center_id: "", start_date: "" });
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+
   useEffect(() => {
     if (!user) return;
     if (!user.is_tenant_admin && !user.is_super_admin) router.replace("/dashboard/business");
@@ -135,24 +208,14 @@ function EmployeesPage() {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       if (filterCostCenter) params.set("cost_center_id", filterCostCenter);
-      const [emps, dims] = await Promise.all([
+      // Fetch all employees (active_only=false) then filter client-side for status
+      const [emps, ccOpts] = await Promise.all([
         apiFetch<Employee[]>(`/api/hr/employees?active_only=false&${params}`, { token: accessToken }),
-        apiFetch<DimensionValue[]>(`/api/config/dimensions`, { token: accessToken }),
+        apiFetch<CostCenterOption[]>(`/api/hr/cost-centers/options`, { token: accessToken }),
       ]);
       setEmployees(emps);
+      setCostCenterOptions(ccOpts);
       setSelectedIds(new Set());
-      // For cost center filter: load all dimension values (simplified — load all dims)
-      // In practice you'd filter to a CC dimension. For now load from existing employees.
-      const ccIds = new Set(emps.map((e) => e.cost_center_id).filter(Boolean));
-      const ccOptions: DimensionValue[] = emps
-        .filter((e) => e.cost_center_id && e.cost_center_name)
-        .reduce<DimensionValue[]>((acc, e) => {
-          if (e.cost_center_id && !acc.find((x) => x.id === e.cost_center_id)) {
-            acc.push({ id: e.cost_center_id!, code: "", name: e.cost_center_name! });
-          }
-          return acc;
-        }, []);
-      setCostCenters(ccOptions);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load employees.");
     } finally {
@@ -162,52 +225,76 @@ function EmployeesPage() {
 
   useEffect(() => { load(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Client-side filter + sort
+  const displayedEmployees = useMemo(() => {
+    let list = employees;
+    if (filterStatus === "active")   list = list.filter(e => e.is_active);
+    if (filterStatus === "inactive") list = list.filter(e => !e.is_active);
+    return applySort(list, sort);
+  }, [employees, filterStatus, sort]);
+
   const handleAdd = async () => {
     if (!accessToken) return;
-    setAdding(true);
-    setAddError(null);
+    setAdding(true); setAddError(null);
     try {
       await apiFetch("/api/hr/employees", {
-        method: "POST",
-        token: accessToken,
-        body: JSON.stringify({
-          ...addForm,
-          cost_center_id: addForm.cost_center_id || null,
-          resumption_date: addForm.resumption_date || null,
-          employee_code: addForm.employee_code || null,
-        }),
+        method: "POST", token: accessToken,
+        body: JSON.stringify({ ...addForm, cost_center_id: addForm.cost_center_id || null, resumption_date: addForm.resumption_date || null, employee_code: addForm.employee_code || null }),
       });
       setShowAdd(false);
       setAddForm({ first_name: "", last_name: "", email: "", phone: "", employee_code: "", cost_center_id: "", resumption_date: "" });
       await load();
-    } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to create employee.");
-    } finally {
-      setAdding(false);
-    }
+    } catch (err) { setAddError(err instanceof Error ? err.message : "Failed to create employee."); }
+    finally { setAdding(false); }
+  };
+
+  const handleEdit = async () => {
+    if (!accessToken || !editEmpId) return;
+    setEditing(true); setEditError(null);
+    try {
+      await apiFetch(`/api/hr/employees/${editEmpId}`, {
+        method: "PATCH", token: accessToken,
+        body: JSON.stringify({
+          first_name: editForm.first_name || undefined,
+          last_name:  editForm.last_name  || undefined,
+          other_name: editForm.other_name  || null,
+          preferred_name: editForm.preferred_name || null,
+          phone:      editForm.phone       || null,
+          cost_center_id: editForm.cost_center_id || null,
+          resumption_date: editForm.resumption_date || null,
+        }),
+      });
+      setEditEmpId(null);
+      await load();
+    } catch (err) { setEditError(err instanceof Error ? err.message : "Update failed."); }
+    finally { setEditing(false); }
+  };
+
+  const openEdit = (emp: Employee) => {
+    setEditEmpId(emp.id);
+    setEditForm({
+      first_name:     emp.first_name,
+      last_name:      emp.last_name,
+      other_name:     "",
+      preferred_name: emp.preferred_name ?? "",
+      phone:          emp.phone ?? "",
+      cost_center_id: emp.cost_center_id ?? "",
+      resumption_date: emp.resumption_date ?? "",
+    });
+    setEditError(null);
   };
 
   const handleUpload = async (file: File) => {
     if (!accessToken) return;
-    setUploading(true);
-    setUploadResult(null);
+    setUploading(true); setUploadResult(null);
     const form = new FormData();
     form.append("file", file);
     try {
-      const result = await apiFetch<UploadResult>("/api/hr/employees/upload", {
-        method: "POST",
-        token: accessToken,
-        body: form,
-        isFormData: true,
-      });
+      const result = await apiFetch<UploadResult>("/api/hr/employees/upload", { method: "POST", token: accessToken, body: form, isFormData: true });
       setUploadResult(result);
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : "Upload failed."); }
+    finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
   };
 
   const handleDownloadTemplate = async () => {
@@ -215,32 +302,20 @@ function EmployeesPage() {
     setDownloadingTemplate(true);
     try {
       const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const res = await fetch(`${BASE}/api/hr/employees/template`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const res = await fetch(`${BASE}/api/hr/employees/template`, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!res.ok) throw new Error("Template download failed.");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "employee_template.xlsx";
-      a.click();
+      const a = document.createElement("a"); a.href = url; a.download = "employee_template.xlsx"; a.click();
       URL.revokeObjectURL(url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download template.");
-    } finally {
-      setDownloadingTemplate(false);
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed to download template."); }
+    finally { setDownloadingTemplate(false); }
   };
 
   const handleDeactivate = async (id: string) => {
     if (!accessToken) return;
-    try {
-      await apiFetch(`/api/hr/employees/${id}`, { method: "DELETE", token: accessToken });
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to deactivate employee.");
-    }
+    try { await apiFetch(`/api/hr/employees/${id}`, { method: "DELETE", token: accessToken }); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Failed to deactivate employee."); }
   };
 
   const handleTransfer = async () => {
@@ -248,18 +323,13 @@ function EmployeesPage() {
     setTransferring(true);
     try {
       await apiFetch(`/api/hr/employees/${transferEmpId}/transfer`, {
-        method: "POST",
-        token: accessToken,
+        method: "POST", token: accessToken,
         body: JSON.stringify({ to_cost_center_id: transferCC, effective_date: transferDate, notes: transferNotes || null }),
       });
-      setTransferEmpId(null);
-      setTransferCC(""); setTransferDate(""); setTransferNotes("");
+      setTransferEmpId(null); setTransferCC(""); setTransferDate(""); setTransferNotes("");
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Transfer failed.");
-    } finally {
-      setTransferring(false);
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : "Transfer failed."); }
+    finally { setTransferring(false); }
   };
 
   const handleCodeUpdate = async () => {
@@ -267,99 +337,68 @@ function EmployeesPage() {
     setUpdatingCode(true);
     try {
       await apiFetch(`/api/hr/employees/${codeUpdateEmpId}/update-code`, {
-        method: "POST",
-        token: accessToken,
+        method: "POST", token: accessToken,
         body: JSON.stringify({ new_code: newCode, change_type: codeChangeType, effective_date: codeEffectiveDate, notes: codeNotes || null }),
       });
-      setCodeUpdateEmpId(null);
-      setNewCode(""); setCodeNotes("");
+      setCodeUpdateEmpId(null); setNewCode(""); setCodeNotes("");
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Code update failed.");
-    } finally {
-      setUpdatingCode(false);
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : "Code update failed."); }
+    finally { setUpdatingCode(false); }
   };
 
   const handleViewHistory = async (empId: string) => {
     if (!accessToken) return;
-    setHistoryEmpId(empId);
-    setLoadingHistory(true);
-    try {
-      const data = await apiFetch<EmployeeHistory>(`/api/hr/employees/${empId}/history`, { token: accessToken });
-      setHistory(data);
-    } catch {
-      setHistory(null);
-    } finally {
-      setLoadingHistory(false);
-    }
+    setHistoryEmpId(empId); setLoadingHistory(true);
+    try { const data = await apiFetch<EmployeeHistory>(`/api/hr/employees/${empId}/history`, { token: accessToken }); setHistory(data); }
+    catch { setHistory(null); }
+    finally { setLoadingHistory(false); }
   };
 
-  // Bulk deactivate
   const handleBulkAction = async () => {
     if (!accessToken || !bulkAction || selectedIds.size === 0) return;
+    if (bulkAction === "delete" && bulkConfirmText !== "DELETE") return;
     setBulkProcessing(true);
     try {
-      await Promise.all(
-        Array.from(selectedIds).map((id) =>
-          apiFetch(`/api/hr/employees/${id}`, {
-            method: "PATCH",
-            token: accessToken,
-            body: JSON.stringify({ is_active: bulkAction === "activate" }),
-          })
-        )
-      );
-      setBulkAction(null);
+      if (bulkAction === "delete") {
+        // Call soft-delete (deactivate) for each — matches CoA bulk delete semantics
+        await Promise.all(Array.from(selectedIds).map(id =>
+          apiFetch(`/api/hr/employees/${id}`, { method: "DELETE", token: accessToken })
+        ));
+      } else {
+        await Promise.all(Array.from(selectedIds).map(id =>
+          apiFetch(`/api/hr/employees/${id}`, { method: "PATCH", token: accessToken, body: JSON.stringify({ is_active: bulkAction === "activate" }) })
+        ));
+      }
+      setBulkAction(null); setBulkConfirmText("");
       await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Bulk action failed.");
-    } finally {
-      setBulkProcessing(false);
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : "Bulk action failed."); }
+    finally { setBulkProcessing(false); }
   };
 
   const handleInvite = async () => {
     if (!accessToken) return;
-    setInviting(true);
-    setInviteError(null);
+    setInviting(true); setInviteError(null);
     try {
       await apiFetch("/api/hr/employees/invite", {
-        method: "POST",
-        token: accessToken,
-        body: JSON.stringify({
-          first_name: inviteForm.first_name.trim(),
-          last_name: inviteForm.last_name.trim(),
-          email: inviteForm.email.trim(),
-          cost_center_id: inviteForm.cost_center_id || null,
-          start_date: inviteForm.start_date || null,
-        }),
+        method: "POST", token: accessToken,
+        body: JSON.stringify({ first_name: inviteForm.first_name.trim(), last_name: inviteForm.last_name.trim(), email: inviteForm.email.trim(), cost_center_id: inviteForm.cost_center_id || null, start_date: inviteForm.start_date || null }),
       });
       setInviteSuccess(`Self-onboarding link sent to ${inviteForm.email}. Check the server console for the link.`);
       setInviteForm({ first_name: "", last_name: "", email: "", cost_center_id: "", start_date: "" });
       setTimeout(() => { setInviteSuccess(null); setShowInvite(false); }, 4000);
-    } catch (e) {
-      setInviteError(e instanceof Error ? e.message : "Failed to send invite.");
-    } finally {
-      setInviting(false);
-    }
+    } catch (e) { setInviteError(e instanceof Error ? e.message : "Failed to send invite."); }
+    finally { setInviting(false); }
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  };
-  const toggleSelectAll = () => {
-    if (selectedIds.size === employees.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(employees.map((e) => e.id)));
-  };
+  const toggleSelect    = (id: string) => setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSelectAll = () => setSelectedIds(selectedIds.size === displayedEmployees.length ? new Set() : new Set(displayedEmployees.map(e => e.id)));
 
-  if (isLoading) {
-    return (
-      <div className="px-6 py-8 space-y-3">
-        <div className="h-8 w-64 bg-gray-100 rounded animate-pulse" />
-        <div className="h-48 bg-gray-100 rounded-xl animate-pulse" />
-      </div>
-    );
-  }
+  if (isLoading) return (
+    <div className="px-6 py-8 space-y-3">
+      <div className="h-8 w-64 bg-gray-100 rounded animate-pulse" />
+      <div className="h-48 bg-gray-100 rounded-xl animate-pulse" />
+    </div>
+  );
 
   const EMP_TABS: { key: EmpTab; label: string }[] = [
     { key: "add", label: "Add employees" },
@@ -369,39 +408,40 @@ function EmployeesPage() {
   ];
 
   const REQUIRED_COLS = ["First name *", "Last name *", "Email *"];
-  const OPTIONAL_COLS = ["Employee code", "Cost center code", "Line manager email", "Other name", "Preferred name", "Phone", "Start date", "Date of birth", "Gender", "NIN", "Bank name", "Bank account number", "BVN", "Emergency contact name", "Emergency contact phone", "Residential address"];
+  const OPTIONAL_COLS = ["Employee code", "Cost center code ⬇", "Line manager email", "Other name", "Preferred name", "Phone", "Start date", "Head of Cost Center (Y/N)"];
+
+  // ── CC dropdown helper ──────────────────────────────────────────────────────
+  const CostCenterSelect = ({ value, onChange, placeholder = "— Select cost center —" }: { value: string; onChange: (v: string) => void; placeholder?: string }) => (
+    <select value={value} onChange={e => onChange(e.target.value)} className={selectCls}>
+      <option value="">{placeholder}</option>
+      {costCenterOptions.map(cc => (
+        <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+      ))}
+    </select>
+  );
 
   return (
     <div className="px-6 py-8 max-w-6xl">
-      <button
-        type="button"
-        onClick={() => router.push("/dashboard/business/setup")}
-        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
-      >
+      <button type="button" onClick={() => router.push("/dashboard/business/setup")}
+        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
       {returnTo && (
-        <button
-          type="button"
-          onClick={() => router.push(decodeURIComponent(returnTo))}
+        <button type="button" onClick={() => router.push(decodeURIComponent(returnTo))}
           className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 mb-3 font-medium">
           <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
           Back to Dimensions
         </button>
       )}
       <h1 className="text-xl font-bold text-gray-900 mb-1">Employees</h1>
-      <p className="text-sm text-gray-500 mb-5">
-        Manage your employee master data. Employees can be mapped to cost centers and used as dimension values.
-      </p>
+      <p className="text-sm text-gray-500 mb-5">Manage your employee master data. Employees can be mapped to cost centers and used as dimension values.</p>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 mb-6">
-        {EMP_TABS.map((tab) => (
+        {EMP_TABS.map(tab => (
           <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}>
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
             {tab.label}
           </button>
         ))}
@@ -414,7 +454,7 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* ── Tab 1: Add employees ───────────────────────────────────────────────── */}
+      {/* ── Tab 1: Add employees ─────────────────────────────────────────────── */}
       {activeTab === "add" && (
         <div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -423,9 +463,9 @@ function EmployeesPage() {
               <i className="ti ti-upload text-gray-500" style={{ fontSize: 22 }} />
               <div>
                 <p className="text-sm font-semibold text-gray-800">Bulk upload</p>
-                <p className="text-xs text-gray-500 mt-1">Download the template, fill all employee records, upload back. Best for initial mass onboarding.</p>
+                <p className="text-xs text-gray-500 mt-1">Download the template (includes cost-center dropdown + head-of-cc column), fill all records, upload back.</p>
               </div>
-              <div className="flex gap-2 mt-auto">
+              <div className="flex gap-2 mt-auto flex-wrap">
                 <button type="button" onClick={handleDownloadTemplate} disabled={downloadingTemplate}
                   className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                   {downloadingTemplate ? "…" : "Download template"}
@@ -435,11 +475,22 @@ function EmployeesPage() {
                   {uploading ? "Uploading…" : "Upload file"}
                 </button>
                 <input type="file" ref={fileInputRef} accept=".xlsx,.csv"
-                  onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} className="hidden" />
+                  onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0])} className="hidden" />
               </div>
               {uploadResult && (
-                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
-                  {uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.errors.length} errors
+                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 space-y-0.5">
+                  <div>{uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.errors.length} errors</div>
+                  {(uploadResult.head_assignments ?? 0) > 0 && (
+                    <div>{uploadResult.head_assignments} head-of-cost-center assignment(s) set</div>
+                  )}
+                  {uploadResult.errors.length > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {uploadResult.errors.slice(0, 5).map((e, i) => (
+                        <div key={i} className="text-red-600">Row {e.row}: {e.reason}</div>
+                      ))}
+                      {uploadResult.errors.length > 5 && <div className="text-red-500">…and {uploadResult.errors.length - 5} more errors</div>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -449,7 +500,7 @@ function EmployeesPage() {
               <i className="ti ti-user-plus text-gray-500" style={{ fontSize: 22 }} />
               <div>
                 <p className="text-sm font-semibold text-gray-800">HR manual entry</p>
-                <p className="text-xs text-gray-500 mt-1">HR fills in all details directly in the portal. Good for single new hires where HR has all the information.</p>
+                <p className="text-xs text-gray-500 mt-1">HR fills in all details directly in the portal. Good for single new hires.</p>
               </div>
               <button type="button" onClick={() => setShowAdd(true)}
                 className="mt-auto px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
@@ -462,7 +513,7 @@ function EmployeesPage() {
               <i className="ti ti-link text-gray-500" style={{ fontSize: 22 }} />
               <div>
                 <p className="text-sm font-semibold text-gray-800">Self-onboarding link</p>
-                <p className="text-xs text-gray-500 mt-1">HR creates a basic record. System sends a secure link to the new hire. They fill their own details. HR reviews and approves.</p>
+                <p className="text-xs text-gray-500 mt-1">System sends a secure link to the new hire. They fill their own details. HR reviews and approves.</p>
               </div>
               <button type="button" onClick={() => setShowInvite(true)}
                 className="mt-auto px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
@@ -475,10 +526,10 @@ function EmployeesPage() {
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Template columns</p>
             <div className="flex flex-wrap gap-1.5">
-              {REQUIRED_COLS.map((col) => (
+              {REQUIRED_COLS.map(col => (
                 <span key={col} className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">{col}</span>
               ))}
-              {OPTIONAL_COLS.map((col) => (
+              {OPTIONAL_COLS.map(col => (
                 <span key={col} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{col}</span>
               ))}
             </div>
@@ -486,82 +537,166 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* ── Tab 3: Transfers & changes ─────────────────────────────────────────── */}
+      {/* ── Tab 3: Transfers & changes ──────────────────────────────────────── */}
       {activeTab === "transfers" && (
         <div>
-          <p className="text-sm text-gray-500 mb-4">
-            Initiate cost center transfers or line manager changes per employee. Use the Employee list tab to select an employee and click Transfer.
-          </p>
-          <button type="button" onClick={() => setActiveTab("list")}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
-            Go to Employee list →
-          </button>
+          <p className="text-sm text-gray-500 mb-4">Initiate cost center transfers per employee. Use the Employee list tab to click Transfer on a row.</p>
+          <button type="button" onClick={() => setActiveTab("list")} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Go to Employee list →</button>
         </div>
       )}
 
-      {/* ── Tab 4: Code config ─────────────────────────────────────────────────── */}
+      {/* ── Tab 4: Code config ──────────────────────────────────────────────── */}
       {activeTab === "config" && (
         <div>
-          <p className="text-sm text-gray-500 mb-4">
-            Update employee codes (progressive or retrospective). Use the Employee list tab to select an employee and click Code.
-          </p>
-          <button type="button" onClick={() => setActiveTab("list")}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
-            Go to Employee list →
-          </button>
+          <p className="text-sm text-gray-500 mb-4">Update employee codes. Use the Employee list tab to click Code on a row.</p>
+          <button type="button" onClick={() => setActiveTab("list")} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Go to Employee list →</button>
         </div>
       )}
 
-      {/* ── Tab 2: Employee list ───────────────────────────────────────────────── */}
+      {/* ── Tab 2: Employee list ────────────────────────────────────────────── */}
       {activeTab === "list" && (
         <>
-          {/* Search + filter */}
-          <div className="flex gap-2 mb-4">
-            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load()}
-              placeholder="Search name, email or employee code…"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          {/* Filter bar */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && load()}
+              placeholder="Search name, email or code…"
+              className="flex-1 min-w-48 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <select value={filterCostCenter} onChange={e => setFilterCostCenter(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All cost centers</option>
+              {costCenterOptions.map(cc => (
+                <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+              ))}
+            </select>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as typeof filterStatus)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+              <option value="all">All</option>
+            </select>
             <button type="button" onClick={load}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
-              Search
-            </button>
-            {search && (
-              <button type="button" onClick={() => { setSearch(""); setFilterCostCenter(""); load(); }}
-                className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">
-                Clear
-              </button>
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Search</button>
+            {(search || filterCostCenter) && (
+              <button type="button" onClick={() => { setSearch(""); setFilterCostCenter(""); }}
+                className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">Clear</button>
             )}
           </div>
 
-          {/* Bulk toolbar */}
+          {/* Bulk toolbar — matching CoA pattern */}
           {selectedIds.size > 0 && (
-        <div className="mb-3 flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
-          <span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span>
-          <button type="button" onClick={() => setBulkAction("activate")}
-            className="text-xs px-2.5 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-medium">Activate</button>
-          <button type="button" onClick={() => setBulkAction("deactivate")}
-            className="text-xs px-2.5 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium">Deactivate</button>
-          <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-blue-500 hover:text-blue-700">Clear</button>
-        </div>
-      )}
-
-      {bulkAction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
-            <p className="text-base font-semibold text-gray-900 mb-4 capitalize">{bulkAction} {selectedIds.size} employees?</p>
-            <div className="flex gap-3 justify-end">
-              <button type="button" onClick={() => setBulkAction(null)} disabled={bulkProcessing}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-              <button type="button" onClick={handleBulkAction} disabled={bulkProcessing}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
-                {bulkProcessing ? "Processing…" : "Confirm"}
-              </button>
+            <div className="mb-3 flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg flex-wrap">
+              <span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span>
+              <button type="button" onClick={() => setBulkAction("activate")}
+                className="text-xs px-2.5 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-medium">Activate</button>
+              <button type="button" onClick={() => setBulkAction("deactivate")}
+                className="text-xs px-2.5 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium">Deactivate</button>
+              <button type="button" onClick={() => { setBulkAction("delete"); setBulkConfirmText(""); }}
+                className="text-xs px-2.5 py-1 bg-red-600 text-white rounded hover:bg-red-700 font-medium">Delete</button>
+              <button type="button" onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-blue-500 hover:text-blue-700">Clear</button>
             </div>
-          </div>
-        </div>
+          )}
+
+          {/* Bulk confirm modal */}
+          {bulkAction && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
+                <p className="text-base font-semibold text-gray-900 mb-3 capitalize">{bulkAction} {selectedIds.size} employee(s)?</p>
+                {bulkAction === "delete" && (
+                  <div className="mb-4">
+                    <p className="text-xs text-red-600 mb-2">This will deactivate {selectedIds.size} employee(s). Type DELETE to confirm.</p>
+                    <input type="text" value={bulkConfirmText} onChange={e => setBulkConfirmText(e.target.value)}
+                      placeholder="Type DELETE" className={inputCls} />
+                  </div>
+                )}
+                <div className="flex gap-3 justify-end">
+                  <button type="button" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}
+                    className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
+                  <button type="button" onClick={handleBulkAction}
+                    disabled={bulkProcessing || (bulkAction === "delete" && bulkConfirmText !== "DELETE")}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                    {bulkProcessing ? "Processing…" : "Confirm"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Table */}
+          {displayedEmployees.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+              <p className="text-sm font-medium text-gray-600 mb-1">No employees</p>
+              <p className="text-xs text-gray-400">Try adjusting your filters or add employees from the Add tab.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-100">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-3 w-8">
+                      <input type="checkbox" checked={selectedIds.size === displayedEmployees.length && displayedEmployees.length > 0}
+                        onChange={toggleSelectAll} className="rounded border-gray-300" />
+                    </th>
+                    {/* Sortable headers — matching CoA pattern */}
+                    {[
+                      { col: "code",   label: "Code" },
+                      { col: "name",   label: "Name" },
+                      { col: "cc",     label: "Cost Center" },
+                      { col: "status", label: "Status" },
+                    ].map(({ col, label }) => (
+                      <th key={col} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase cursor-pointer select-none whitespace-nowrap"
+                        onClick={() => toggleSort(sort, setSort, col)}>
+                        {label}<SortIndicator col={col} sort={sort} />
+                      </th>
+                    ))}
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden md:table-cell">Email</th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {displayedEmployees.map(emp => (
+                    <tr key={emp.id} className={`hover:bg-gray-50 ${!emp.is_active ? "opacity-60" : ""} ${selectedIds.has(emp.id) ? "bg-blue-50" : ""}`}>
+                      <td className="px-3 py-3 w-8">
+                        <input type="checkbox" checked={selectedIds.has(emp.id)} onChange={() => toggleSelect(emp.id)} className="rounded border-gray-300" />
+                      </td>
+                      <td className="px-4 py-3 text-sm font-mono text-gray-700">{emp.employee_code ?? "—"}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900 font-medium">
+                        {emp.preferred_name ?? emp.first_name} {emp.last_name}
+                        {emp.line_manager_name && <div className="text-xs text-gray-400">Manager: {emp.line_manager_name}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{emp.cost_center_name ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        {emp.is_active
+                          ? <span className="text-xs text-green-700 bg-green-50 px-1.5 py-0.5 rounded">Active</span>
+                          : <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Inactive</span>}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500 hidden md:table-cell">{emp.email}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center gap-2 justify-end flex-wrap">
+                          <button type="button" onClick={() => openEdit(emp)}
+                            className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
+                          <button type="button" onClick={() => { setTransferEmpId(emp.id); setTransferCC(""); setTransferDate(""); setTransferNotes(""); }}
+                            className="text-xs text-gray-600 hover:text-gray-900 font-medium">Transfer</button>
+                          <button type="button" onClick={() => { setCodeUpdateEmpId(emp.id); setNewCode(emp.employee_code ?? ""); setCodeEffectiveDate(""); }}
+                            className="text-xs text-gray-600 hover:text-gray-900 font-medium">Code</button>
+                          <button type="button" onClick={() => handleViewHistory(emp.id)}
+                            className="text-xs text-gray-600 hover:text-gray-900 font-medium">History</button>
+                          {emp.is_active && (
+                            <button type="button" onClick={() => handleDeactivate(emp.id)}
+                              className="text-xs text-red-500 hover:text-red-700 font-medium">Deactivate</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Add Employee modal */}
+      {/* ── Add Employee modal ───────────────────────────────────────────────── */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-lg mx-4 w-full max-h-[90vh] overflow-y-auto">
@@ -570,19 +705,24 @@ function EmployeesPage() {
             <div className="grid grid-cols-2 gap-3">
               {([
                 ["first_name", "First Name *", "text"],
-                ["last_name", "Last Name *", "text"],
-                ["email", "Email *", "email"],
-                ["phone", "Phone", "text"],
-                ["employee_code", "Employee Code", "text"],
-                ["resumption_date", "Resumption Date", "date"],
+                ["last_name",  "Last Name *",  "text"],
+                ["email",      "Email *",      "email"],
+                ["phone",      "Phone",        "text"],
+                ["employee_code",    "Employee Code",  "text"],
+                ["resumption_date",  "Resumption Date","date"],
               ] as [keyof typeof addForm, string, string][]).map(([field, label, type]) => (
                 <div key={field}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
                   <input type={type} value={addForm[field]}
-                    onChange={(e) => setAddForm((f) => ({ ...f, [field]: e.target.value }))}
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    onChange={e => setAddForm(f => ({ ...f, [field]: e.target.value }))}
+                    className={inputCls} />
                 </div>
               ))}
+              {/* Cost center — real dropdown */}
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
+                <CostCenterSelect value={addForm.cost_center_id} onChange={v => setAddForm(f => ({ ...f, cost_center_id: v }))} />
+              </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
               <button type="button" onClick={() => { setShowAdd(false); setAddError(null); }} disabled={adding}
@@ -597,26 +737,62 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* Transfer modal */}
+      {/* ── Edit Employee modal (matching CoA pattern) ───────────────────────── */}
+      {editEmpId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-lg mx-4 w-full max-h-[90vh] overflow-y-auto">
+            <h2 className="text-base font-semibold text-gray-900 mb-4">Edit Employee</h2>
+            {editError && <p className="text-xs text-red-600 mb-3">{editError}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                ["first_name",    "First Name",      "text"],
+                ["last_name",     "Last Name",       "text"],
+                ["preferred_name","Preferred Name",  "text"],
+                ["other_name",    "Other Name",      "text"],
+                ["phone",         "Phone",           "text"],
+                ["resumption_date","Resumption Date","date"],
+              ] as [keyof typeof editForm, string, string][]).map(([field, label, type]) => (
+                <div key={field}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                  <input type={type} value={editForm[field]}
+                    onChange={e => setEditForm(f => ({ ...f, [field]: e.target.value }))}
+                    className={inputCls} />
+                </div>
+              ))}
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
+                <CostCenterSelect value={editForm.cost_center_id} onChange={v => setEditForm(f => ({ ...f, cost_center_id: v }))} />
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-5">
+              <button type="button" onClick={() => { setEditEmpId(null); setEditError(null); }} disabled={editing}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={handleEdit} disabled={editing}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                {editing ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Transfer modal — real CC dropdown ────────────────────────────────── */}
       {transferEmpId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Transfer Employee</h2>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">New Cost Center ID <span className="text-red-500">*</span></label>
-                <input type="text" value={transferCC} onChange={(e) => setTransferCC(e.target.value)} placeholder="Cost center UUID"
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <label className="block text-xs font-medium text-gray-600 mb-1">New Cost Center <span className="text-red-500">*</span></label>
+                <CostCenterSelect value={transferCC} onChange={setTransferCC} placeholder="— Select cost center —" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Effective Date <span className="text-red-500">*</span></label>
-                <input type="date" value={transferDate} onChange={(e) => setTransferDate(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="date" value={transferDate} onChange={e => setTransferDate(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                <textarea value={transferNotes} onChange={(e) => setTransferNotes(e.target.value)} rows={2}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <textarea value={transferNotes} onChange={e => setTransferNotes(e.target.value)} rows={2} className={inputCls} />
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-4">
@@ -631,7 +807,7 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* Code update modal */}
+      {/* ── Code update modal (unchanged) ───────────────────────────────────── */}
       {codeUpdateEmpId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
@@ -639,26 +815,22 @@ function EmployeesPage() {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">New Code <span className="text-red-500">*</span></label>
-                <input type="text" value={newCode} onChange={(e) => setNewCode(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="text" value={newCode} onChange={e => setNewCode(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Change Type</label>
-                <select value={codeChangeType} onChange={(e) => setCodeChangeType(e.target.value as "progressive" | "retrospective")}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <select value={codeChangeType} onChange={e => setCodeChangeType(e.target.value as typeof codeChangeType)} className={selectCls}>
                   <option value="progressive">Progressive</option>
                   <option value="retrospective">Retrospective</option>
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Effective Date <span className="text-red-500">*</span></label>
-                <input type="date" value={codeEffectiveDate} onChange={(e) => setCodeEffectiveDate(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="date" value={codeEffectiveDate} onChange={e => setCodeEffectiveDate(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                <textarea value={codeNotes} onChange={(e) => setCodeNotes(e.target.value)} rows={2}
-                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <textarea value={codeNotes} onChange={e => setCodeNotes(e.target.value)} rows={2} className={inputCls} />
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-4">
@@ -673,7 +845,7 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* History drawer */}
+      {/* ── History drawer (unchanged) ───────────────────────────────────────── */}
       {historyEmpId && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/40" onClick={() => setHistoryEmpId(null)} />
@@ -683,18 +855,14 @@ function EmployeesPage() {
               <button onClick={() => setHistoryEmpId(null)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              {loadingHistory ? (
-                <p className="text-sm text-gray-400">Loading…</p>
-              ) : !history ? (
-                <p className="text-sm text-gray-400">No history found.</p>
-              ) : (
+              {loadingHistory ? <p className="text-sm text-gray-400">Loading…</p>
+              : !history ? <p className="text-sm text-gray-400">No history found.</p>
+              : (
                 <>
                   <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Code Changes</h3>
-                  {history.code_history.length === 0 ? (
-                    <p className="text-xs text-gray-400 mb-4">No code changes.</p>
-                  ) : (
+                  {history.code_history.length === 0 ? <p className="text-xs text-gray-400 mb-4">No code changes.</p> : (
                     <div className="space-y-2 mb-5">
-                      {history.code_history.map((ch) => (
+                      {history.code_history.map(ch => (
                         <div key={ch.id} className="text-xs border border-gray-200 rounded p-2">
                           <div className="flex justify-between">
                             <span className="font-medium text-gray-800">{ch.old_code ?? "—"} → {ch.new_code}</span>
@@ -707,16 +875,12 @@ function EmployeesPage() {
                     </div>
                   )}
                   <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Transfers</h3>
-                  {history.transfers.length === 0 ? (
-                    <p className="text-xs text-gray-400">No transfers.</p>
-                  ) : (
+                  {history.transfers.length === 0 ? <p className="text-xs text-gray-400">No transfers.</p> : (
                     <div className="space-y-2">
-                      {history.transfers.map((tr) => (
+                      {history.transfers.map(tr => (
                         <div key={tr.id} className="text-xs border border-gray-200 rounded p-2">
                           <div className="flex justify-between">
-                            <span className="font-medium text-gray-800">
-                              {tr.from_cost_center_name ?? "—"} → {tr.to_cost_center_name ?? "—"}
-                            </span>
+                            <span className="font-medium text-gray-800">{tr.from_cost_center_name ?? "—"} → {tr.to_cost_center_name ?? "—"}</span>
                             <span className="text-gray-400">{tr.effective_date}</span>
                           </div>
                           {tr.notes && <p className="text-gray-500 mt-0.5">{tr.notes}</p>}
@@ -731,96 +895,34 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* Table */}
-      {employees.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-          <p className="text-sm font-medium text-gray-600 mb-1">No employees yet</p>
-          <p className="text-xs text-gray-400">Add employees manually or upload from the template.</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-100">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-3 w-8">
-                  <input type="checkbox" checked={selectedIds.size === employees.length && employees.length > 0}
-                    onChange={toggleSelectAll} className="rounded border-gray-300" />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Code</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden md:table-cell">Email</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden lg:table-cell">Cost Center</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {employees.map((emp) => (
-                <tr key={emp.id} className={`hover:bg-gray-50 ${!emp.is_active ? "opacity-50" : ""} ${selectedIds.has(emp.id) ? "bg-blue-50" : ""}`}>
-                  <td className="px-3 py-3 w-8">
-                    <input type="checkbox" checked={selectedIds.has(emp.id)} onChange={() => toggleSelect(emp.id)}
-                      className="rounded border-gray-300" />
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono text-gray-700">{emp.employee_code ?? "—"}</td>
-                  <td className="px-4 py-3 text-sm text-gray-900 font-medium">
-                    {emp.preferred_name ?? emp.first_name} {emp.last_name}
-                    {emp.line_manager_name && (
-                      <div className="text-xs text-gray-400">Manager: {emp.line_manager_name}</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500 hidden md:table-cell">{emp.email}</td>
-                  <td className="px-4 py-3 text-xs text-gray-500 hidden lg:table-cell">{emp.cost_center_name ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    {emp.is_active
-                      ? <span className="text-xs text-green-700 bg-green-50 px-1.5 py-0.5 rounded">Active</span>
-                      : <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Inactive</span>
-                    }
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center gap-2 justify-end">
-                      <button type="button" onClick={() => { setTransferEmpId(emp.id); setTransferCC(""); setTransferDate(""); setTransferNotes(""); }}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium">Transfer</button>
-                      <button type="button" onClick={() => { setCodeUpdateEmpId(emp.id); setNewCode(emp.employee_code ?? ""); setCodeEffectiveDate(""); }}
-                        className="text-xs text-gray-600 hover:text-gray-900 font-medium">Code</button>
-                      <button type="button" onClick={() => handleViewHistory(emp.id)}
-                        className="text-xs text-gray-600 hover:text-gray-900 font-medium">History</button>
-                      {emp.is_active && (
-                        <button type="button" onClick={() => handleDeactivate(emp.id)}
-                          className="text-xs text-red-500 hover:text-red-700 font-medium">Deactivate</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-        </>
-      )}
-
-      {/* Invite modal */}
+      {/* ── Invite modal — real CC dropdown ─────────────────────────────────── */}
       {showInvite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Send self-onboarding invite</h2>
-            {inviteError && <p className="text-xs text-red-600 mb-3">{inviteError}</p>}
+            {inviteError   && <p className="text-xs text-red-600 mb-3">{inviteError}</p>}
             {inviteSuccess && <p className="text-xs text-green-600 mb-3">{inviteSuccess}</p>}
             <div className="grid grid-cols-2 gap-3">
-              {([
-                ["first_name", "First name *", "text"],
-                ["last_name", "Last name *", "text"],
-                ["email", "Email *", "email"],
-                ["cost_center_id", "Cost center ID", "text"],
-                ["start_date", "Start date", "date"],
-              ] as [keyof typeof inviteForm, string, string][]).map(([field, label, type]) => (
-                <div key={field} className={field === "email" ? "col-span-2" : ""}>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={type} value={inviteForm[field]}
-                    onChange={(e) => setInviteForm((f) => ({ ...f, [field]: e.target.value }))}
-                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-              ))}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">First name <span className="text-red-500">*</span></label>
+                <input type="text" value={inviteForm.first_name} onChange={e => setInviteForm(f => ({ ...f, first_name: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Last name <span className="text-red-500">*</span></label>
+                <input type="text" value={inviteForm.last_name} onChange={e => setInviteForm(f => ({ ...f, last_name: e.target.value }))} className={inputCls} />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email <span className="text-red-500">*</span></label>
+                <input type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
+                <CostCenterSelect value={inviteForm.cost_center_id} onChange={v => setInviteForm(f => ({ ...f, cost_center_id: v }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Start date</label>
+                <input type="date" value={inviteForm.start_date} onChange={e => setInviteForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} />
+              </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
               <button type="button" onClick={() => { setShowInvite(false); setInviteError(null); }} disabled={inviting}

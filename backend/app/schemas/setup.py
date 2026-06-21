@@ -33,6 +33,7 @@ class ProgressResponse(BaseModel):
     total: int
     completed: int
     percentage: int
+    lifecycle_status: str = "in_implementation"
 
 
 # ── Organisation Identity ──────────────────────────────────────────────────────
@@ -451,20 +452,30 @@ class ModulesUpdate(BaseModel):
 # ── Currencies & FX ───────────────────────────────────────────────────────────
 
 class FxConfigUpdate(BaseModel):
-    """PATCH /api/setup/currencies or sub-tabs."""
+    """PATCH /api/setup/currencies.
 
+    enabled_currencies and reporting_currency are written to tenant_org_config
+    (the single source of truth for currency identity).
+    fx_rates and revaluation_rules are written to tenant_fx_config.
+    """
+
+    enabled_currencies: Optional[list[str]] = None
     reporting_currency: Optional[str] = None
-    additional_currencies: Optional[list[dict[str, Any]]] = None
     fx_rates: Optional[list[dict[str, Any]]] = None
     revaluation_rules: Optional[dict[str, Any]] = None
 
 
 class FxConfigResponse(BaseModel):
-    """GET /api/setup/currencies."""
+    """GET /api/setup/currencies.
+
+    functional_currency, enabled_currencies, and reporting_currency all come
+    from tenant_org_config (single source of truth).
+    fx_rates and revaluation_rules come from tenant_fx_config.
+    """
 
     functional_currency: Optional[str] = None
+    enabled_currencies: Optional[list[str]] = None
     reporting_currency: Optional[str] = None
-    additional_currencies: Optional[list[dict[str, Any]]] = None
     fx_rates: Optional[list[dict[str, Any]]] = None
     revaluation_rules: Optional[dict[str, Any]] = None
 

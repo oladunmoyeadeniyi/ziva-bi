@@ -155,6 +155,10 @@ from app.routers import expense_config as expense_config_router
 from app.routers import config as config_router
 from app.routers import hr as hr_router
 from app.routers import setup as setup_router
+from app.routers import platform as platform_router
+from app.routers import gl as gl_router
+from app.routers import account_mapping as account_mapping_router
+from app.routers import bank_accounts as bank_accounts_router
 
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
@@ -167,6 +171,10 @@ app.include_router(expense_config_router.router)
 app.include_router(config_router.router)
 app.include_router(hr_router.router)
 app.include_router(setup_router.router)
+app.include_router(platform_router.router)
+app.include_router(gl_router.router)
+app.include_router(account_mapping_router.router)
+app.include_router(bank_accounts_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

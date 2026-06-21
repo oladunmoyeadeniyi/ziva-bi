@@ -277,13 +277,17 @@ function ModuleCard({
 }
 
 export default function ModuleActivationPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const router = useRouter();
   const [modules, setModules] = useState<ModuleState[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
+  const [licensing, setLicensing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Super admin (native or impersonating in implementation mode) can set licensing.
+  const isSuperAdmin = user?.is_super_admin === true;
 
   const fetchModules = useCallback(async () => {
     if (!accessToken) return;
@@ -317,6 +321,25 @@ export default function ModuleActivationPage() {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleLicense = async (moduleKey: string, isLicensed: boolean) => {
+    if (!accessToken) return;
+    setLicensing(moduleKey);
+    setError(null);
+    try {
+      await apiFetch<ModuleState>(
+        `/api/setup/modules/${moduleKey}/license?is_licensed=${isLicensed}`,
+        { method: "PATCH", token: accessToken },
+      );
+      await fetchModules();
+      setSuccessMsg(isLicensed ? "Module added to subscription." : "Module removed from subscription.");
+      setTimeout(() => setSuccessMsg(null), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "License change failed");
+    } finally {
+      setLicensing(null);
     }
   };
 
@@ -449,24 +472,52 @@ export default function ModuleActivationPage() {
 
             {/* Action */}
             {selectedMod.is_licensed ? (
-              <button
-                type="button"
-                disabled={toggling}
-                onClick={() => handleToggle(selectedMod)}
-                className={[
-                  "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-                  selectedMod.is_active
-                    ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-                    : "bg-green-600 text-white hover:bg-green-700",
-                  toggling ? "opacity-50 cursor-not-allowed" : "",
-                ].join(" ")}
-              >
-                {toggling
-                  ? "Saving…"
-                  : selectedMod.is_active
-                  ? `Deactivate ${selectedMod.label}`
-                  : `Activate ${selectedMod.label}`}
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled={toggling || !!licensing}
+                  onClick={() => handleToggle(selectedMod)}
+                  className={[
+                    "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                    selectedMod.is_active
+                      ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                      : "bg-green-600 text-white hover:bg-green-700",
+                    toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
+                  ].join(" ")}
+                >
+                  {toggling
+                    ? "Saving…"
+                    : selectedMod.is_active
+                    ? `Deactivate ${selectedMod.label}`
+                    : `Activate ${selectedMod.label}`}
+                </button>
+                {isSuperAdmin && (
+                  <div>
+                    <button
+                      type="button"
+                      disabled={licensing === selectedMod.module_key || toggling}
+                      onClick={() => handleLicense(selectedMod.module_key, false)}
+                      className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                    >
+                      {licensing === selectedMod.module_key ? "Saving…" : "Remove from subscription"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : isSuperAdmin ? (
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  disabled={licensing === selectedMod.module_key || toggling}
+                  onClick={() => handleLicense(selectedMod.module_key, true)}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {licensing === selectedMod.module_key ? "Saving…" : "Add to subscription"}
+                </button>
+                <p className="text-xs text-gray-400">
+                  Adds this module to the tenant&apos;s active subscription.
+                </p>
+              </div>
             ) : (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                 <p className="text-sm text-amber-800">

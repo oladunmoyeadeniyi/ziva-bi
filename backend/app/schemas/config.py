@@ -327,6 +327,7 @@ class CoAResponse(BaseModel):
     gl_name: str
     account_type: str
     is_active: bool
+    is_retired: bool = False
     created_at: datetime
     updated_at: datetime
     dimension_requirements: list[dict] = []  # [{dimension_id, dimension_name, requirement}]
@@ -359,6 +360,7 @@ class CoAResponse(BaseModel):
             gl_name=g.gl_name,
             account_type=g.account_type,
             is_active=g.is_active,
+            is_retired=g.is_retired,
             created_at=g.created_at,
             updated_at=g.updated_at,
             dimension_requirements=reqs,
@@ -381,6 +383,7 @@ class CoAListItem(BaseModel):
     gl_name: str
     account_type: str
     is_active: bool
+    is_retired: bool = False
     gl_group: str | None = None
     gl_subgroup: str | None = None
     gl_sub_subgroup: str | None = None
@@ -401,6 +404,7 @@ class CoAListItem(BaseModel):
             gl_name=g.gl_name,
             account_type=g.account_type,
             is_active=g.is_active,
+            is_retired=g.is_retired,
             gl_group=g.gl_group,
             gl_subgroup=g.gl_subgroup,
             gl_sub_subgroup=g.gl_sub_subgroup,
@@ -576,3 +580,83 @@ class BulkActionResult(BaseModel):
     affected: int
     skipped: int = 0
     errors: list[dict] = []
+
+
+# ── CoA Remap ──────────────────────────────────────────────────────────────────
+
+class InlineNewAccountFields(BaseModel):
+    """
+    Optional inline new GL account to create as part of a remap call.
+
+    If provided, the remap endpoint creates this account first, then remaps
+    old_account_ids to it.  gl_number must be unique for the tenant.
+    account_type must match all old accounts (validated server-side).
+    """
+    gl_number: str
+    gl_name: str
+    account_type: str  # "PL" or "BS"
+    gl_group: str | None = None
+    gl_subgroup: str | None = None
+    gl_sub_subgroup: str | None = None
+    fs_head: str | None = None
+    fs_note: str | None = None
+    tb_mapping: str | None = None
+    account_classification: str | None = None
+
+
+class RemapRequest(BaseModel):
+    """
+    Body for POST /api/config/coa/remap (single-screen many-to-one remap).
+
+    Exactly one of new_account_id or new_account must be provided:
+    - new_account_id: remap old codes to an existing active account.
+    - new_account: create a new account inline then remap to it.
+    old_account_ids: list of active account IDs to retire.
+    """
+    old_account_ids: list[uuid.UUID]
+    new_account_id: uuid.UUID | None = None
+    new_account: InlineNewAccountFields | None = None
+    reason: str | None = None
+
+
+class RemapResultEntry(BaseModel):
+    """One entry in a remap result — one retired old account."""
+    old_gl_number: str
+    old_gl_name: str
+    new_gl_number: str
+    new_gl_name: str
+
+
+class RemapResult(BaseModel):
+    """Result returned by POST /api/config/coa/remap."""
+    remapped: list[RemapResultEntry]
+    new_account_created: bool
+    new_gl_number: str
+    new_gl_name: str
+
+
+class BulkRemapRow(BaseModel):
+    """One row in a bulk remap result — can be success or error."""
+    row: int
+    old_gl_number: str
+    new_gl_number: str
+    status: str   # "remapped" | "error"
+    reason: str | None = None
+
+
+class BulkRemapResult(BaseModel):
+    """Result returned by POST /api/config/coa/remap-bulk."""
+    remapped: int
+    errors: int
+    rows: list[BulkRemapRow]
+
+
+class GlRemapHistoryEntry(BaseModel):
+    """One historical remap entry returned in the remap history endpoint."""
+    id: str
+    old_gl_number: str
+    old_gl_name: str
+    new_gl_number: str
+    new_gl_name: str
+    remapped_at: datetime
+    reason: str | None = None

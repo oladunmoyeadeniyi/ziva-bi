@@ -51,7 +51,7 @@ Endpoints:
 
 All endpoints are tenant-scoped and require authentication.
 Admin-only: require is_tenant_admin or is_super_admin.
-go-live / reopen: require role_tier == 'consultant'.
+go-live / reopen: require is_super_admin (consultant role_tier stripped M9.3a).
 """
 
 import io
@@ -65,8 +65,8 @@ from sqlalchemy import select, func as sqlfunc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
-from app.models.auth import UserTenant, User, Tenant
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
+from app.models.auth import AuditLog, UserTenant, User, Tenant
 from app.services.periods import (
     ALLOWED_MODULES,
     add_months,
@@ -185,12 +185,43 @@ MODULE_KEY_TO_LABEL = {m["key"]: m["label"] for m in MODULE_CATALOGUE}
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+# Tiers that pass the admin gate. consultant removed M9.3a (super admin impersonation
+# replaces tenant consultant tier). functional_admin is intentionally excluded —
+# it is function-scoped and must be checked at individual endpoints.
+_ADMIN_TIERS: frozenset[str] = frozenset({"power_admin"})
+
+
 def _require_admin(current_user: CurrentUser) -> None:
-    """Raise 403 if the user is not a tenant or super admin."""
-    if not current_user.is_tenant_admin and not current_user.is_super_admin:
+    """Raise 403 if the user lacks admin access.
+
+    Passes for: is_super_admin OR role_tier == 'power_admin'.
+    is_tenant_admin no longer grants config admin (M9.3c) — configuration is done
+    by a super admin via impersonation or a power_admin tier user. is_tenant_admin
+    is preserved in the JWT for potential future RBAC reintroduction.
+    Also raises 403 for support-mode impersonation on live (read-only session).
+    """
+    if (
+        not current_user.is_super_admin
+        and current_user.role_tier not in _ADMIN_TIERS
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required.",
+        )
+    block_if_readonly_impersonation(current_user)
+
+
+def _require_consultant(current_user: CurrentUser) -> None:
+    """Raise 403 if the user is not a super admin (Ziva consultant).
+
+    M9.3a: consultant role_tier is stripped from tenant users. Only a super admin
+    acting in implementation mode (or their native platform token) may call
+    consultant-gated endpoints.
+    """
+    if not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin (Ziva consultant) access required.",
         )
 
 
@@ -550,7 +581,10 @@ async def get_progress(
     total = len(sections)
     pct = round(completed / total * 100) if total else 0
 
-    return ProgressResponse(sections=sections, total=total, completed=completed, percentage=pct)
+    return ProgressResponse(
+        sections=sections, total=total, completed=completed, percentage=pct,
+        lifecycle_status=tenant.lifecycle_status if tenant else "in_implementation",
+    )
 
 
 # ── Organisation ───────────────────────────────────────────────────────────────
@@ -1063,8 +1097,8 @@ async def generate_periods(
             detail="Fiscal year start month not configured. Set it on the Organisation page first.",
         )
 
-    frequency = org.period_closing_frequency or "Monthly"
-    if frequency != "Monthly":
+    frequency = (org.period_closing_frequency or "monthly").lower()
+    if frequency != "monthly":
         raise HTTPException(
             status_code=422,
             detail="Only monthly periods are supported in M8.3. Quarterly/annual support will be added later.",
@@ -1317,8 +1351,9 @@ async def reopen_period(
     Accepts an optional body: { reason: string } for the audit trail.
     Writes a PeriodAuditLog REOPEN entry (Brief 4 — fills the hook).
     """
-    if current_user.role_tier != "consultant":
-        raise HTTPException(status_code=403, detail="Only consultants may reopen hard-closed periods.")
+    if not current_user.is_super_admin:
+        raise HTTPException(status_code=403, detail="Only a super admin (Ziva consultant) may reopen hard-closed periods.")
+    block_if_readonly_impersonation(current_user)
 
     tenant_id = _require_tenant(current_user)
 
@@ -1956,7 +1991,7 @@ def _can_post_future(current_user: CurrentUser, grace_rows: list[PeriodGraceOver
     Default: consultant only. Override: any grace row with module="future_exception"
     and applies_to matching this user/role/all.
     """
-    if current_user.role_tier == "consultant":
+    if current_user.is_super_admin:
         return True
     for row in grace_rows:
         if row.module != "future_exception":
@@ -2509,8 +2544,8 @@ async def set_module_license(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ModuleState:
-    """Set is_licensed for a module (consultant or super admin only)."""
-    if not current_user.is_super_admin and current_user.role_tier != "consultant":
+    """Set is_licensed for a module (super admin only)."""
+    if not current_user.is_super_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only consultants can set module licensing.",
@@ -2574,7 +2609,15 @@ async def get_currencies(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> FxConfigResponse:
-    """Return FX config for the tenant (all three tabs)."""
+    """Return the tenant's currency config and FX mechanics.
+
+    Single source of truth for the currency list:
+      functional_currency  — from tenant_org_config (protected; set at signup)
+      enabled_currencies   — from tenant_org_config (sorted ISO-code list)
+      reporting_currency   — from tenant_org_config
+
+    FX mechanics (rates, revaluation rules) come from tenant_fx_config.
+    """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
@@ -2590,8 +2633,8 @@ async def get_currencies(
 
     return FxConfigResponse(
         functional_currency=org.functional_currency if org else None,
-        reporting_currency=fx.reporting_currency if fx else None,
-        additional_currencies=fx.additional_currencies if fx else None,
+        enabled_currencies=org.enabled_currencies if org else None,
+        reporting_currency=org.reporting_currency if org else None,
         fx_rates=fx.fx_rates if fx else None,
         revaluation_rules=fx.revaluation_rules if fx else None,
     )
@@ -2603,13 +2646,34 @@ async def patch_currencies(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> FxConfigResponse:
-    """Update FX config for the tenant."""
+    """Update FX config for the tenant.
+
+    enabled_currencies and reporting_currency are written to tenant_org_config
+    (single source of truth for which currencies exist).
+    fx_rates and revaluation_rules are written to tenant_fx_config.
+    """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
-    fx = await _get_or_create_fx(tenant_id, db)
 
-    for field, value in data.model_dump(exclude_unset=True).items():
-        setattr(fx, field, value)
+    payload = data.model_dump(exclude_unset=True)
+
+    # enabled_currencies and reporting_currency belong on org_config
+    org_fields = {}
+    if "enabled_currencies" in payload:
+        org_fields["enabled_currencies"] = payload.pop("enabled_currencies")
+    if "reporting_currency" in payload:
+        org_fields["reporting_currency"] = payload.pop("reporting_currency")
+
+    if org_fields:
+        org = await _get_or_create_org(tenant_id, db)
+        for field, value in org_fields.items():
+            setattr(org, field, value)
+
+    # fx_rates and revaluation_rules belong on fx_config
+    if payload:
+        fx = await _get_or_create_fx(tenant_id, db)
+        for field, value in payload.items():
+            setattr(fx, field, value)
 
     await db.commit()
     return await get_currencies(current_user=current_user, db=db)
@@ -2938,10 +3002,10 @@ async def mark_go_live(
     """
     Mark this tenant as live.
 
-    Requires role_tier == 'consultant' or is_super_admin.
+    Requires is_super_admin (consultant role_tier stripped M9.3a).
     All blocking sections must be complete.
     """
-    if not current_user.is_super_admin and current_user.role_tier != "consultant":
+    if not current_user.is_super_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only consultants and super admins can mark a tenant as live.",
@@ -2962,7 +3026,29 @@ async def mark_go_live(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found.")
 
+    old_lifecycle = tenant.lifecycle_status
+
     tenant.is_active = True
+    # Transition lifecycle_status to "live" in the same transaction.
+    # Previously go-live only set is_active; lifecycle stayed at "trial" or
+    # "in_implementation", which left enter_tenant logic in implementation mode
+    # (full-edit) instead of support mode (read-only) for the Super Admin.
+    tenant.lifecycle_status = "live"
+
+    # Audit log — same event name as the manual PATCH /api/platform/tenants/{id}/lifecycle
+    # so audit searches surface all lifecycle transitions from one query.
+    # "via": "go_live" distinguishes this from a manual override by a super admin.
+    db.add(AuditLog(
+        event_type="platform.lifecycle.updated",
+        user_id=current_user.user_id,
+        tenant_id=tenant_id,
+        log_metadata={
+            "from": old_lifecycle,
+            "to": "live",
+            "via": "go_live",
+        },
+    ))
+
     await db.commit()
 
     return GoLiveResponse(

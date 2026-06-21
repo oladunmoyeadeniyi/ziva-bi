@@ -3,9 +3,10 @@
 /**
  * Dashboard root — ZivaBI.
  *
- * Reads the user's account_type and redirects to the appropriate portal.
- * This keeps the /dashboard URL clean while routing individuals to /dashboard/personal
- * and business users to /dashboard/business.
+ * Dispatches authenticated users to the correct portal:
+ *   super admin  → /platform
+ *   business     → /dashboard/business
+ *   individual   → /auth/login  (personal dashboard removed; no frontend destination)
  */
 
 import { useEffect } from "react";
@@ -18,10 +19,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (isLoading || !user) return;
-    if (user.account_type === "individual") {
-      router.replace("/dashboard/personal");
-    } else {
+    if (user.is_super_admin) {
+      router.replace("/platform");
+    } else if (user.account_type === "business") {
       router.replace("/dashboard/business");
+    } else {
+      // Individual accounts have no frontend destination — send to login.
+      router.replace("/auth/login");
     }
   }, [user, isLoading, router]);
 

@@ -51,7 +51,13 @@ class AccountType(str, enum.Enum):
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class Tenant(Base):
-    """Company record. Every business user_tenant row references one of these."""
+    """
+    Company record. Every business user_tenant row references one of these.
+
+    M9.0 environment model: a live tenant may have one shadow test tenant linked via
+    parent_tenant_id. The environment column ("live" | "test") drives routing.
+    Switching environments reissues the JWT to point at the target tenant's id.
+    """
 
     __tablename__ = "tenants"
 
@@ -66,6 +72,36 @@ class Tenant(Base):
     dimensions_not_applicable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     documents_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     module_setup_visited: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # M9.0: environment architecture
+    # "live" | "test" — test tenants are shadow copies of their live parent.
+    environment: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="live", server_default="live"
+    )
+    # Null for live tenants; set on test tenants to point at their live parent.
+    parent_tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # "trial" | "in_implementation" | "live" | "suspended" — used by M9.1 owner portal.
+    lifecycle_status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="in_implementation", server_default="in_implementation"
+    )
+    # Days to retain test transactional data (null = use system default of 90).
+    test_data_retention_days: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True
+    )
+    # M9.1: saved before suspension so reactivate can restore the prior status.
+    pre_suspension_status: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True
+    )
+    # Phase 4: schema-readiness for future email suppression in test environments.
+    # When True (default for test tenants), outbound notification emails should be
+    # suppressed. Wiring into the SMTP sender is a separate follow-up change.
+    suppress_outbound_email: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -106,6 +142,11 @@ class User(Base):
     department: Mapped[str | None] = mapped_column(String(255), nullable=True)
     job_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # TOTP 2FA — secret stored as base32; encryption-at-rest is future hardening.
+    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

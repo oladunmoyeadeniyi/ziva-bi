@@ -68,6 +68,7 @@ from app.models.master_data import (
     ChartOfAccount,
     DimensionValue,
     Employee,
+    GlCodeRemap,
     GLDimensionRequirement,
     TenantDimension,
 )
@@ -92,7 +93,14 @@ from app.schemas.config import (
     DimensionValueCreate,
     DimensionValueResponse,
     DimensionValueUpdate,
+    BulkRemapResult,
+    BulkRemapRow,
+    GlRemapHistoryEntry,
     GLSearchResult,
+    InlineNewAccountFields,
+    RemapRequest,
+    RemapResult,
+    RemapResultEntry,
     UploadResult,
     _generate_code,
 )
@@ -1705,6 +1713,7 @@ async def download_coa_template(
 async def list_coa(
     search: str = Query(default="", description="Search GL number or name"),
     active_only: bool = Query(default=True),
+    is_retired: Optional[bool] = Query(default=None, description="Filter by retired status. None = no filter, True = only retired, False = exclude retired"),
     account_type: str = Query(default="", description="Filter by SOCI or SOFP"),
     classification: str = Query(default="", description="Filter by account_classification"),
     limit: int = Query(default=200, description="Max results to return"),
@@ -1712,12 +1721,16 @@ async def list_coa(
     db: AsyncSession = Depends(get_db),
 ) -> list[CoAListItem]:
     """List GL accounts for the tenant. Searchable by GL number or name.
-    Optionally filtered by account_type (SOCI/SOFP) and classification."""
+    Optionally filtered by account_type (SOCI/SOFP), classification, and is_retired.
+    active_only=true excludes both plain-inactive and retired accounts.
+    is_retired=true returns only retired accounts regardless of active_only."""
     tenant_id = _require_tenant(current_user)
 
     q = select(ChartOfAccount).where(ChartOfAccount.tenant_id == tenant_id)
     if active_only:
         q = q.where(ChartOfAccount.is_active == True)  # noqa: E712
+    if is_retired is not None:
+        q = q.where(ChartOfAccount.is_retired == is_retired)  # noqa: E712
     if search.strip():
         term = f"%{search.strip()}%"
         q = q.where(
@@ -1904,6 +1917,24 @@ async def bulk_update_dimension_requirements(
 
     await db.commit()
     return {"updated": len(gl_ids)}
+
+
+@router.get("/coa/remap-template")
+async def download_remap_template_early(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """See download_remap_template (defined below) — forward registration to avoid {gl_id} shadowing."""
+    return await download_remap_template(current_user, db)
+
+
+@router.get("/coa/remap-history", response_model=list[GlRemapHistoryEntry])
+async def list_remap_history_early(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[GlRemapHistoryEntry]:
+    """See list_remap_history (defined below) — forward registration to avoid {gl_id} shadowing."""
+    return await list_remap_history(current_user, db)
 
 
 @router.get("/coa/{gl_id}", response_model=CoAResponse)
@@ -2411,11 +2442,26 @@ async def replace_all_coa(
     """
     Deactivate ALL existing GL accounts for the tenant, then import the uploaded file.
 
-    The upload is processed the same as /coa/upload (multi-sheet xlsx supported).
-    Returns the same shape as upload_coa.
+    Lifecycle gate: only allowed when tenant.lifecycle_status == "in_implementation".
+    Once the tenant goes live, Replace All is permanently unavailable — use the
+    Remap workflow instead to preserve historical journal integrity.
     """
     tenant_id = _require_tenant(current_user)
     _require_admin(current_user)
+
+    # Lifecycle gate — in_implementation only
+    from app.models.auth import Tenant
+    t_res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    t = t_res.scalar_one_or_none()
+    if not t or t.lifecycle_status != "in_implementation":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Replace All is only available during implementation "
+                f"(current status: {t.lifecycle_status if t else 'unknown'}). "
+                "Use the Remap workflow to retire old codes once your tenant is live."
+            ),
+        )
 
     # Deactivate all existing GL accounts
     existing_result = await db.execute(
@@ -2425,9 +2471,543 @@ async def replace_all_coa(
         gl.is_active = False
     await db.flush()
 
-    # Delegate to upload handler — re-create the UploadFile in the same transaction
+    # Delegate to upload handler in the same transaction
     file.file.seek(0)
     return await upload_coa(file, current_user, db)
+
+
+@router.post("/coa/remap", response_model=RemapResult)
+async def remap_coa(
+    data: RemapRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> RemapResult:
+    """
+    Retire one or more old GL accounts and remap them many:1 to a new or existing code.
+
+    Lifecycle gate: only allowed when tenant.lifecycle_status == "live".
+    During implementation use Replace All instead; Remap is for post-go-live corrections
+    where journal history must be preserved.
+
+    Rules enforced:
+    - All old_account_ids must exist for this tenant, be active, and not already retired.
+    - Exactly one of new_account_id or new_account must be provided.
+    - All old accounts must share the same account_type (PL or BS).
+    - The new account's account_type must match the old accounts.
+    - On success: old accounts are marked is_active=False + is_retired=True;
+      a gl_code_remaps row is created per old account; an audit log entry is written.
+    - Historical journal lines continue pointing at old account IDs unchanged.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    # Lifecycle gate — live only
+    from app.models.auth import Tenant
+    t_res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    t = t_res.scalar_one_or_none()
+    if not t or t.lifecycle_status != "live":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Remap is only available once your tenant is live "
+                f"(current status: {t.lifecycle_status if t else 'unknown'}). "
+                "Use Replace All during implementation to restructure your Chart of Accounts."
+            ),
+        )
+
+    if not data.old_account_ids:
+        raise HTTPException(status_code=400, detail="At least one old_account_id is required.")
+    if data.new_account_id is None and data.new_account is None:
+        raise HTTPException(status_code=400, detail="Provide either new_account_id or new_account (inline creation).")
+    if data.new_account_id is not None and data.new_account is not None:
+        raise HTTPException(status_code=400, detail="Provide new_account_id OR new_account, not both.")
+
+    # Load and validate old accounts
+    old_result = await db.execute(
+        select(ChartOfAccount).where(
+            ChartOfAccount.id.in_(data.old_account_ids),
+            ChartOfAccount.tenant_id == tenant_id,
+        )
+    )
+    old_accounts = old_result.scalars().all()
+
+    found_ids = {a.id for a in old_accounts}
+    missing = set(data.old_account_ids) - found_ids
+    if missing:
+        raise HTTPException(status_code=404, detail=f"GL accounts not found: {[str(m) for m in missing]}")
+
+    errors = []
+    for a in old_accounts:
+        if not a.is_active:
+            errors.append(f"{a.gl_number} is already inactive.")
+        if a.is_retired:
+            errors.append(f"{a.gl_number} is already retired.")
+    if errors:
+        raise HTTPException(status_code=422, detail={"message": "Cannot retire these accounts.", "errors": errors})
+
+    # Check account_type consistency — normalize PL→SOCI and BS→SOFP before comparing
+    _normalize_type = {"PL": "SOCI", "BS": "SOFP", "P/L": "SOCI", "P&L": "SOCI",
+                       "B/S": "SOFP", "Profit & Loss": "SOCI", "Balance Sheet": "SOFP"}
+    def _norm(t: str) -> str:
+        return _normalize_type.get(t, t)
+
+    old_types_raw = {a.account_type for a in old_accounts}
+    old_types_norm = {_norm(t) for t in old_types_raw}
+    if len(old_types_norm) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "All accounts being retired must have the same account_type.",
+                "conflicting_types": list(old_types_raw),
+                "accounts": [f"{a.gl_number} ({a.account_type})" for a in old_accounts],
+            },
+        )
+    required_type_norm = next(iter(old_types_norm))
+
+    # Resolve or create the new account
+    new_account_created = False
+    if data.new_account_id is not None:
+        new_res = await db.execute(
+            select(ChartOfAccount).where(
+                ChartOfAccount.id == data.new_account_id,
+                ChartOfAccount.tenant_id == tenant_id,
+            )
+        )
+        new_acct = new_res.scalar_one_or_none()
+        if not new_acct:
+            raise HTTPException(status_code=404, detail="New account not found.")
+        if not new_acct.is_active or new_acct.is_retired:
+            raise HTTPException(status_code=422, detail="New account must be active and not retired.")
+        if new_acct.id in found_ids:
+            raise HTTPException(status_code=422, detail="New account cannot be one of the accounts being retired.")
+        if _norm(new_acct.account_type) != required_type_norm:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "New account type must match old accounts.",
+                    "new_account_type": new_acct.account_type,
+                    "old_account_type": next(iter(old_types_raw)),
+                },
+            )
+    else:
+        # Create new account inline
+        naf: InlineNewAccountFields = data.new_account  # type: ignore[assignment]
+        if _norm(naf.account_type) != required_type_norm:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Inline new account type must match old accounts.",
+                    "new_account_type": naf.account_type,
+                    "old_account_type": next(iter(old_types_raw)),
+                },
+            )
+        # Check gl_number uniqueness
+        dup = await db.execute(
+            select(ChartOfAccount).where(
+                ChartOfAccount.tenant_id == tenant_id,
+                ChartOfAccount.gl_number == naf.gl_number,
+            )
+        )
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=422, detail=f"GL number '{naf.gl_number}' already exists for this tenant.")
+        new_acct = ChartOfAccount(
+            tenant_id=tenant_id,
+            gl_number=naf.gl_number,
+            gl_name=naf.gl_name,
+            account_type=naf.account_type,
+            is_active=True,
+            is_retired=False,
+            gl_group=naf.gl_group,
+            gl_subgroup=naf.gl_subgroup,
+            gl_sub_subgroup=naf.gl_sub_subgroup,
+            fs_head=naf.fs_head,
+            fs_note=naf.fs_note,
+            tb_mapping=naf.tb_mapping,
+            account_classification=naf.account_classification,
+        )
+        db.add(new_acct)
+        await db.flush()  # get new_acct.id
+        new_account_created = True
+
+    # Retire old accounts + create remap rows
+    remap_entries: list[RemapResultEntry] = []
+    for old in old_accounts:
+        old.is_active = False
+        old.is_retired = True
+        db.add(GlCodeRemap(
+            tenant_id=tenant_id,
+            old_account_id=old.id,
+            new_account_id=new_acct.id,
+            remapped_by=current_user.user_id,
+            reason=data.reason,
+        ))
+        remap_entries.append(RemapResultEntry(
+            old_gl_number=old.gl_number,
+            old_gl_name=old.gl_name,
+            new_gl_number=new_acct.gl_number,
+            new_gl_name=new_acct.gl_name,
+        ))
+
+    # Audit log
+    from app.models.auth import AuditLog
+    db.add(AuditLog(
+        event_type="coa.remap",
+        user_id=current_user.user_id,
+        tenant_id=tenant_id,
+        log_metadata={
+            "retired_accounts": [{"id": str(a.id), "gl_number": a.gl_number} for a in old_accounts],
+            "new_account": {"id": str(new_acct.id), "gl_number": new_acct.gl_number},
+            "new_account_created": new_account_created,
+            "reason": data.reason,
+        },
+    ))
+
+    await db.flush()
+    return RemapResult(
+        remapped=remap_entries,
+        new_account_created=new_account_created,
+        new_gl_number=new_acct.gl_number,
+        new_gl_name=new_acct.gl_name,
+    )
+
+
+@router.get("/coa/remap-template")
+async def download_remap_template(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Download the bulk remap upload template (.xlsx).
+
+    Column structure: Old GL Number | New GL Number | Reason (optional)
+    One row per old→new pair.  Multiple rows can share the same New GL Number
+    for many-to-one remaps.  New GL Number must already exist as an active account.
+    Retired-code creation inline is not supported in bulk — use the single-screen
+    remap form for that.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="openpyxl not installed.") from exc
+
+    # Fetch active GL accounts for reference
+    active_res = await db.execute(
+        select(ChartOfAccount)
+        .where(ChartOfAccount.tenant_id == tenant_id, ChartOfAccount.is_active == True)  # noqa: E712
+        .order_by(ChartOfAccount.gl_number)
+    )
+    active_accounts = active_res.scalars().all()
+
+    from openpyxl.comments import Comment as XLComment
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Remap"
+    ws.freeze_panes = "A2"
+
+    hdr_fill = PatternFill("solid", fgColor="FEF3C7")  # amber
+    hdr_font = Font(bold=True, size=10)
+    data_start_fill = PatternFill("solid", fgColor="FFFBEB")  # very light amber data-start hint
+
+    headers = ["Old GL Number *", "New GL Number *", "Reason (optional)"]
+    header_comments = [
+        "Must exactly match an active, non-retired GL number in your CoA.\nExample: 5010",
+        "Must exactly match an active, non-retired GL number to map old code under.\nExample: 5015",
+        "Optional explanation for the audit trail.\nExample: Q3 consolidation",
+    ]
+    col_widths = [20, 20, 40]
+
+    # Row 1: headers with cell comments (no inline instruction row per template format standard)
+    for ci, (h, comment_text, w) in enumerate(zip(headers, header_comments, col_widths), 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.fill = hdr_fill; cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(ci)].width = w
+        comment = XLComment(comment_text, "Ziva BI")
+        comment.width = 200; comment.height = 60
+        cell.comment = comment
+    ws.row_dimensions[1].height = 28
+
+    # Row 2: data-start marker (visual hint per template format standard)
+    ws.cell(row=2, column=1).fill = data_start_fill
+    ws.cell(row=2, column=2).fill = data_start_fill
+    ws.cell(row=2, column=3).fill = data_start_fill
+
+    # Instructions sheet
+    ws2 = wb.create_sheet("Instructions")
+    ws2.column_dimensions["A"].width = 20
+    ws2.column_dimensions["B"].width = 70
+    instr_rows = [
+        ["COLUMN", "DESCRIPTION"],
+        ["Old GL Number", "The GL number being retired. Must be active and not already retired."],
+        ["New GL Number", "The GL number to remap under. Must exist and be active. Cannot be the same as the old code."],
+        ["Reason", "Optional. Appears in the remap audit log."],
+        ["", ""],
+        ["DATA START ROW", "Enter your data starting at row 2. Row 1 is the header."],
+        ["MANY-TO-ONE", "To remap multiple old codes to one new code, add one row per old code, all with the same New GL Number."],
+        ["TYPE CHECK", "Old and new codes must all have the same account type (PL/SOCI or BS/SOFP). Rows with mismatched types are rejected."],
+        ["EFFECT", "Retired codes are marked inactive. Historical journals still reference them. Reports can show data by old OR new code."],
+    ]
+    for ri, row_vals in enumerate(instr_rows, 1):
+        for ci, val in enumerate(row_vals, 1):
+            cell = ws2.cell(row=ri, column=ci, value=val)
+            if ri == 1:
+                cell.font = Font(bold=True)
+                cell.fill = hdr_fill
+
+    # Reference sheet with active GL accounts
+    ws3 = wb.create_sheet("Active GL Accounts (Reference)")
+    ws3.append(["GL Number", "GL Name", "Account Type"])
+    ws3.cell(1, 1).font = Font(bold=True)
+    ws3.cell(1, 2).font = Font(bold=True)
+    ws3.cell(1, 3).font = Font(bold=True)
+    for acct in active_accounts:
+        ws3.append([acct.gl_number, acct.gl_name, acct.account_type])
+    ws3.column_dimensions["A"].width = 15
+    ws3.column_dimensions["B"].width = 40
+    ws3.column_dimensions["C"].width = 15
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=coa_remap_template.xlsx"},
+    )
+
+
+@router.post("/coa/remap-bulk", response_model=BulkRemapResult)
+async def bulk_remap_coa(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> BulkRemapResult:
+    """
+    Bulk remap GL accounts from an uploaded xlsx/csv file.
+
+    Column structure: Old GL Number | New GL Number | Reason (optional)
+    One row per old→new pair.  Groups rows by New GL Number; validates
+    account_type consistency per group.  Applies valid groups, reports
+    row-level errors for invalid ones.  Valid and invalid groups in the same
+    file are handled independently — valid groups are applied even when other
+    groups fail.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    # Lifecycle gate — live only
+    from app.models.auth import Tenant
+    t_res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    t = t_res.scalar_one_or_none()
+    if not t or t.lifecycle_status != "live":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Remap is only available once your tenant is live "
+                f"(current status: {t.lifecycle_status if t else 'unknown'}). "
+                "Use Replace All during implementation."
+            ),
+        )
+
+    content = await file.read()
+    fname = (file.filename or "").lower()
+
+    headers: list[str] = []
+    rows: list[list[str]] = []
+
+    if fname.endswith(".xlsx"):
+        try:
+            import openpyxl
+        except ImportError as exc:
+            raise HTTPException(status_code=500, detail="openpyxl not installed.") from exc
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+        ws = wb.worksheets[0]  # first sheet
+        all_rows = [[str(c).strip() if c is not None else "" for c in row] for row in ws.iter_rows(values_only=True)]
+        if all_rows:
+            headers = all_rows[0]
+            rows = all_rows[1:]  # row 1 = instructions, skip
+    elif fname.endswith(".csv"):
+        import csv
+        all_csv = list(csv.reader(io.StringIO(content.decode("utf-8", errors="replace"))))
+        if all_csv:
+            headers = [h.strip() for h in all_csv[0]]
+            rows = [[c.strip() for c in r] for r in all_csv[1:]]
+    else:
+        raise HTTPException(status_code=400, detail="Only .csv and .xlsx files are supported.")
+
+    h = [hdr.lower().strip("*").strip() for hdr in headers]
+
+    def col(name: str) -> Optional[int]:
+        try: return h.index(name)
+        except ValueError: return None
+
+    # Use 'is not None' pattern — col() returns 0 for the first column, which is falsy
+    _oc = col("old gl number"); old_col    = _oc if _oc is not None else col("old gl number *")
+    _nc = col("new gl number"); new_col    = _nc if _nc is not None else col("new gl number *")
+    _rc = col("reason (optional)"); reason_col = _rc if _rc is not None else col("reason")
+
+    if old_col is None or new_col is None:
+        raise HTTPException(status_code=400, detail="File must have 'Old GL Number' and 'New GL Number' columns.")
+
+    # Load all active CoA for this tenant
+    all_res = await db.execute(
+        select(ChartOfAccount).where(ChartOfAccount.tenant_id == tenant_id)
+    )
+    all_accounts = {a.gl_number.upper(): a for a in all_res.scalars().all()}
+
+    result_rows: list[BulkRemapRow] = []
+    remapped_count = 0
+    error_count = 0
+
+    # Parse all rows first, group by new_gl_number
+    from collections import defaultdict
+    groups: dict[str, list[tuple[int, str, str]]] = defaultdict(list)  # new_gl → [(row_no, old_gl, reason)]
+    parse_errors: list[BulkRemapRow] = []
+
+    for i, row in enumerate(rows, start=2):  # row 1 = header, row 2 = first instruction
+        if not any((c or "").strip() for c in row):
+            continue
+
+        def get(idx: Optional[int]) -> str:
+            if idx is None or idx >= len(row): return ""
+            return (row[idx] or "").strip()
+
+        old_gl    = get(old_col).upper()
+        new_gl    = get(new_col).upper()
+        reason    = get(reason_col) or None
+
+        if not old_gl:
+            parse_errors.append(BulkRemapRow(row=i, old_gl_number="", new_gl_number=new_gl, status="error", reason="Missing Old GL Number."))
+            continue
+        if not new_gl:
+            parse_errors.append(BulkRemapRow(row=i, old_gl_number=old_gl, new_gl_number="", status="error", reason="Missing New GL Number."))
+            continue
+        groups[new_gl].append((i, old_gl, reason))
+
+    error_count += len(parse_errors)
+    result_rows.extend(parse_errors)
+
+    # Validate and apply each group
+    for new_gl, group_rows in groups.items():
+        new_acct = all_accounts.get(new_gl)
+        if not new_acct or not new_acct.is_active or new_acct.is_retired:
+            for row_no, old_gl, _ in group_rows:
+                result_rows.append(BulkRemapRow(row=row_no, old_gl_number=old_gl, new_gl_number=new_gl, status="error",
+                                                reason=f"New GL '{new_gl}' does not exist or is not active."))
+                error_count += 1
+            continue
+
+        # Validate old accounts in group
+        group_errors: list[BulkRemapRow] = []
+        valid_pairs: list[tuple[int, ChartOfAccount, str | None]] = []
+
+        for row_no, old_gl, reason in group_rows:
+            if old_gl == new_gl:
+                group_errors.append(BulkRemapRow(row=row_no, old_gl_number=old_gl, new_gl_number=new_gl, status="error",
+                                                  reason="Old and new GL number cannot be the same."))
+                continue
+            old_acct = all_accounts.get(old_gl)
+            if not old_acct:
+                group_errors.append(BulkRemapRow(row=row_no, old_gl_number=old_gl, new_gl_number=new_gl, status="error",
+                                                  reason=f"GL '{old_gl}' not found."))
+                continue
+            if not old_acct.is_active:
+                group_errors.append(BulkRemapRow(row=row_no, old_gl_number=old_gl, new_gl_number=new_gl, status="error",
+                                                  reason=f"GL '{old_gl}' is already inactive."))
+                continue
+            if old_acct.is_retired:
+                group_errors.append(BulkRemapRow(row=row_no, old_gl_number=old_gl, new_gl_number=new_gl, status="error",
+                                                  reason=f"GL '{old_gl}' is already retired."))
+                continue
+            valid_pairs.append((row_no, old_acct, reason))
+
+        if group_errors:
+            error_count += len(group_errors)
+            result_rows.extend(group_errors)
+            # Still process any valid pairs from the same group? No — reject whole group on any error
+            for row_no, old_acct, _ in valid_pairs:
+                result_rows.append(BulkRemapRow(row=row_no, old_gl_number=old_acct.gl_number, new_gl_number=new_gl, status="error",
+                                                reason="Group rejected due to other errors in the same new-GL group."))
+                error_count += 1
+            continue
+
+        # Check account_type consistency — normalize PL/BS to SOCI/SOFP before comparing
+        _nt = {"PL": "SOCI", "BS": "SOFP", "P/L": "SOCI", "P&L": "SOCI",
+               "B/S": "SOFP", "Profit & Loss": "SOCI", "Balance Sheet": "SOFP"}
+        def _n(t: str) -> str: return _nt.get(t, t)
+        norm_types = {_n(old_acct.account_type) for _, old_acct, _ in valid_pairs}
+        norm_types.add(_n(new_acct.account_type))
+        if len(norm_types) > 1:
+            raw_types = {old_acct.account_type for _, old_acct, _ in valid_pairs} | {new_acct.account_type}
+            for row_no, old_acct, _ in valid_pairs:
+                result_rows.append(BulkRemapRow(row=row_no, old_gl_number=old_acct.gl_number, new_gl_number=new_gl, status="error",
+                                                reason=f"account_type mismatch within group: {list(raw_types)}"))
+                error_count += 1
+            continue
+
+        # Apply the group
+        from app.models.auth import AuditLog
+        retired_meta = []
+        for row_no, old_acct, reason in valid_pairs:
+            old_acct.is_active = False
+            old_acct.is_retired = True
+            db.add(GlCodeRemap(
+                tenant_id=tenant_id,
+                old_account_id=old_acct.id,
+                new_account_id=new_acct.id,
+                remapped_by=current_user.user_id,
+                reason=reason,
+            ))
+            result_rows.append(BulkRemapRow(row=row_no, old_gl_number=old_acct.gl_number, new_gl_number=new_gl, status="remapped"))
+            remapped_count += 1
+            retired_meta.append({"gl_number": old_acct.gl_number})
+
+        db.add(AuditLog(
+            event_type="coa.remap.bulk_group",
+            user_id=current_user.user_id,
+            tenant_id=tenant_id,
+            log_metadata={"new_gl_number": new_gl, "retired": retired_meta},
+        ))
+
+    await db.flush()
+    return BulkRemapResult(remapped=remapped_count, errors=error_count, rows=result_rows)
+
+
+@router.get("/coa/remap-history", response_model=list[GlRemapHistoryEntry])
+async def list_remap_history(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[GlRemapHistoryEntry]:
+    """Return all GL code remap history for this tenant, newest first."""
+    tenant_id = _require_tenant(current_user)
+    from sqlalchemy.orm import selectinload
+    res = await db.execute(
+        select(GlCodeRemap)
+        .where(GlCodeRemap.tenant_id == tenant_id)
+        .options(
+            selectinload(GlCodeRemap.old_account),
+            selectinload(GlCodeRemap.new_account),
+        )
+        .order_by(GlCodeRemap.remapped_at.desc())
+    )
+    entries = []
+    for r in res.scalars().all():
+        entries.append(GlRemapHistoryEntry(
+            id=str(r.id),
+            old_gl_number=r.old_account.gl_number,
+            old_gl_name=r.old_account.gl_name,
+            new_gl_number=r.new_account.gl_number,
+            new_gl_name=r.new_account.gl_name,
+            remapped_at=r.remapped_at,
+            reason=r.reason,
+        ))
+    return entries
 
 
 @router.post("/dimensions/{dimension_id}/values/bulk-action", response_model=BulkActionResult)

@@ -7,13 +7,20 @@
  * Wrap the app root with <AuthProvider> (done in app/layout.tsx).
  *
  * State:
- *   accessToken  — short-lived JWT kept in memory (lost on page refresh)
- *   user         — current user profile (also cached in localStorage)
- *   isLoading    — true while restoring session on mount
+ *   accessToken  — short-lived JWT kept in memory (lost on page refresh).
+ *                  While impersonating a tenant, this becomes the impersonation
+ *                  token so all existing pages "just work" without changes.
+ *   user         — current user profile (also cached in localStorage).
+ *   isLoading    — true while restoring session on mount.
+ *   impersonation — active impersonation session, or null.
  *
- * On mount: checks localStorage for a refresh token and calls /api/auth/refresh-token
- * to restore the access token. If the refresh token is expired or absent, the user
- * is treated as unauthenticated.
+ * Impersonation (M9.3b):
+ *   - enterTenant() calls /enter, stores the impersonation token in memory +
+ *     sessionStorage (tab-scoped, transient), and overrides accessToken.
+ *   - exitImpersonation() restores accessToken to the base super-admin token.
+ *   - The super admin's refresh token in localStorage is NEVER touched.
+ *   - On page refresh while impersonating: base session is restored via the
+ *     localStorage refresh token, then sessionStorage impersonation is rehydrated.
  */
 
 import React, {
@@ -37,12 +44,20 @@ export interface AuthUser {
   is_super_admin: boolean;
   is_tenant_admin: boolean;
   has_non_admin_role: boolean;
-  /** M8.2: implementation portal role tier */
-  role_tier?: "consultant" | "power_admin" | "functional_admin" | null;
+  role_tier?: "power_admin" | "functional_admin" | null;
   employee_code?: string | null;
   department?: string | null;
   job_title?: string | null;
   phone?: string | null;
+  totp_enabled?: boolean;
+}
+
+export interface ImpersonationState {
+  token: string;
+  mode: "implementation" | "support";
+  environment: "live" | "test";
+  tenantId: string;
+  tenantName: string;
 }
 
 interface AuthResponse {
@@ -50,6 +65,15 @@ interface AuthResponse {
   refresh_token: string;
   token_type: string;
   user?: AuthUser;
+}
+
+interface EnterTenantResponse {
+  access_token: string;
+  token_type: string;
+  impersonation_mode: string;
+  environment: string;
+  tenant_id: string;
+  tenant_name: string;
 }
 
 export interface SignupData {
@@ -63,34 +87,45 @@ export interface SignupData {
 
 interface AuthContextType {
   user: AuthUser | null;
+  /** Effective token: impersonation token while impersonating, base token otherwise. */
   accessToken: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  impersonation: ImpersonationState | null;
   signup: (data: SignupData) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<AuthUser | undefined>;
   logout: () => Promise<void>;
-  /** Refresh the stored user object (e.g. after a profile update). */
   refreshUser: () => Promise<void>;
+  /** Enter a tenant as a super admin. Navigating to the tenant dashboard is the caller's responsibility. */
+  enterTenant: (tenantId: string, environment?: "live" | "test") => Promise<void>;
+  /** Clear impersonation and restore the base super-admin session. */
+  exitImpersonation: () => void;
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 const REFRESH_KEY = "ziva_refresh_token";
 const USER_KEY = "ziva_user";
+const IMPERSONATION_KEY = "ziva_impersonation"; // sessionStorage — tab-scoped
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  // Base super-admin (or regular user) access token — never overwritten by impersonation.
+  const [_accessToken, _setAccessToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [impersonation, setImpersonation] = useState<ImpersonationState | null>(null);
+
+  // Effective token exposed to consumers: impersonation token takes precedence.
+  const accessToken = impersonation?.token ?? _accessToken;
 
   // ── Persist helpers ───────────────────────────────────────────────────────
 
   const saveSession = (data: AuthResponse) => {
-    setAccessToken(data.access_token);
+    _setAccessToken(data.access_token);
     localStorage.setItem(REFRESH_KEY, data.refresh_token);
     if (data.user) {
       setUser(data.user);
@@ -99,10 +134,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const clearSession = () => {
-    setAccessToken(null);
+    _setAccessToken(null);
     setUser(null);
+    setImpersonation(null);
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(USER_KEY);
+    sessionStorage.removeItem(IMPERSONATION_KEY);
   };
 
   // ── Restore session on mount ──────────────────────────────────────────────
@@ -117,7 +154,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Optimistic: show the cached user while the refresh happens
       if (storedUser) {
         try {
           setUser(JSON.parse(storedUser));
@@ -131,11 +167,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           method: "POST",
           body: JSON.stringify({ refresh_token: storedRefresh }),
         });
-        setAccessToken(data.access_token);
-        // Rotate the stored refresh token
+        _setAccessToken(data.access_token);
         localStorage.setItem(REFRESH_KEY, data.refresh_token);
+
+        // Rehydrate impersonation from sessionStorage (survives page refresh).
+        const storedImp = sessionStorage.getItem(IMPERSONATION_KEY);
+        if (storedImp) {
+          try {
+            setImpersonation(JSON.parse(storedImp) as ImpersonationState);
+          } catch {
+            sessionStorage.removeItem(IMPERSONATION_KEY);
+          }
+        }
       } catch {
-        // Refresh token expired or revoked — force re-login
         clearSession();
       } finally {
         setIsLoading(false);
@@ -143,6 +187,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     restore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Auth actions ──────────────────────────────────────────────────────────
@@ -153,18 +198,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify(data),
     });
     saveSession(res);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string): Promise<AuthUser | undefined> => {
     const res = await apiFetch<AuthResponse>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     saveSession(res);
+    return res.user;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshUser = useCallback(async () => {
-    const token = accessToken;
+    const token = _accessToken;
     if (!token) return;
     try {
       const updated = await apiFetch<AuthUser>("/api/users/me", { token });
@@ -173,15 +221,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // non-fatal — user stays as-is
     }
-  }, [accessToken]);
+  }, [_accessToken]);
 
   const logout = useCallback(async () => {
     const storedRefresh = localStorage.getItem(REFRESH_KEY);
     try {
-      if (storedRefresh && accessToken) {
+      if (storedRefresh && _accessToken) {
         await apiFetch("/api/auth/logout", {
           method: "POST",
-          token: accessToken,
+          token: _accessToken,
           body: JSON.stringify({ refresh_token: storedRefresh }),
         });
       }
@@ -190,7 +238,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       clearSession();
     }
-  }, [accessToken]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_accessToken]);
+
+  // ── Impersonation actions ─────────────────────────────────────────────────
+
+  const enterTenant = useCallback(async (
+    tenantId: string,
+    environment?: "live" | "test",
+  ): Promise<void> => {
+    // Always use the base token (super admin's own) to call /enter.
+    const baseToken = _accessToken;
+    if (!baseToken) throw new Error("Not authenticated.");
+
+    const res = await apiFetch<EnterTenantResponse>(
+      `/api/platform/tenants/${tenantId}/enter`,
+      {
+        method: "POST",
+        token: baseToken,
+        body: environment ? { environment } : undefined,
+      },
+    );
+
+    const imp: ImpersonationState = {
+      token: res.access_token,
+      mode: res.impersonation_mode as "implementation" | "support",
+      environment: res.environment as "live" | "test",
+      tenantId: res.tenant_id,
+      tenantName: res.tenant_name,
+    };
+
+    setImpersonation(imp);
+    sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify(imp));
+  }, [_accessToken]);
+
+  const exitImpersonation = useCallback(() => {
+    setImpersonation(null);
+    sessionStorage.removeItem(IMPERSONATION_KEY);
+    // accessToken automatically reverts to _accessToken (base super-admin token).
+  }, []);
 
   return (
     <AuthContext.Provider
@@ -199,10 +285,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         accessToken,
         isLoading,
         isAuthenticated: !!accessToken,
+        impersonation,
         signup,
         login,
         logout,
         refreshUser,
+        enterTenant,
+        exitImpersonation,
       }}
     >
       {children}

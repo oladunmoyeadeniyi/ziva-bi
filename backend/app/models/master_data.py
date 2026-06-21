@@ -211,6 +211,12 @@ class ChartOfAccount(Base):
     # M8.2: consultant can lock this GL account from Power Admin modification
     locked_by_implementation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # CoA Remap: once a code is retired via remap, is_retired=True AND is_active=False.
+    # Retired accounts remain in the DB for historical integrity (journal lines still point to them)
+    # but are excluded from all posting pickers.  is_active alone cannot distinguish retired
+    # from plain-deactivated, hence this separate flag.
+    is_retired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -230,6 +236,60 @@ class ChartOfAccount(Base):
         "CategoryGLMapping",
         back_populates="gl_account",
         cascade="all, delete-orphan",
+    )
+
+
+class GlCodeRemap(Base):
+    """
+    Audit record of a GL account code retirement remap (many old codes → one new code).
+
+    One row per old→new pair.  If accounts 5010 and 5011 are both remapped to 5015,
+    two rows are created, both with new_account_id pointing at 5015.
+
+    The old accounts are simultaneously marked is_retired=True / is_active=False by the
+    remap endpoint.  Historical journal lines continue to reference the old account ID —
+    this table provides the mapping needed to roll them up under the new code in reports.
+
+    Design: NO CASCADE on old_account_id / new_account_id FKs — retired accounts must
+    never be deleted, so FK integrity is guaranteed by the retirement + no-delete policy.
+    """
+
+    __tablename__ = "gl_code_remaps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    old_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chart_of_accounts.id", ondelete="NO ACTION"),
+        nullable=False,
+    )
+    new_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chart_of_accounts.id", ondelete="NO ACTION"),
+        nullable=False,
+    )
+    remapped_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    remapped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    old_account: Mapped["ChartOfAccount"] = relationship(
+        "ChartOfAccount", foreign_keys=[old_account_id]
+    )
+    new_account: Mapped["ChartOfAccount"] = relationship(
+        "ChartOfAccount", foreign_keys=[new_account_id]
     )
 
 
@@ -364,6 +424,19 @@ class Employee(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    # Relationships — read-only convenience for selectinload in hr.py.
+    # No back_populates: one-directional is sufficient for eager-loading in GET routes.
+    cost_center: Mapped[Optional["DimensionValue"]] = relationship(
+        "DimensionValue",
+        foreign_keys=[cost_center_id],
+    )
+    # Self-referential: remote_side points to the PK (the "one" side of many-to-one).
+    line_manager: Mapped[Optional["Employee"]] = relationship(
+        "Employee",
+        foreign_keys=[line_manager_id],
+        remote_side=[id],
+    )
+
 
 class EmployeeCodeHistory(Base):
     """
@@ -490,6 +563,21 @@ class CostCenterConfig(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships — read-only convenience for selectinload in hr.py.
+    # No back_populates: one-directional is sufficient for eager-loading in GET routes.
+    cost_center: Mapped["DimensionValue"] = relationship(
+        "DimensionValue",
+        foreign_keys=[cost_center_id],
+    )
+    head_employee: Mapped[Optional["Employee"]] = relationship(
+        "Employee",
+        foreign_keys=[head_employee_id],
+    )
+    head_user: Mapped[Optional["User"]] = relationship(
+        "User",
+        foreign_keys=[head_user_id],
     )
 
 

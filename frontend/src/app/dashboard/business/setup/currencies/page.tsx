@@ -87,15 +87,6 @@ interface BdcEntry {
   is_active: boolean;
 }
 
-interface AdditionalCurrency {
-  code: string;
-  name: string;
-  symbol: string;
-  is_active: boolean;
-  rate_source?: string;
-  effective_from?: string;
-}
-
 interface FxRateEntry {
   id: string;
   from_currency: string;
@@ -140,8 +131,9 @@ interface RevalRules {
 
 interface FxConfig {
   functional_currency?: string;
+  /** Sorted list of ISO codes the tenant transacts in — single source of truth. */
+  enabled_currencies?: string[];
   reporting_currency?: string;
-  additional_currencies?: AdditionalCurrency[];
   fx_rates?: FxRateEntry[];
   revaluation_rules?: RevalRules;
 }
@@ -285,8 +277,6 @@ export default function CurrenciesPage() {
   const [showAddCurrency, setShowAddCurrency] = useState(false);
   const [newCurrCode, setNewCurrCode] = useState("");
   const [newCurrCustomCode, setNewCurrCustomCode] = useState("");
-  const [newCurrSource, setNewCurrSource] = useState("manual");
-  const [newCurrFrom, setNewCurrFrom] = useState("");
 
   // Add FX rate form
   const [showAddRate, setShowAddRate] = useState(false);
@@ -389,25 +379,18 @@ export default function CurrenciesPage() {
     const code =
       newCurrCode === "OTHER" ? newCurrCustomCode.toUpperCase() : newCurrCode;
     if (!code) return;
-    const info = getCurrencyInfo(code);
-    const updated: AdditionalCurrency[] = [
-      ...(config.additional_currencies ?? []),
-      {
-        code,
-        name: info?.name ?? code,
-        symbol: info?.symbol ?? "",
-        is_active: true,
-        rate_source: newCurrSource,
-        effective_from:
-          newCurrFrom || new Date().toISOString().split("T")[0],
-      },
-    ];
-    setConfig((c) => ({ ...c, additional_currencies: updated }));
-    save({ additional_currencies: updated });
+
+    // De-duplicate and sort; functional currency is always in the list already.
+    const existing = config.enabled_currencies ?? [];
+    if (existing.includes(code)) {
+      setShowAddCurrency(false);
+      return;
+    }
+    const updated = [...existing, code].sort();
+    setConfig((c) => ({ ...c, enabled_currencies: updated }));
+    save({ enabled_currencies: updated });
     setNewCurrCode("");
     setNewCurrCustomCode("");
-    setNewCurrSource("manual");
-    setNewCurrFrom("");
     setShowAddCurrency(false);
   };
 
@@ -688,10 +671,7 @@ export default function CurrenciesPage() {
                       <option value="">— Select currency —</option>
                       {ISO_CURRENCIES.filter(
                         (c) =>
-                          c.code !== config.functional_currency &&
-                          !(config.additional_currencies ?? []).some(
-                            (a) => a.code === c.code
-                          )
+                          !(config.enabled_currencies ?? []).includes(c.code)
                       ).map((c) => (
                         <option key={c.code} value={c.code}>
                           {c.code !== "OTHER"
@@ -718,33 +698,6 @@ export default function CurrenciesPage() {
                       />
                     </div>
                   )}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Rate source
-                    </label>
-                    <select
-                      value={newCurrSource}
-                      onChange={(e) => setNewCurrSource(e.target.value)}
-                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {RATE_SOURCES.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">
-                      Effective from
-                    </label>
-                    <input
-                      type="date"
-                      value={newCurrFrom}
-                      onChange={(e) => setNewCurrFrom(e.target.value)}
-                      className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -769,7 +722,10 @@ export default function CurrenciesPage() {
               </div>
             )}
 
-            {(config.additional_currencies ?? []).length === 0 ? (
+            {/* List all enabled currencies except the functional one */}
+            {(config.enabled_currencies ?? []).filter(
+              (c) => c !== config.functional_currency
+            ).length === 0 ? (
               <p className="text-sm text-gray-400 italic">
                 No additional currencies added.
               </p>
@@ -781,64 +737,46 @@ export default function CurrenciesPage() {
                       <th className="px-3 py-2 text-left">Code</th>
                       <th className="px-3 py-2 text-left">Name</th>
                       <th className="px-3 py-2 text-left">Symbol</th>
-                      <th className="px-3 py-2 text-left">Rate source</th>
-                      <th className="px-3 py-2 text-left">From</th>
-                      <th className="px-3 py-2 text-left">Status</th>
                       <th className="px-3 py-2" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {(config.additional_currencies ?? []).map((c, i) => (
-                      <tr key={c.code}>
-                        <td className="px-3 py-2 font-mono font-medium">
-                          {c.code}
-                        </td>
-                        <td className="px-3 py-2">{c.name}</td>
-                        <td className="px-3 py-2">{c.symbol}</td>
-                        <td className="px-3 py-2 text-xs text-gray-500">
-                          {RATE_SOURCES.find((s) => s.value === c.rate_source)
-                            ?.label ??
-                            c.rate_source ??
-                            "—"}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-gray-500">
-                          {c.effective_from ?? "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                              c.is_active
-                                ? "bg-green-100 text-green-700"
-                                : "bg-gray-100 text-gray-500"
-                            }`}
-                          >
-                            {c.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = (
-                                config.additional_currencies ?? []
-                              ).map((cur, idx) =>
-                                idx === i
-                                  ? { ...cur, is_active: !cur.is_active }
-                                  : cur
-                              );
-                              setConfig((c) => ({
-                                ...c,
-                                additional_currencies: updated,
-                              }));
-                              save({ additional_currencies: updated });
-                            }}
-                            className="text-xs text-gray-500 hover:text-gray-800"
-                          >
-                            {c.is_active ? "Deactivate" : "Activate"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {(config.enabled_currencies ?? [])
+                      .filter((c) => c !== config.functional_currency)
+                      .map((code) => {
+                        const info = getCurrencyInfo(code);
+                        return (
+                          <tr key={code}>
+                            <td className="px-3 py-2 font-mono font-medium">
+                              {code}
+                            </td>
+                            <td className="px-3 py-2">
+                              {info?.name ?? code}
+                            </td>
+                            <td className="px-3 py-2 text-gray-500">
+                              {info?.symbol ?? "—"}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = (
+                                    config.enabled_currencies ?? []
+                                  ).filter((c) => c !== code);
+                                  setConfig((prev) => ({
+                                    ...prev,
+                                    enabled_currencies: updated,
+                                  }));
+                                  save({ enabled_currencies: updated });
+                                }}
+                                className="text-xs text-red-400 hover:text-red-600"
+                              >
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
@@ -867,7 +805,7 @@ export default function CurrenciesPage() {
               onClick={() =>
                 save({
                   reporting_currency: config.reporting_currency,
-                  additional_currencies: config.additional_currencies,
+                  enabled_currencies: config.enabled_currencies,
                 })
               }
               disabled={saving}
@@ -1065,11 +1003,13 @@ export default function CurrenciesPage() {
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">All currencies</option>
-              {(config.additional_currencies ?? []).map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.code}
-                </option>
-              ))}
+              {(config.enabled_currencies ?? [])
+                .filter((c) => c !== config.functional_currency)
+                .map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
             </select>
             <select
               value={rateFilterType}

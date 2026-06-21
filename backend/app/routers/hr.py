@@ -69,6 +69,7 @@ from app.schemas.hr import (
     CodeHistoryResponse,
     CostCenterConfigResponse,
     CostCenterHeadUpdate,
+    CostCenterOption,
     EmployeeCreate,
     EmployeeHistoryResponse,
     EmployeeListItem,
@@ -161,15 +162,23 @@ async def download_employee_template(
             detail="openpyxl is not installed.",
         ) from exc
 
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.comments import Comment as XLComment
+
+    # Fetch valid cost-center codes for this tenant (for in-Excel dropdown)
+    cc_q = await _get_cost_center_dv_query(current_user.tenant_id, db)
+    cc_rows_res = await db.execute(cc_q)
+    cc_codes_for_template = [dv.code for dv in cc_rows_res.scalars().all()]
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Employees"
     ws.freeze_panes = "A2"
 
-    req_fill = PatternFill("solid", fgColor="DBEAFE")
-    opt_fill = PatternFill("solid", fgColor="F3F4F6")
+    req_fill = PatternFill("solid", fgColor="DBEAFE")   # blue — required
+    opt_fill = PatternFill("solid", fgColor="F3F4F6")   # grey — optional
+    data_start_fill = PatternFill("solid", fgColor="EFF6FF")  # very light blue data-start hint
     hdr_font = Font(bold=True, size=10)
-    instr_font = Font(italic=True, color="6B7280", size=9)
 
     headers = [
         ("First Name*", True), ("Last Name*", True), ("Email*", True),
@@ -177,37 +186,88 @@ async def download_employee_template(
         ("Employee Code", False), ("Phone", False),
         ("Cost Center Code", False), ("Line Manager Email", False),
         ("Resumption Date (dd/mm/yyyy)", False),
+        ("Head of Cost Center (Y/N)", False),
     ]
-    instructions = [
-        "e.g. Adeniyi", "e.g. Oladunmoye", "e.g. adeniyi@company.com",
-        "Middle or other name", "Display name",
-        "Leave blank if auto-generate is on",
+    # Examples now go in cell comments on header cells, not in a data row
+    header_examples = [
+        "e.g. Adeniyi",
+        "e.g. Oladunmoye",
+        "e.g. adeniyi@company.com",
+        "e.g. Chukwuemeka (middle or other name)",
+        "e.g. Ade (display name on expense forms)",
+        "e.g. EMP-00001 (leave blank to auto-generate)",
         "e.g. +234-801-234-5678",
-        "Must match a dimension value code",
-        "Must match an existing employee email",
-        "e.g. 01/01/2024",
-    ]
-    example = [
-        "Adeniyi", "Oladunmoye", "adeniyi@company.com",
-        "", "Ade", "EMP-00001", "+234-801-234-5678",
-        "NG_FI", "manager@company.com", "01/01/2024",
+        f"Select from the dropdown.\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'NG_FIN_01'}",
+        "e.g. manager@company.com\nMust match an existing employee email.",
+        "e.g. 01/01/2024 (dd/mm/yyyy)",
+        "Enter Y if this employee is the head of their cost center.\nLeave blank if not.",
     ]
 
-    for ci, (h, is_req) in enumerate(headers, 1):
+    # Row 1: headers with cell comments (no inline instruction/example rows per format standard)
+    for ci, ((h, is_req), example_text) in enumerate(zip(headers, header_examples), 1):
         cell = ws.cell(row=1, column=ci, value=h)
         cell.fill = req_fill if is_req else opt_fill
         cell.font = hdr_font
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
         ws.column_dimensions[get_column_letter(ci)].width = max(18, len(h) + 2)
+        comment = XLComment(example_text, "Ziva BI")
+        comment.width = 220; comment.height = 70
+        cell.comment = comment
     ws.row_dimensions[1].height = 30
 
-    for ci, instr in enumerate(instructions, 1):
-        cell = ws.cell(row=2, column=ci, value=instr)
-        cell.font = instr_font
-        cell.fill = opt_fill
+    # Row 2: data-start marker (visual cue per template format standard; data entry starts here)
+    for ci in range(1, len(headers) + 1):
+        ws.cell(row=2, column=ci).fill = data_start_fill
 
-    for ci, val in enumerate(example, 1):
-        ws.cell(row=3, column=ci, value=val)
+    # ── Data validations — ranges start at row 2 (data row 1) ────────────────
+
+    # Cost Center Code column (H = col 8): always add the DV, use a hidden sheet when
+    # many codes exist (formula1 has a 255-char limit when embedded as a string).
+    # When cc_codes_for_template is empty the DV is still created but with an empty
+    # list — Excel ignores empty-list DVs gracefully (no dropdown appears, no block).
+    if cc_codes_for_template:
+        cc_formula = '"' + ",".join(cc_codes_for_template) + '"'
+        if len(cc_formula) <= 255:
+            dv_cc = DataValidation(
+                type="list",
+                formula1=cc_formula,
+                showDropDown=False,
+                showErrorMessage=True,
+                error="Please select a valid Cost Center Code from the dropdown.",
+                errorTitle="Invalid Cost Center",
+                prompt="Select from the list of valid cost center codes.",
+                promptTitle="Cost Center Code",
+            )
+            ws.add_data_validation(dv_cc)
+            dv_cc.sqref = "H2:H10002"
+        else:
+            # Too many CC codes for an inline formula — use a hidden helper sheet
+            ws_cc = wb.create_sheet("_CC_Codes")
+            for ri, code in enumerate(cc_codes_for_template, 1):
+                ws_cc.cell(row=ri, column=1, value=code)
+            ws_cc.sheet_state = "hidden"
+            dv_cc = DataValidation(
+                type="list",
+                formula1=f"_CC_Codes!$A$1:$A${len(cc_codes_for_template)}",
+                showDropDown=False,
+                showErrorMessage=True,
+                error="Please select a valid Cost Center Code.",
+                errorTitle="Invalid Cost Center",
+            )
+            ws.add_data_validation(dv_cc)
+            dv_cc.sqref = "H2:H10002"
+
+    # Head of Cost Center column (K = col 11): Y or blank
+    dv_head = DataValidation(
+        type="list",
+        formula1='"Y"',
+        showDropDown=False,
+        showErrorMessage=True,
+        error="Enter Y to mark as head, or leave blank.",
+        errorTitle="Invalid value",
+    )
+    ws.add_data_validation(dv_head)
+    dv_head.sqref = "K2:K10002"
 
     # Sheet 2 — Instructions
     ws2 = wb.create_sheet("Instructions")
@@ -220,9 +280,13 @@ async def download_employee_template(
         ["Preferred Name", "No", "Name to display on expense forms (defaults to First Name)."],
         ["Employee Code", "No", "Required if auto-generate is turned off in HR settings."],
         ["Phone", "No", "Phone number including country code."],
-        ["Cost Center Code", "No", "Must exactly match a dimension value code in your configured Cost Center dimension."],
+        ["Cost Center Code", "No", "Select from the dropdown list of valid cost center codes. Must exactly match."],
         ["Line Manager Email", "No", "Must match the email of an existing employee in this upload or already in the system."],
         ["Resumption Date", "No", "Date the employee joined. Format: dd/mm/yyyy."],
+        ["Head of Cost Center", "No", "Enter Y if this employee is the head of their cost center. Leave blank if not. Sets them as head in the Cost Centers section."],
+        ["", "", ""],
+        ["DATA START ROW", "", "Enter your data starting at row 2. Row 1 is the header row."],
+        ["CELL COMMENTS", "", "Hover over each header cell (row 1) for example values and guidance."],
     ]
     ws2.column_dimensions["A"].width = 22
     ws2.column_dimensions["B"].width = 12
@@ -341,11 +405,12 @@ async def create_employee(
         new_code=employee_code,
         change_type="progressive",
         effective_date=data.resumption_date or __import__("datetime").date.today(),
-        changed_by=current_user.id,
+        changed_by=current_user.user_id,
     ))
     await db.flush()
 
-    return await _get_employee_or_404(emp.id, tenant_id, db)  # type: ignore[return-value]
+    orm_obj = await _get_employee_or_404(emp.id, tenant_id, db)
+    return EmployeeResponse.from_orm(orm_obj)
 
 
 @router.patch("/employees/{employee_id}", response_model=EmployeeResponse)
@@ -365,7 +430,8 @@ async def update_employee(
         setattr(emp, field, value)
 
     await db.flush()
-    return await _get_employee_or_404(employee_id, tenant_id, db)  # type: ignore[return-value]
+    orm_obj = await _get_employee_or_404(employee_id, tenant_id, db)
+    return EmployeeResponse.from_orm(orm_obj)
 
 
 @router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -374,11 +440,46 @@ async def delete_employee(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Soft-delete (deactivate) an employee. Admin only."""
+    """
+    Delete or deactivate an employee. Admin only.
+
+    Go-live gate (BRIEF_coa_remap_golive_gate.md Part C):
+    - Pre-go-live (lifecycle_status != 'live'): hard-delete the row. Safe because
+      no operational postings exist yet; allows removing test/erroneous records.
+    - Post-go-live (lifecycle_status == 'live'): deactivate only (is_active=False),
+      regardless of whether the employee has any references anywhere. Never hard-delete
+      a live-tenant employee, even if they have zero references.
+    """
     tenant_id = _require_tenant(current_user)
     _require_admin(current_user)
     emp = await _get_employee_or_404(employee_id, tenant_id, db)
-    emp.is_active = False
+
+    # Check tenant lifecycle
+    from sqlalchemy import select as sa_select
+    from app.models.auth import Tenant
+    tenant_res = await db.execute(sa_select(Tenant).where(Tenant.id == tenant_id))
+    tenant_row = tenant_res.scalar_one_or_none()
+    is_live = tenant_row is not None and tenant_row.lifecycle_status == "live"
+
+    if is_live:
+        # Post-go-live: soft-delete only
+        emp.is_active = False
+    else:
+        # Pre-go-live: hard-delete (remove the row entirely)
+        # Also cascade-clean dependent rows that have no operational meaning yet
+        from app.models.master_data import EmployeeCodeHistory, EmployeeTransfer
+        await db.execute(
+            __import__("sqlalchemy", fromlist=["delete"]).delete(EmployeeCodeHistory)
+            .where(EmployeeCodeHistory.employee_id == emp.id)
+        )
+        await db.execute(
+            __import__("sqlalchemy", fromlist=["delete"]).delete(EmployeeTransfer)
+            .where(
+                (EmployeeTransfer.employee_id == emp.id)
+            )
+        )
+        await db.delete(emp)
+
     await db.flush()
 
 
@@ -394,13 +495,11 @@ async def transfer_employee(
     _require_admin(current_user)
     emp = await _get_employee_or_404(employee_id, tenant_id, db)
 
-    # Verify target cost center belongs to this tenant
-    cc_result = await db.execute(
-        select(DimensionValue).where(
-            DimensionValue.id == data.to_cost_center_id,
-            DimensionValue.tenant_id == tenant_id,
-        )
+    # Verify target cost center is a valid CC dimension value for this tenant
+    q_cc = (await _get_cost_center_dv_query(tenant_id, db)).where(
+        DimensionValue.id == data.to_cost_center_id
     )
+    cc_result = await db.execute(q_cc)
     if not cc_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cost center not found.")
 
@@ -463,7 +562,7 @@ async def update_employee_code(
         new_code=data.new_code,
         change_type=data.change_type,
         effective_date=data.effective_date,
-        changed_by=current_user.id,
+        changed_by=current_user.user_id,
         notes=data.notes,
     ))
     emp.employee_code = data.new_code
@@ -539,8 +638,8 @@ async def upload_employees(
             all_rows.append([str(c).strip() if c is not None else "" for c in row])
         if all_rows:
             headers = all_rows[0]
-            # Skip instruction rows (template has example row 2 + instruction row 3)
-            rows = all_rows[3:]
+            # Row 1 = header; data starts at row 2 (format standard — no inline instruction rows)
+            rows = all_rows[1:]
     elif fname.endswith(".csv"):
         text = content.decode("utf-8", errors="replace")
         reader = csv.reader(io.StringIO(text))
@@ -569,6 +668,7 @@ async def upload_employees(
     cc_col = col("cost center code")
     mgr_col = col("line manager email")
     res_col = col("resumption date (dd/mm/yyyy)") or col("resumption date")
+    hoc_col = col("head of cost center (y/n)") or col("head of cost center")  # new column
 
     if fn_col is None or ln_col is None or em_col is None:
         raise HTTPException(
@@ -576,16 +676,19 @@ async def upload_employees(
             detail="File must have 'First Name', 'Last Name', and 'Email' columns.",
         )
 
-    # Load all cost center dimension values for lookup
-    cc_result = await db.execute(
-        select(DimensionValue).where(DimensionValue.tenant_id == tenant_id)
-    )
+    # Load ONLY cost-center dimension values for lookup (not all dim values).
+    # Joining TenantDimension ensures we reject codes from other dimensions.
+    cc_q = await _get_cost_center_dv_query(tenant_id, db)
+    cc_result = await db.execute(cc_q)
     cc_by_code = {dv.code.lower(): dv for dv in cc_result.scalars().all()}
 
     imported = 0
     updated = 0
+    head_assignments = 0
     errors: list[dict] = []
     email_to_emp: dict[str, Employee] = {}  # track newly created employees for mgr lookup
+    # {email: cost_center_id} for rows flagged as head of cost center
+    head_flags: dict[str, uuid.UUID] = {}
 
     from datetime import datetime as _dt3
 
@@ -627,6 +730,14 @@ async def upload_employees(
                 errors.append({"row": i, "reason": f"Cost center code '{cc_code}' not found."})
             else:
                 cost_center_id = dv.id
+
+        # Head-of-cost-center flag — collect for pass-2 resolution
+        hoc_value = get(hoc_col).upper() if hoc_col is not None else ""
+        if hoc_value == "Y":
+            if cost_center_id is None:
+                errors.append({"row": i, "reason": "Head of Cost Center = Y but no valid Cost Center Code on this row."})
+            else:
+                head_flags[email.lower()] = cost_center_id
 
         resumption_date = None
         if res_str:
@@ -714,14 +825,85 @@ async def upload_employees(
         elif emp_obj:
             errors.append({"row": i, "reason": f"Line manager '{mgr_email}' not found."})
 
+    # Pass 2b — resolve head-of-cost-center flags and upsert CostCenterConfig rows
+    for emp_email, cc_id in head_flags.items():
+        emp_obj = email_to_emp.get(emp_email)
+        if not emp_obj:
+            # Should not happen if pass-1 succeeded, but guard anyway
+            continue
+        cfg_res = await db.execute(
+            select(CostCenterConfig).where(
+                CostCenterConfig.tenant_id == tenant_id,
+                CostCenterConfig.cost_center_id == cc_id,
+            )
+        )
+        cfg = cfg_res.scalar_one_or_none()
+        if cfg:
+            cfg.head_employee_id = emp_obj.id
+        else:
+            db.add(CostCenterConfig(
+                tenant_id=tenant_id,
+                cost_center_id=cc_id,
+                head_employee_id=emp_obj.id,
+                head_user_id=None,
+            ))
+        head_assignments += 1
+
     await db.flush()
     skipped = max(0, len([r for r in rows if any((c or "").strip() for c in r)]) - imported - updated)
-    return EmployeeUploadResult(imported=imported, updated=updated, skipped=skipped, errors=errors)
+    return EmployeeUploadResult(
+        imported=imported, updated=updated, skipped=skipped,
+        errors=errors, head_assignments=head_assignments,
+    )
+
+
+# ── Cost-center dimension helper ──────────────────────────────────────────────
+
+async def _get_cost_center_dv_query(tenant_id: uuid.UUID, db: AsyncSession):
+    """
+    Return a SELECT base that yields DimensionValue rows belonging to the
+    tenant's Cost Center dimension (TenantDimension.code = 'cost_center').
+
+    This is the single source of truth for what counts as a valid cost center
+    in this tenant — used by the options endpoint, template generator, upload
+    validation, and transfer/set-head guards.
+    """
+    from sqlalchemy import and_
+    return (
+        select(DimensionValue)
+        .join(TenantDimension, DimensionValue.dimension_id == TenantDimension.id)
+        .where(
+            DimensionValue.tenant_id == tenant_id,
+            DimensionValue.is_active.is_(True),
+            TenantDimension.code == "cost_center",
+            TenantDimension.tenant_id == tenant_id,
+        )
+        .order_by(DimensionValue.sort_order)
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COST CENTER CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/cost-centers/options", response_model=list[CostCenterOption])
+async def list_cost_center_options(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[CostCenterOption]:
+    """
+    Return the tenant's cost-center dimension values as lightweight dropdown options.
+
+    These are the ONLY values valid for any cost-center field in the HR module:
+    employee's cost_center_id, transfer destination, invite form, etc.
+    Sourced from TenantDimension.code='cost_center' so it's always in sync with
+    the Organisation structure.
+    """
+    tenant_id = _require_tenant(current_user)
+    q = await _get_cost_center_dv_query(tenant_id, db)
+    result = await db.execute(q)
+    return [CostCenterOption(id=str(dv.id), code=dv.code, name=dv.name) for dv in result.scalars().all()]
+
 
 @router.get("/cost-centers", response_model=list[CostCenterConfigResponse])
 async def list_cost_center_configs(
@@ -755,13 +937,11 @@ async def set_cost_center_head(
     tenant_id = _require_tenant(current_user)
     _require_admin(current_user)
 
-    # Verify cost center belongs to tenant
-    cc_result = await db.execute(
-        select(DimensionValue).where(
-            DimensionValue.id == cost_center_id,
-            DimensionValue.tenant_id == tenant_id,
-        )
+    # Verify cost center is a valid CC dimension value for this tenant
+    q_cc = (await _get_cost_center_dv_query(tenant_id, db)).where(
+        DimensionValue.id == cost_center_id
     )
+    cc_result = await db.execute(q_cc)
     if not cc_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cost center not found.")
 

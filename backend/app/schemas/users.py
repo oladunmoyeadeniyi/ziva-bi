@@ -1,7 +1,8 @@
 """
-ZivaBI — user management Pydantic schemas (Milestone 5).
+ZivaBI — user management Pydantic schemas (Milestone 5 + profile backend).
 
-Covers: profile updates, password changes, tenant user management, and invitations.
+Covers: profile updates, password changes, tenant user management, invitations,
+active-session listing/revocation, and TOTP 2FA enrollment/verify/disable.
 """
 
 from datetime import datetime
@@ -122,6 +123,48 @@ class InvitationValidateResponse(BaseModel):
     tenant_name: str
     role: str
     invited_by_name: str
+
+
+# ── Sessions ──────────────────────────────────────────────────────────────────
+
+class SessionResponse(BaseModel):
+    """One active session row returned by GET /api/users/me/sessions."""
+
+    id: str
+    device: str          # parsed browser/OS label, or raw user-agent
+    ip_address: str | None
+    created_at: datetime
+    expires_at: datetime
+    is_current: bool     # True when this session matches the caller's JWT session_id
+
+
+class RevokeCountResponse(BaseModel):
+    """Returned by POST /api/users/me/sessions/revoke-others."""
+
+    revoked: int
+    message: str
+
+
+# ── TOTP 2FA ──────────────────────────────────────────────────────────────────
+
+class TotpEnrollResponse(BaseModel):
+    """Returned by POST /api/users/me/2fa/enroll."""
+
+    secret: str   # base32 TOTP secret (for manual entry if QR scan fails)
+    uri: str      # otpauth:// provisioning URI — frontend renders the QR from this
+
+
+class TotpCodeRequest(BaseModel):
+    """Body for /api/users/me/2fa/verify and /api/users/me/2fa/disable."""
+
+    code: str
+
+
+class TotpStatusResponse(BaseModel):
+    """Returned after verify or disable."""
+
+    totp_enabled: bool
+    message: str
 
 
 class InvitationAcceptRequest(BaseModel):

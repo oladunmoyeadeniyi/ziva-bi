@@ -27,8 +27,12 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await login(email, password);
-      router.push("/dashboard/business/setup");
+      const loggedInUser = await login(email, password);
+      if (loggedInUser?.is_super_admin) {
+        router.push("/platform");
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {

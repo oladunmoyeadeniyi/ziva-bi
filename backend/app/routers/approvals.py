@@ -49,6 +49,9 @@ from app.schemas.approvals import (
     SubmitWithApproversRequest,
 )
 from app.schemas.expenses import ExpenseReportResponse
+from app.services.account_determination import AccountMappingError
+from app.services.expense_posting import ExpensePostingError, post_expense_to_gl
+from app.services.gl_posting import PostingError
 
 logger = logging.getLogger(__name__)
 
@@ -973,9 +976,36 @@ async def approve(
                     role_label=_role_label_for_level(matrix, next_approval.level) if matrix else f"Level {next_approval.level}",
                 )
         else:
-            # Final approval — report is fully approved
+            # Final approval — post to GL first, then mark approved.
+            # Posting runs BEFORE status change so a GL failure never transiently
+            # marks the report as APPROVED. Both operations share the same DB
+            # session; get_db() commits only on success, so a PostingError here
+            # triggers a full rollback — no partial writes survive.
+            try:
+                journal_entry = await post_expense_to_gl(
+                    db, tenant_id, report, current_user.user_id
+                )
+            except (ExpensePostingError, AccountMappingError, PostingError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
             report.status = "APPROVED"
             report.current_approval_level = None
+
+            # Separate audit entry carrying the GL reference number.
+            # (The EXPENSE_APPROVED entry above covers all approval levels and is
+            # written before we have the reference; this entry is final-only.)
+            await _write_audit_log(
+                db, "EXPENSE_GL_POSTED", current_user.user_id, tenant_id,
+                {
+                    "report_id": str(report.id),
+                    "report_number": report.report_number,
+                    "journal_reference": journal_entry.reference_number,
+                    "total_amount": str(report.total_amount),
+                },
+            )
 
             # Notify requestor
             employee_result = await db.execute(select(User).where(User.id == report.employee_id))

@@ -66,7 +66,7 @@ export default function GoLivePage() {
   const [goingLive, setGoingLive] = useState(false);
   const [liveSuccess, setLiveSuccess] = useState(false);
 
-  const isConsultant = user?.role_tier === "consultant" || user?.is_super_admin;
+  const isConsultant = user?.is_super_admin;
 
   useEffect(() => {
     if (!accessToken) return;

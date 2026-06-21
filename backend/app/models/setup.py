@@ -6,8 +6,10 @@ Tables:
     tenant_modules               — activated modules per tenant
     document_rules               — required documents per module / transaction type
     tenant_tax_config            — tax configuration (VAT, WHT, PAYE, other statutory) as JSONB
-    tenant_fx_config             — FX rates, currency list, revaluation rules as JSONB
-    tenant_org_config            — organisation identity, org structure, branding, fiscal year
+    tenant_fx_config             — FX mechanics only: fx_rates and revaluation_rules as JSONB
+    tenant_org_config            — organisation identity, org structure, branding, fiscal year;
+                                   ALSO the single source of truth for functional_currency,
+                                   reporting_currency, and enabled_currencies
     org_structure                — hierarchical org nodes (M8.2 fixes)
     accounting_periods           — period state machine (M8.3 Brief 1 — replaces fiscal_periods)
     period_grace_overrides       — per-tenant/user/role grace windows (M8.3 Brief 2)
@@ -214,9 +216,12 @@ class TenantFxConfig(Base):
 
     One row per tenant (enforced by UNIQUE on tenant_id).
 
-    additional_currencies: [{ code, name, symbol, is_active }]
-    fx_rates: [{ from_currency, to_currency, rate, source, effective_date }]
-    revaluation_rules: { realized_gl, unrealized_gl, month_end_revaluation, ... }
+    Which currencies are enabled lives in TenantOrgConfig.enabled_currencies
+    (the single source of truth). This table holds only FX mechanics:
+
+    fx_rates: [{ from_currency, to_currency, rate_type, rate, source,
+                 effective_date, period, proof_required, proof_reference }]
+    revaluation_rules: { method, settlement_rate_basis, by_balance_type, ... }
     """
 
     __tablename__ = "tenant_fx_config"
@@ -231,13 +236,6 @@ class TenantFxConfig(Base):
         unique=True,
         index=True,
     )
-    functional_currency: Mapped[Optional[str]] = mapped_column(
-        String(3), nullable=True
-    )
-    reporting_currency: Mapped[Optional[str]] = mapped_column(
-        String(3), nullable=True
-    )
-    additional_currencies: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     fx_rates: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     revaluation_rules: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -293,6 +291,10 @@ class TenantOrgConfig(Base):
     parent_company_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     functional_currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
     reporting_currency: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
+    # enabled_currencies: sorted list of ISO 4217 codes the tenant transacts in.
+    # This is THE single source of truth for "which currencies are enabled."
+    # Functional currency is always included. Example: ["EUR", "NGN", "USD"].
+    enabled_currencies: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     authorised_share_capital: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 2), nullable=True)
     # Fiscal year
     fiscal_year_start_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -261,6 +261,17 @@ class EmployeeUploadResult(BaseModel):
     updated: int = 0
     skipped: int
     errors: list[dict]  # [{row, reason}]
+    head_assignments: int = 0  # CostCenterConfig rows upserted via head-of-cc column
+
+
+# ── Cost Center Options ───────────────────────────────────────────────────────
+
+class CostCenterOption(BaseModel):
+    """Lightweight cost-center option for dropdowns. Returned by GET /api/hr/cost-centers/options."""
+
+    id: str
+    code: str
+    name: str
 
 
 # ── Cost Center Config ────────────────────────────────────────────────────────

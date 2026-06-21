@@ -7,15 +7,18 @@ in the refresh_tokens table — the raw token is sent to the client, never store
 
 JWT access token payload:
     {
-        "sub":             str(user_id),
-        "user_tenant_id":  str(user_tenant_id),
-        "account_type":    "individual" | "business",
-        "tenant_id":       str(tenant_id) | None,
-        "session_id":      str(session_id),
-        "is_super_admin":  bool,
-        "type":            "access",
-        "iat":             issued-at timestamp,
-        "exp":             expiry timestamp
+        "sub":               str(user_id),
+        "user_tenant_id":    str(user_tenant_id),
+        "account_type":      "individual" | "business",
+        "tenant_id":         str(tenant_id) | None,
+        "session_id":        str(session_id),
+        "is_super_admin":    bool,
+        "environment":       "live" | "test",        # M9.0: active tenant environment
+        "impersonator_id":   str(user_id) | None,    # M9.3a: super admin who entered tenant
+        "impersonation_mode": "implementation" | "support" | None,  # M9.3a
+        "type":              "access",
+        "iat":               issued-at timestamp,
+        "exp":               expiry timestamp
     }
 
 Why bcrypt directly instead of passlib?

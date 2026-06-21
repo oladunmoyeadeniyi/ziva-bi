@@ -21,6 +21,7 @@ interface GLAccount {
   gl_name: string;
   account_type: string;
   is_active: boolean;
+  is_retired: boolean;
   gl_group?: string;
   gl_subgroup?: string;
   gl_sub_subgroup?: string;
@@ -255,7 +256,7 @@ export default function ChartOfAccountsPage() {
   const [filterGroup, setFilterGroup] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterClassification, setFilterClassification] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive" | "retired">("all");
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -323,6 +324,9 @@ export default function ChartOfAccountsPage() {
   const [deactivateConfirmGl, setDeactivateConfirmGl] = useState<GLAccount | null>(null);
   const [deactivating, setDeactivating] = useState(false);
 
+  // Lifecycle status — fetched from GET /api/setup/progress on load
+  const [lifecycleStatus, setLifecycleStatus] = useState<string>("in_implementation");
+
   // Upload
   const [uploadResult, setUploadResult] = useState<UploadResultType | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -330,6 +334,22 @@ export default function ChartOfAccountsPage() {
   const replaceFileRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+
+  // Remap modal
+  const [showRemap, setShowRemap] = useState(false);
+  const [remapOldIds, setRemapOldIds] = useState<Set<string>>(new Set());
+  const [remapNewId, setRemapNewId] = useState("");
+  const [remapCreateNew, setRemapCreateNew] = useState(false);
+  const [remapNewGL, setRemapNewGL] = useState("");
+  const [remapNewName, setRemapNewName] = useState("");
+  const [remapNewType, setRemapNewType] = useState<"PL" | "BS">("PL");
+  const [remapReason, setRemapReason] = useState("");
+  const [remapping, setRemapping] = useState(false);
+  const [remapError, setRemapError] = useState<string | null>(null);
+  const [remapSuccess, setRemapSuccess] = useState<string | null>(null);
+  const [remapBulkDownloading, setRemapBulkDownloading] = useState(false);
+  const remapBulkFileRef = useRef<HTMLInputElement>(null);
+  const [remapBulkResult, setRemapBulkResult] = useState<{remapped: number; errors: number; rows: {row: number; old_gl_number: string; new_gl_number: string; status: string; reason?: string}[]} | null>(null);
 
   // FS mappings tab
   const [fsMappings, setFsMappings] = useState<FSMappingItem[]>([]);
@@ -370,12 +390,14 @@ export default function ChartOfAccountsPage() {
   const load = async () => {
     if (!accessToken) return;
     try {
-      const [accs, dims] = await Promise.all([
+      const [accs, dims, progress] = await Promise.all([
         apiFetch<GLAccount[]>(`/api/config/coa?active_only=false&limit=10000`, { token: accessToken }),
         apiFetch<Dimension[]>("/api/config/dimensions", { token: accessToken }),
+        apiFetch<{ lifecycle_status: string }>("/api/setup/progress", { token: accessToken }).catch(() => ({ lifecycle_status: "in_implementation" })),
       ]);
       setAccounts(accs);
       setDimensions(dims.filter((d) => d.is_active));
+      setLifecycleStatus(progress.lifecycle_status ?? "in_implementation");
       setSelectedIds(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load accounts.");
@@ -737,8 +759,9 @@ export default function ChartOfAccountsPage() {
       if (filterGL && !a.gl_number.toLowerCase().includes(filterGL.toLowerCase())) return false;
       if (filterName && !a.gl_name.toLowerCase().includes(filterName.toLowerCase())) return false;
       if (filterClassification && a.account_classification !== filterClassification) return false;
-      if (filterStatus === "active" && !a.is_active) return false;
-      if (filterStatus === "inactive" && a.is_active) return false;
+      if (filterStatus === "active"   && (!a.is_active || a.is_retired)) return false;
+      if (filterStatus === "inactive" && (a.is_active || a.is_retired)) return false;
+      if (filterStatus === "retired"  && !a.is_retired) return false;
       return true;
     })
   , [acctAfterGroupFilter, filterGL, filterName, filterClassification, filterStatus]);
@@ -951,20 +974,35 @@ export default function ChartOfAccountsPage() {
             onChange={(e) => e.target.files?.[0] && handleUploadFile(e.target.files[0], "/api/config/coa/upload")}
             className="hidden"
           />
-          <button
-            type="button"
-            onClick={() => setReplaceAllConfirm(true)}
-            className="px-3 py-2 text-sm font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100"
-          >
-            Replace All
-          </button>
-          <input
-            type="file"
-            ref={replaceFileRef}
-            accept=".xlsx,.csv"
-            onChange={(e) => e.target.files?.[0] && handleUploadFile(e.target.files[0], "/api/config/coa/replace-all")}
-            className="hidden"
-          />
+          {/* Replace All — in_implementation only */}
+          {lifecycleStatus === "in_implementation" && (
+            <>
+              <button
+                type="button"
+                onClick={() => setReplaceAllConfirm(true)}
+                className="px-3 py-2 text-sm font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100"
+              >
+                Replace All
+              </button>
+              <input
+                type="file"
+                ref={replaceFileRef}
+                accept=".xlsx,.csv"
+                onChange={(e) => e.target.files?.[0] && handleUploadFile(e.target.files[0], "/api/config/coa/replace-all")}
+                className="hidden"
+              />
+            </>
+          )}
+          {/* Remap codes — live only */}
+          {lifecycleStatus === "live" && (
+            <button
+              type="button"
+              onClick={() => { setShowRemap(true); setRemapOldIds(new Set()); setRemapNewId(""); setRemapCreateNew(false); setRemapNewGL(""); setRemapNewName(""); setRemapReason(""); setRemapError(null); setRemapSuccess(null); setRemapBulkResult(null); }}
+              className="px-3 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100"
+            >
+              Remap codes
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowAdd(true)}
@@ -1051,11 +1089,12 @@ export default function ChartOfAccountsPage() {
             <option value="">All classifications</option>
             {classificationOptions.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "all" | "active" | "inactive")}
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "all" | "active" | "inactive" | "retired")}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="all">All statuses</option>
             <option value="active">Active only</option>
             <option value="inactive">Inactive only</option>
+            <option value="retired">Retired (remapped)</option>
           </select>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -1153,26 +1192,224 @@ export default function ChartOfAccountsPage() {
         </div>
       )}
 
-      {/* Replace All confirm modal */}
+      {/* ── Replace All confirm modal (in_implementation only) ────────────── */}
       {replaceAllConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
             <h2 className="text-base font-semibold text-gray-900 mb-3">Replace All GL Accounts?</h2>
             <p className="text-sm text-gray-700 mb-4">
               This will <strong>deactivate all existing GL accounts</strong> and import the new file.
-              Existing expense lines will not be affected. Continue?
+              Available during implementation only — once your tenant goes live, use Remap instead.
             </p>
             <div className="flex gap-3 justify-end">
               <button type="button" onClick={() => setReplaceAllConfirm(false)}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">
-                Cancel
-              </button>
-              <button
-                type="button"
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
+              <button type="button"
                 onClick={() => { setReplaceAllConfirm(false); replaceFileRef.current?.click(); }}
-                className="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700"
-              >
+                className="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700">
                 Yes, Choose File &amp; Replace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Remap modal ──────────────────────────────────────────────────── */}
+      {showRemap && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="px-6 pt-5 pb-4 border-b border-gray-200">
+              <h2 className="text-base font-semibold text-gray-900">Remap GL Codes</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Retire old GL codes and redirect their history to a new or existing code.
+                Old codes are frozen permanently — historical journals remain intact.
+              </p>
+            </div>
+
+            <div className="px-6 py-4 space-y-5">
+              {remapError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{remapError}</div>
+              )}
+              {remapSuccess && (
+                <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-700">{remapSuccess}</div>
+              )}
+
+              {/* Old codes to retire */}
+              <div>
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                  Step 1 — Select old codes to retire
+                  {remapOldIds.size > 0 && <span className="ml-2 text-blue-600 font-normal normal-case">{remapOldIds.size} selected</span>}
+                </p>
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="min-w-full divide-y divide-gray-100 text-xs">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 w-8" />
+                          <th className="px-3 py-2 text-left font-semibold text-gray-500">GL Number</th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-500">Name</th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-500">Type</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {accounts.filter(a => a.is_active && !a.is_retired).map(a => (
+                          <tr key={a.id} className={remapOldIds.has(a.id) ? "bg-amber-50" : "hover:bg-gray-50"}>
+                            <td className="px-3 py-1.5">
+                              <input type="checkbox" checked={remapOldIds.has(a.id)}
+                                onChange={() => {
+                                  const n = new Set(remapOldIds);
+                                  n.has(a.id) ? n.delete(a.id) : n.add(a.id);
+                                  setRemapOldIds(n);
+                                }} className="rounded border-gray-300" />
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-gray-800">{a.gl_number}</td>
+                            <td className="px-3 py-1.5 text-gray-700">{a.gl_name}</td>
+                            <td className="px-3 py-1.5 text-gray-500">{a.account_type}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* New code */}
+              <div>
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Step 2 — Define the new code</p>
+                <div className="flex gap-3 mb-3">
+                  <button type="button" onClick={() => setRemapCreateNew(false)}
+                    className={`px-3 py-1.5 text-xs rounded-lg border font-medium ${!remapCreateNew ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>
+                    Pick existing code
+                  </button>
+                  <button type="button" onClick={() => setRemapCreateNew(true)}
+                    className={`px-3 py-1.5 text-xs rounded-lg border font-medium ${remapCreateNew ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>
+                    Create new code inline
+                  </button>
+                </div>
+
+                {!remapCreateNew ? (
+                  <select value={remapNewId} onChange={e => setRemapNewId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">— Select existing code —</option>
+                    {accounts.filter(a => a.is_active && !a.is_retired && !remapOldIds.has(a.id)).map(a => (
+                      <option key={a.id} value={a.id}>{a.gl_number} — {a.gl_name} ({a.account_type})</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">GL Number <span className="text-red-500">*</span></label>
+                      <input type="text" value={remapNewGL} onChange={e => setRemapNewGL(e.target.value)}
+                        placeholder="e.g. 5015"
+                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">GL Name <span className="text-red-500">*</span></label>
+                      <input type="text" value={remapNewName} onChange={e => setRemapNewName(e.target.value)}
+                        placeholder="e.g. Consolidated Travel"
+                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Account Type <span className="text-red-500">*</span></label>
+                      <select value={remapNewType} onChange={e => setRemapNewType(e.target.value as "PL" | "BS")}
+                        className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="PL">PL — Profit &amp; Loss</option>
+                        <option value="BS">BS — Balance Sheet</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Reason */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Reason (optional — appears in audit log)</label>
+                <input type="text" value={remapReason} onChange={e => setRemapReason(e.target.value)}
+                  placeholder="e.g. Consolidating travel cost codes per Q3 restructure"
+                  className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+
+              {/* Bulk remap section */}
+              <div className="border-t border-gray-200 pt-4">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Bulk remap via template</p>
+                <div className="flex gap-2 flex-wrap">
+                  <button type="button" disabled={remapBulkDownloading}
+                    onClick={async () => {
+                      if (!accessToken) return;
+                      setRemapBulkDownloading(true);
+                      try {
+                        const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                        const res = await fetch(`${BASE}/api/config/coa/remap-template`, { headers: { Authorization: `Bearer ${accessToken}` } });
+                        if (!res.ok) throw new Error("Download failed.");
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a"); a.href = url; a.download = "coa_remap_template.xlsx"; a.click();
+                        URL.revokeObjectURL(url);
+                      } catch { setRemapError("Template download failed."); }
+                      finally { setRemapBulkDownloading(false); }
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+                    {remapBulkDownloading ? "…" : "Download bulk template"}
+                  </button>
+                  <button type="button" onClick={() => remapBulkFileRef.current?.click()}
+                    className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100">
+                    Upload bulk remap file
+                  </button>
+                  <input type="file" ref={remapBulkFileRef} accept=".xlsx,.csv" className="hidden"
+                    onChange={async e => {
+                      const f = e.target.files?.[0]; if (!f || !accessToken) return;
+                      const form = new FormData(); form.append("file", f);
+                      try {
+                        const { apiFetch: af } = await import("@/lib/api");
+                        const res = await apiFetch<typeof remapBulkResult>("/api/config/coa/remap-bulk", { method: "POST", token: accessToken, body: form, isFormData: true });
+                        setRemapBulkResult(res); setRemapSuccess(`Bulk remap: ${res?.remapped} remapped, ${res?.errors} errors.`);
+                        await load();
+                      } catch (err) { setRemapError(err instanceof Error ? err.message : "Bulk upload failed."); }
+                      if (remapBulkFileRef.current) remapBulkFileRef.current.value = "";
+                    }} />
+                </div>
+                {remapBulkResult && remapBulkResult.errors > 0 && (
+                  <div className="mt-2 space-y-0.5 max-h-32 overflow-y-auto">
+                    {remapBulkResult.rows.filter(r => r.status === "error").slice(0, 10).map((r, i) => (
+                      <div key={i} className="text-xs text-red-600">Row {r.row}: {r.old_gl_number} → {r.new_gl_number} — {r.reason}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex gap-3 justify-end">
+              <button type="button" onClick={() => setShowRemap(false)} disabled={remapping}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Close</button>
+              <button type="button" disabled={remapping || remapOldIds.size === 0 || (!remapCreateNew && !remapNewId) || (remapCreateNew && (!remapNewGL.trim() || !remapNewName.trim()))}
+                onClick={async () => {
+                  if (!accessToken) return;
+                  setRemapping(true); setRemapError(null); setRemapSuccess(null);
+                  try {
+                    const body: Record<string, unknown> = {
+                      old_account_ids: Array.from(remapOldIds),
+                      reason: remapReason || null,
+                    };
+                    if (remapCreateNew) {
+                      body.new_account = { gl_number: remapNewGL.trim(), gl_name: remapNewName.trim(), account_type: remapNewType };
+                    } else {
+                      body.new_account_id = remapNewId;
+                    }
+                    const res = await apiFetch<{ remapped: {old_gl_number: string; new_gl_number: string}[]; new_gl_number: string; new_gl_name: string; new_account_created: boolean }>("/api/config/coa/remap", { method: "POST", token: accessToken, body: JSON.stringify(body) });
+                    setRemapSuccess(`${res.remapped.length} code(s) retired → remapped to ${res.new_gl_number} (${res.new_gl_name}).${res.new_account_created ? " New account created." : ""}`);
+                    setRemapOldIds(new Set()); setRemapNewId(""); setRemapCreateNew(false); setRemapNewGL(""); setRemapNewName(""); setRemapReason("");
+                    await load();
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "Remap failed.";
+                    try {
+                      const parsed = JSON.parse(msg);
+                      setRemapError(parsed.message || msg);
+                    } catch { setRemapError(msg); }
+                  }
+                  finally { setRemapping(false); }
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60">
+                {remapping ? "Remapping…" : `Remap ${remapOldIds.size || ""} code${remapOldIds.size !== 1 ? "s" : ""}`}
               </button>
             </div>
           </div>
@@ -1608,7 +1845,9 @@ export default function ChartOfAccountsPage() {
                     {gl.account_classification || "—"}
                   </td>
                   <td className="px-4 py-3">
-                    {gl.is_active ? (
+                    {gl.is_retired ? (
+                      <span className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200">Retired</span>
+                    ) : gl.is_active ? (
                       <span className="text-xs text-green-700 bg-green-50 px-1.5 py-0.5 rounded">Active</span>
                     ) : (
                       <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Inactive</span>
@@ -2059,9 +2298,14 @@ export default function ChartOfAccountsPage() {
                               setDimSelected(next);
                             }} />
                         </td>
-                        <td style={{ padding: "6px 10px", fontFamily: "var(--font-mono)",
-                          color: "var(--color-text-secondary)", fontSize: 11 }}>
-                          {a.gl_number}
+                        <td style={{ padding: "6px 10px" }}>
+                          <button
+                            type="button"
+                            onClick={() => { setCoaTab("accounts"); updateCoaTabUrl("accounts"); setFilterGL(a.gl_number); }}
+                            className="font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                          >
+                            {a.gl_number}
+                          </button>
                         </td>
                         <td style={{ padding: "6px 10px", color: "var(--color-text-primary)",
                           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

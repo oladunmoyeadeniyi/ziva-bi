@@ -8,6 +8,7 @@ should receive unvalidated data.
 
 import re
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -76,10 +77,11 @@ class SignupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Email + password login payload."""
+    """Email + password login payload. totp_code is required only when the account has 2FA enabled."""
 
     email: str
     password: str
+    totp_code: str | None = None
 
     @field_validator("email")
     @classmethod
@@ -120,6 +122,8 @@ class UserResponse(BaseModel):
     department: str | None = None
     job_title: str | None = None
     phone: str | None = None
+    # 2FA state — visible so the frontend can show enroll/disable controls
+    totp_enabled: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -150,6 +154,7 @@ class UserResponse(BaseModel):
             department=getattr(user, "department", None),
             job_title=getattr(user, "job_title", None),
             phone=getattr(user, "phone", None),
+            totp_enabled=getattr(user, "totp_enabled", False),
         )
 
 
@@ -172,4 +177,59 @@ class AuthResponse(BaseModel):
 class MessageResponse(BaseModel):
     """Generic success confirmation."""
 
+    message: str
+
+
+# ── M9.0: Environment architecture ───────────────────────────────────────────
+
+class SwitchEnvironmentRequest(BaseModel):
+    """Body for POST /api/auth/switch-environment."""
+
+    target: Literal["live", "test"]
+
+
+class CreateTestEnvRequest(BaseModel):
+    """
+    Optional body for POST /api/tenant/create-test-environment.
+
+    clone_data: if True (default), clone all active live config+master-data into
+    the new test shadow immediately after creation.  Set False to create an empty
+    shadow (original behaviour).
+    """
+
+    clone_data: bool = True
+
+
+class TestTenantResponse(BaseModel):
+    """Summary of a test (shadow) tenant returned by create-test-environment."""
+
+    id: str
+    name: str
+    slug: str
+    environment: str
+    parent_tenant_id: str
+    lifecycle_status: str
+    created_at: datetime
+    clone_summary: dict | None = None  # populated when clone_data=True
+
+    model_config = {"from_attributes": True}
+
+
+class PromoteRequest(BaseModel):
+    """
+    Body for POST /api/tenant/promote.
+
+    sections controls which config domains to copy test → live.
+    Supported: "org_config", "tax", "fx".
+    Deferred (flagged below): "chart_of_accounts", "dimensions", "periods".
+    """
+
+    sections: list[Literal["org_config", "tax", "fx"]]
+
+
+class PromoteResponse(BaseModel):
+    """Result of a promote operation — lists which sections were copied and which were deferred."""
+
+    promoted: list[str]
+    deferred: list[str]
     message: str

@@ -46,8 +46,47 @@ class CurrentUser:
     is_super_admin: bool = False
     is_tenant_admin: bool = False
     has_non_admin_role: bool = False
-    # M8.2: 'consultant' | 'power_admin' | 'functional_admin' | None
+    # M8.2: 'power_admin' | 'functional_admin' | None  (consultant removed M9.3a)
     role_tier: str | None = None
+    # M9.0: active tenant environment — "live" | "test"
+    environment: str = "live"
+    # M9.3a: impersonation — set when a super admin enters a tenant via /platform/enter
+    impersonator_id: uuid.UUID | None = None
+    impersonation_mode: str | None = None  # "implementation" | "support" | None
+
+
+def block_if_readonly_impersonation(current_user: "CurrentUser") -> None:
+    """
+    Raise 403 if this is a support-mode impersonation on the live environment.
+
+    Support+live = read-only session: the super admin can view operational data
+    but must not create, update, or delete any tenant configuration. Call this
+    at the top of every write/mutation endpoint (or inside write-gating helpers).
+    """
+    if (
+        current_user.impersonation_mode == "support"
+        and current_user.environment == "live"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Read-only support session — editing/posting is disabled on the live environment.",
+        )
+
+
+def require_super_admin(current_user: "CurrentUser") -> "CurrentUser":
+    """
+    FastAPI dependency / guard — raises 403 unless the caller is a super admin.
+
+    Used exclusively for /api/platform/* owner-portal endpoints.
+    Compose with require_auth: Depends(require_auth) + call this inside the handler,
+    or declare as a separate Depends after require_auth.
+    """
+    if not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required.",
+        )
+    return current_user
 
 
 async def require_auth(
@@ -78,4 +117,7 @@ async def require_auth(
         is_tenant_admin=payload.get("is_tenant_admin", False),
         has_non_admin_role=payload.get("has_non_admin_role", False),
         role_tier=payload.get("role_tier"),
+        environment=payload.get("environment", "live"),
+        impersonator_id=uuid.UUID(payload["impersonator_id"]) if payload.get("impersonator_id") else None,
+        impersonation_mode=payload.get("impersonation_mode"),
     )
