@@ -54,13 +54,12 @@ from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
 from app.models.master_data import (
     CostCenterConfig,
-    DimensionValue,
     Employee,
     EmployeeCodeHistory,
     EmployeeTransfer,
     FinanceReviewConfig,
-    TenantDimension,
 )
+from app.models.setup import OrgStructureNode
 from app.models.setup import EmployeeOnboardingToken
 from app.models.auth import Tenant
 from app.schemas.setup import EmployeeInviteCreate, SelfOnboardingSubmit, SelfOnboardingTokenResponse
@@ -165,10 +164,10 @@ async def download_employee_template(
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.comments import Comment as XLComment
 
-    # Fetch valid cost-center codes for this tenant (for in-Excel dropdown)
-    cc_q = await _get_cost_center_dv_query(current_user.tenant_id, db)
-    cc_rows_res = await db.execute(cc_q)
-    cc_codes_for_template = [dv.code for dv in cc_rows_res.scalars().all()]
+    # Fetch cost center nodes from org_structure (single source of truth)
+    cc_nodes_res = await db.execute(_cc_nodes_query(current_user.tenant_id))
+    cc_nodes_all = cc_nodes_res.scalars().all()
+    cc_codes_for_template = [_cc_node_code(n) for n in cc_nodes_all if _cc_node_code(n)]
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -197,7 +196,7 @@ async def download_employee_template(
         "e.g. Ade (display name on expense forms)",
         "e.g. EMP-00001 (leave blank to auto-generate)",
         "e.g. +234-801-234-5678",
-        f"Select from the dropdown.\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'NG_FIN_01'}",
+        f"Select from the dropdown (org structure cost centers).\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'N22341FI'}",
         "e.g. manager@company.com\nMust match an existing employee email.",
         "e.g. 01/01/2024 (dd/mm/yyyy)",
         "Enter Y if this employee is the head of their cost center.\nLeave blank if not.",
@@ -495,11 +494,10 @@ async def transfer_employee(
     _require_admin(current_user)
     emp = await _get_employee_or_404(employee_id, tenant_id, db)
 
-    # Verify target cost center is a valid CC dimension value for this tenant
-    q_cc = (await _get_cost_center_dv_query(tenant_id, db)).where(
-        DimensionValue.id == data.to_cost_center_id
+    # Verify target cost center is an active org_structure node for this tenant
+    cc_result = await db.execute(
+        _cc_nodes_query(tenant_id).where(OrgStructureNode.id == data.to_cost_center_id)
     )
-    cc_result = await db.execute(q_cc)
     if not cc_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cost center not found.")
 
@@ -676,11 +674,9 @@ async def upload_employees(
             detail="File must have 'First Name', 'Last Name', and 'Email' columns.",
         )
 
-    # Load ONLY cost-center dimension values for lookup (not all dim values).
-    # Joining TenantDimension ensures we reject codes from other dimensions.
-    cc_q = await _get_cost_center_dv_query(tenant_id, db)
-    cc_result = await db.execute(cc_q)
-    cc_by_code = {dv.code.lower(): dv for dv in cc_result.scalars().all()}
+    # Load cost center nodes from org_structure (single source of truth).
+    cc_result = await db.execute(_cc_nodes_query(tenant_id))
+    cc_by_code = {_cc_node_code(n).lower(): n for n in cc_result.scalars().all() if _cc_node_code(n)}
 
     imported = 0
     updated = 0
@@ -725,11 +721,11 @@ async def upload_employees(
 
         cost_center_id = None
         if cc_code:
-            dv = cc_by_code.get(cc_code.lower())
-            if not dv:
-                errors.append({"row": i, "reason": f"Cost center code '{cc_code}' not found."})
+            cc_node = cc_by_code.get(cc_code.lower())
+            if not cc_node:
+                errors.append({"row": i, "reason": f"Cost center code '{cc_code}' not found in organisation structure."})
             else:
-                cost_center_id = dv.id
+                cost_center_id = cc_node.id
 
         # Head-of-cost-center flag — collect for pass-2 resolution
         hoc_value = get(hoc_col).upper() if hoc_col is not None else ""
@@ -859,27 +855,31 @@ async def upload_employees(
 
 # ── Cost-center dimension helper ──────────────────────────────────────────────
 
-async def _get_cost_center_dv_query(tenant_id: uuid.UUID, db: AsyncSession):
+def _cc_nodes_query(tenant_id: uuid.UUID):
     """
-    Return a SELECT base that yields DimensionValue rows belonging to the
-    tenant's Cost Center dimension (TenantDimension.code = 'cost_center').
+    Return a SELECT that yields OrgStructureNode rows that are cost centers for the tenant.
 
-    This is the single source of truth for what counts as a valid cost center
-    in this tenant — used by the options endpoint, template generator, upload
-    validation, and transfer/set-head guards.
+    org_structure (node_type='Cost center', is_active=True) is the single source
+    of truth for cost centers — not dimension_values. This query is used by the
+    options endpoint, template CC dropdown, upload validator, and transfer/head guards.
+
+    The 'code' field is the business key used for matching in bulk uploads and dropdowns.
+    'cost_center_code' is preferred when non-null (same value in practice); falls back to 'code'.
     """
-    from sqlalchemy import and_
     return (
-        select(DimensionValue)
-        .join(TenantDimension, DimensionValue.dimension_id == TenantDimension.id)
+        select(OrgStructureNode)
         .where(
-            DimensionValue.tenant_id == tenant_id,
-            DimensionValue.is_active.is_(True),
-            TenantDimension.code == "cost_center",
-            TenantDimension.tenant_id == tenant_id,
+            OrgStructureNode.tenant_id == tenant_id,
+            OrgStructureNode.node_type == "Cost center",
+            OrgStructureNode.is_active.is_(True),
         )
-        .order_by(DimensionValue.sort_order)
+        .order_by(OrgStructureNode.sort_order)
     )
+
+
+def _cc_node_code(node: OrgStructureNode) -> str:
+    """Return the canonical code for a cost center node (cost_center_code preferred)."""
+    return (node.cost_center_code or node.code or "").strip()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -892,17 +892,19 @@ async def list_cost_center_options(
     db: AsyncSession = Depends(get_db),
 ) -> list[CostCenterOption]:
     """
-    Return the tenant's cost-center dimension values as lightweight dropdown options.
+    Return the tenant's cost centers as lightweight dropdown options.
 
-    These are the ONLY values valid for any cost-center field in the HR module:
-    employee's cost_center_id, transfer destination, invite form, etc.
-    Sourced from TenantDimension.code='cost_center' so it's always in sync with
-    the Organisation structure.
+    Source of truth: org_structure nodes with node_type='Cost center' and is_active=True.
+    Same URL and response shape ({id, code, name}) as before — frontend consumers unchanged.
+    'id' is now an org_structure.id UUID, not a dimension_values UUID.
     """
     tenant_id = _require_tenant(current_user)
-    q = await _get_cost_center_dv_query(tenant_id, db)
-    result = await db.execute(q)
-    return [CostCenterOption(id=str(dv.id), code=dv.code, name=dv.name) for dv in result.scalars().all()]
+    result = await db.execute(_cc_nodes_query(tenant_id))
+    return [
+        CostCenterOption(id=str(n.id), code=_cc_node_code(n), name=n.name)
+        for n in result.scalars().all()
+        if _cc_node_code(n)
+    ]
 
 
 @router.get("/cost-centers", response_model=list[CostCenterConfigResponse])
@@ -937,11 +939,10 @@ async def set_cost_center_head(
     tenant_id = _require_tenant(current_user)
     _require_admin(current_user)
 
-    # Verify cost center is a valid CC dimension value for this tenant
-    q_cc = (await _get_cost_center_dv_query(tenant_id, db)).where(
-        DimensionValue.id == cost_center_id
+    # Verify cost center is an active org_structure node for this tenant
+    cc_result = await db.execute(
+        _cc_nodes_query(tenant_id).where(OrgStructureNode.id == cost_center_id)
     )
-    cc_result = await db.execute(q_cc)
     if not cc_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cost center not found.")
 

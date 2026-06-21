@@ -406,7 +406,7 @@ class Employee(Base):
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     cost_center_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("dimension_values.id", ondelete="SET NULL"),
+        ForeignKey("org_structure.id", ondelete="SET NULL"),
         nullable=True,
     )
     line_manager_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -426,8 +426,8 @@ class Employee(Base):
 
     # Relationships — read-only convenience for selectinload in hr.py.
     # No back_populates: one-directional is sufficient for eager-loading in GET routes.
-    cost_center: Mapped[Optional["DimensionValue"]] = relationship(
-        "DimensionValue",
+    cost_center: Mapped[Optional["OrgStructureNode"]] = relationship(
+        "OrgStructureNode",
         foreign_keys=[cost_center_id],
     )
     # Self-referential: remote_side points to the PK (the "one" side of many-to-one).
@@ -503,12 +503,12 @@ class EmployeeTransfer(Base):
     )
     from_cost_center_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("dimension_values.id", ondelete="SET NULL"),
+        ForeignKey("org_structure.id", ondelete="SET NULL"),
         nullable=True,
     )
     to_cost_center_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("dimension_values.id", ondelete="SET NULL"),
+        ForeignKey("org_structure.id", ondelete="SET NULL"),
         nullable=True,
     )
     effective_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -520,6 +520,15 @@ class EmployeeTransfer(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    from_cost_center: Mapped[Optional["OrgStructureNode"]] = relationship(
+        "OrgStructureNode",
+        foreign_keys=[from_cost_center_id],
+    )
+    to_cost_center: Mapped[Optional["OrgStructureNode"]] = relationship(
+        "OrgStructureNode",
+        foreign_keys=[to_cost_center_id],
     )
 
 
@@ -545,7 +554,7 @@ class CostCenterConfig(Base):
     )
     cost_center_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("dimension_values.id", ondelete="CASCADE"),
+        ForeignKey("org_structure.id", ondelete="CASCADE"),
         nullable=False,
     )
     head_employee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -567,8 +576,8 @@ class CostCenterConfig(Base):
 
     # Relationships — read-only convenience for selectinload in hr.py.
     # No back_populates: one-directional is sufficient for eager-loading in GET routes.
-    cost_center: Mapped["DimensionValue"] = relationship(
-        "DimensionValue",
+    cost_center: Mapped["OrgStructureNode"] = relationship(
+        "OrgStructureNode",
         foreign_keys=[cost_center_id],
     )
     head_employee: Mapped[Optional["Employee"]] = relationship(
@@ -611,7 +620,7 @@ class FinanceReviewConfig(Base):
     review_level: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     cost_center_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("dimension_values.id", ondelete="SET NULL"),
+        ForeignKey("org_structure.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
