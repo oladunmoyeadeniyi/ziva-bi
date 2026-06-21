@@ -49,6 +49,7 @@ from app.models.master_data import (
     GLDimensionRequirement,
     TenantDimension,
 )
+from app.models.setup import OrgStructureNode
 
 # ── Shared field list for TenantOrgConfig copies ──────────────────────────────
 # Used by Step 10 below AND imported by tenant.py's promote() so both stay
@@ -77,10 +78,11 @@ class _CloneIdMap:
     generated when the test row was inserted.  Built strictly in dependency order
     so downstream steps can always look up resolved test IDs.
     """
-    dim:    dict[UUID, UUID] = field(default_factory=dict)  # live_dim_id    → test_dim_id
-    coa:    dict[UUID, UUID] = field(default_factory=dict)  # live_gl_id     → test_gl_id
-    dimval: dict[UUID, UUID] = field(default_factory=dict)  # live_val_id    → test_val_id
-    emp:    dict[UUID, UUID] = field(default_factory=dict)  # live_emp_id    → test_emp_id
+    dim:     dict[UUID, UUID] = field(default_factory=dict)  # live_dim_id    → test_dim_id
+    coa:     dict[UUID, UUID] = field(default_factory=dict)  # live_gl_id     → test_gl_id
+    dimval:  dict[UUID, UUID] = field(default_factory=dict)  # live_val_id    → test_val_id
+    emp:     dict[UUID, UUID] = field(default_factory=dict)  # live_emp_id    → test_emp_id
+    org_node: dict[UUID, UUID] = field(default_factory=dict)  # live_node_id → test_node_id
 
 
 @dataclass
@@ -100,13 +102,15 @@ class CloneResult:
     org_config:      int = 0   # 1 if a tenant_org_config row was cloned, else 0
     modules:         int = 0   # count of tenant_modules rows cloned
     approval_matrix: int = 0   # 1 if an approval_matrix row was cloned, else 0
+    # Step 13
+    org_structure:   int = 0   # count of org_structure nodes cloned
 
     @property
     def total(self) -> int:
         return (self.dimensions + self.coa + self.dimension_values +
                 self.gl_requirements + self.account_mappings + self.bank_accounts +
                 self.employees + self.cost_center_configs + self.finance_review_configs +
-                self.org_config + self.modules + self.approval_matrix)
+                self.org_config + self.modules + self.approval_matrix + self.org_structure)
 
     def to_dict(self) -> dict:
         return {
@@ -122,6 +126,7 @@ class CloneResult:
             "org_config":             self.org_config,
             "modules":                self.modules,
             "approval_matrix":        self.approval_matrix,
+            "org_structure":          self.org_structure,
             "total":                  self.total,
         }
 
@@ -627,6 +632,63 @@ async def _clone_approval_matrix(
         result.approval_matrix = 1
 
 
+# ── Step 13: OrgStructureNode (two-pass) ─────────────────────────────────────
+
+async def _clone_org_structure(
+    db: AsyncSession,
+    live_id: UUID,
+    test_id: UUID,
+    id_map: _CloneIdMap,
+    result: CloneResult,
+) -> None:
+    """
+    Clone org_structure nodes from live → test.
+
+    Two-pass to handle the self-referential parent_id FK (same pattern as
+    Employee.line_manager_id):
+    Pass 1 — insert all active nodes with parent_id=None.
+    Pass 2 — back-fill parent_id using the completed org_node id-map.
+
+    Unique constraint (tenant_id, code) is satisfied naturally since the test
+    tenant has no prior org_structure rows at this point.
+    """
+    live_rows = (await db.execute(
+        select(OrgStructureNode)
+        .where(OrgStructureNode.tenant_id == live_id, OrgStructureNode.is_active.is_(True))
+        .order_by(OrgStructureNode.sort_order)
+    )).scalars().all()
+
+    # Pass 1: insert all with parent_id=None
+    test_objects: dict[UUID, OrgStructureNode] = {}
+
+    for live in live_rows:
+        test = OrgStructureNode(
+            tenant_id=test_id,
+            node_type=live.node_type,
+            name=live.name,
+            code=live.code,
+            cost_center_code=live.cost_center_code,
+            entity_code=live.entity_code,
+            is_active=True,
+            sort_order=live.sort_order,
+            parent_id=None,  # filled in pass 2
+        )
+        db.add(test)
+        await db.flush()
+        id_map.org_node[live.id] = test.id
+        test_objects[live.id] = test
+        result.org_structure += 1
+
+    # Pass 2: back-fill parent_id
+    for live in live_rows:
+        if live.parent_id and live.id in test_objects:
+            test_parent_id = id_map.org_node.get(live.parent_id)
+            if test_parent_id:
+                test_objects[live.id].parent_id = test_parent_id
+
+    await db.flush()
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def clone_tenant_data(
@@ -655,9 +717,10 @@ async def clone_tenant_data(
         10. TenantOrgConfig        ← setup completeness gate (unlocks cascade)
         11. TenantModule           ← setup completeness gate (modules_complete)
         12. ApprovalMatrix         ← setup completeness gate (workflows_complete)
+        13. OrgStructureNode       ← 2-pass: parent_id self-ref (powers Organisation→Structure)
 
-    Steps 10-12 have no FK dependencies on Steps 1-9 (confirmed — only tenant_id
-    foreign key) so their placement at the end is safe.
+    Steps 10-13 have no FK dependencies on Steps 1-9 (only tenant_id FK)
+    so their placement at the end is safe.
 
     Explicitly excluded (operational/historical, never cloned):
         EmployeeCodeHistory, EmployeeTransfer, any expense/journal/transactional data.
@@ -678,9 +741,10 @@ async def clone_tenant_data(
     await _clone_cost_center_configs(db, live_tenant_id, test_tenant_id, id_map, result)
     await _clone_finance_review_configs(db, live_tenant_id, test_tenant_id, id_map, result)
 
-    # Steps 10-12: setup completion gate tables (no FK deps on Steps 1-9)
+    # Steps 10-13: config/structure tables (no FK deps on Steps 1-9)
     await _clone_org_config(db, live_tenant_id, test_tenant_id, result)
     await _clone_modules(db, live_tenant_id, test_tenant_id, result)
     await _clone_approval_matrix(db, live_tenant_id, test_tenant_id, result)
+    await _clone_org_structure(db, live_tenant_id, test_tenant_id, id_map, result)
 
     return result
