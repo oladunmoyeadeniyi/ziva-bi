@@ -678,6 +678,14 @@ async def upload_employees(
     cc_result = await db.execute(_cc_nodes_query(tenant_id))
     cc_by_code = {_cc_node_code(n).lower(): n for n in cc_result.scalars().all() if _cc_node_code(n)}
 
+    # Fetch registration date floor for resumption date validation.
+    from app.models.setup import TenantOrgConfig
+    org_res = await db.execute(
+        select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    org_cfg = org_res.scalar_one_or_none()
+    _reg_date = org_cfg.date_of_registration if org_cfg else None
+
     imported = 0
     updated = 0
     head_assignments = 0
@@ -737,14 +745,25 @@ async def upload_employees(
 
         resumption_date = None
         if res_str:
-            for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            # Normalise: Excel datetime cells come through as "2024-01-04 00:00:00"
+            # (openpyxl -> str() adds the time component). Strip the time part so
+            # "%Y-%m-%d" can match.  Also handle ISO "T" separator just in case.
+            res_date_part = res_str.split(" ")[0].split("T")[0].strip()
+
+            parsed = False
+            for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"):
                 try:
-                    resumption_date = _dt3.strptime(res_str, fmt).date()
+                    resumption_date = _dt3.strptime(res_date_part, fmt).date()
+                    parsed = True
                     break
                 except ValueError:
                     continue
-            else:
-                errors.append({"row": i, "reason": f"Invalid Resumption Date: '{res_str}'."})
+
+            if not parsed:
+                errors.append({"row": i, "reason": f"Invalid Resumption Date: '{res_str}'. Expected dd/mm/yyyy or a real Excel date cell."})
+            elif _reg_date and resumption_date < _reg_date:
+                errors.append({"row": i, "reason": f"Resumption Date {resumption_date} is before the organisation's registration date {_reg_date}."})
+                resumption_date = None  # don't save the floor-failing date
 
         # Upsert by email
         existing_result = await db.execute(
