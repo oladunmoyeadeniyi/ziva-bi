@@ -555,8 +555,8 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | SMTP | Stubbed — sends only if smtp_host/smtp_user/smtp_password configured; silently logs otherwise |
 | Supabase Storage | Bucket: `documents` (private); config via SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_BUCKET |
 | **Local DB state** | **POPULATED with real data** — 2 tenants (live Red Bull + test shadow), 595 GL accounts each, 40 employees on test shadow, 17 org structure nodes each. DB was NOT wiped. It is fully active. |
-| **Alembic version (local)** | **`i5j6k7l8m9n0`** — 18 migrations BEHIND head (`z6a7b8c9d0e1`). The schema has all 52 tables (applied manually outside Alembic tracking). Running `alembic upgrade head` will fail. See Issue #004. |
-| Total migrations in repo | 36 files (72a96af → z6a7b8c9d0e1) |
+| **Alembic version (local)** | **`i5j6k7l8m9n0` = HEAD** — confirmed via `alembic heads` and `alembic upgrade head` (no pending migrations). Migration chain order is determined by `down_revision` refs, NOT filename alphabetical order. `i5j6k7l8m9n0` is the actual chain terminus. |
+| Total migrations in repo | 36 files. Chain head: `i5j6k7l8m9n0` (`costcenter_fk_to_org_structure`). |
 
 **Test shadow tenant:**
 | Field | Value |
@@ -578,95 +578,27 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 
 ---
 
-### CRITICAL
+**All issues #001–#009 from the 2026-06-23 audit are resolved.** Register is clean as of 2026-06-23.
 
-#### #001 — Split-line expense reports cannot be posted to GL
-
-- **Date found:** 2026-06-23
-- **Severity:** Critical — data/functional correctness: approved split-line reports will never post
-- **Evidence:** `backend/app/routers/expenses.py:98-105` — `_recalculate_total` sums ALL expense lines including `is_split_parent=True` containers. For a split (parent amount=100, child1=60, child2=40) this yields `total_amount=200`. At final approval, `expense_posting.py:144-150` pre-flight check computes `sum_debits=100` (leaf lines only) vs `report_total=200` → raises `ExpensePostingError("sum of line amounts does not equal report total_amount")`. The approval call returns 422 and the report is permanently stuck.
-- **Fix:** In `_recalculate_total`, add `.where(ExpenseLine.is_split_parent.is_(False))` to exclude container parents from the sum.
-
-#### #004 — Local alembic_version is 18 migrations behind head; schema applied outside Alembic tracking
-
-- **Date found:** 2026-06-23
-- **Severity:** Critical for deployment — running `alembic upgrade head` locally or on Render will fail with "column/table already exists" for all 18 unapplied migrations
-- **Evidence:** `ziva_dev` alembic_version = `i5j6k7l8m9n0`; repo head = `z6a7b8c9d0e1` (file `backend/alembic/versions/z6a7b8c9d0e1_profile_sessions_2fa.py`). All 52 tables exist in the DB, meaning schema was applied outside Alembic (likely via direct ORM reflection or manual SQL). `alembic upgrade head` will attempt to re-apply columns already present.
-- **Fix:** Run `alembic stamp z6a7b8c9d0e1` to advance the tracking record to head without re-running migrations. Do this on both local DB and Render before any future `alembic upgrade head`.
+| ID | Resolution |
+|---|---|
+| #001 | Fixed: `_recalculate_total` now excludes `is_split_parent=True` lines (`expenses.py`) |
+| #002 | Fixed: `block_if_readonly_impersonation` added to all 6 missing write routers (config, hr, approvals, expenses, expense_config, tenant) |
+| #003 | Fixed: `_write_snapshot` now captures `gl_id`, `dimension_values`, `is_split_parent`, `split_parent_id`, `flag_incorrect`, `flag_comment` per line (`approvals.py`) |
+| #004 | False positive: `alembic heads` confirms `i5j6k7l8m9n0` IS the true chain head. Migration filenames do not sort in chain order. DB was already at head. `alembic upgrade head` reports nothing to do. |
+| #005 | Fixed: both `_generate_report_number` and `_generate_reference_number` now use `pg_advisory_xact_lock` to serialize concurrent generation per tenant |
+| #006 | Fixed: period postability check added at submission time in `submit_with_approvers`; GL posting error now gives an actionable message for DATE_NOT_POSTABLE |
+| #007 | Fixed: all 5 `print()` calls in `config.py` and `hr.py` replaced with `logger.debug/info/error`; `logging.getLogger(__name__)` added to `config.py` |
+| #008 | Fixed: `POST /api/tenant/purge-test-data` now returns HTTP 501 Not Implemented |
+| #009 | Fixed (previous session): stale API paths removed from MASTER_CONTEXT.md |
 
 ---
 
-### HIGH
+### UNCONFIRMED SUSPICIONS (not yet verified — investigate before adding as confirmed findings)
 
-#### #002 — `block_if_readonly_impersonation` not called in most write routers
+1. **Promotion engine may not promote org_structure changes**: `promotion_engine.py` handles 5 entity types (TenantDimension, ChartOfAccount, DimensionValue, GLDimensionRequirement, TenantAccountMapping). If org_structure nodes differ between test and live, the promotion diff/apply will silently miss them. Needs full read of `promotion_engine.py` to confirm.
 
-- **Date found:** 2026-06-23
-- **Severity:** High security — support-mode impersonation on a live tenant is supposed to be read-only, but 6 of 9 write routers skip the guard
-- **Evidence:** `backend/app/middleware/auth.py:58-73` defines the guard. It is only called in: `setup.py:211`, `setup.py:1356`, `account_mapping.py:71`, `account_mapping.py:79`, `bank_accounts.py:51`. NOT called in: `config.py`, `hr.py`, `approvals.py`, `expenses.py`, `expense_config.py`, `tenant.py`. A super admin in support mode on a live tenant can post journals, modify employees, mutate CoA, and approve expenses.
-- **Fix:** Add `block_if_readonly_impersonation(current_user)` to the `_require_admin` helper in each of these routers, or call it directly at the top of every state-mutating endpoint in those files.
-
-#### #003 — Expense report snapshots omit all M9 structured data
-
-- **Date found:** 2026-06-23
-- **Severity:** High data integrity — the audit trail is incomplete for every M9-coded report
-- **Evidence:** `backend/app/routers/approvals.py:191-218` (`_write_snapshot`) builds `lines_data` from legacy fields only (`gl_account`, `pl_group`, `io_dimension`, `cost_center`, `location`, `invoice_date`, `invoice_number`, `description`, `amount`). Fields `gl_id`, `dimension_values`, `is_split_parent`, `split_parent_id`, `flag_incorrect`, `flag_comment` are not captured. The structured GL code and dimension selections are permanently lost in all snapshots taken since M9.
-- **Fix:** Extend the `lines_data` dict in `_write_snapshot` to include `gl_id`, `dimension_values`, `is_split_parent`, `split_parent_id`, `flag_incorrect`, `flag_comment`.
-
----
-
-### MEDIUM
-
-#### #005 — Report number and GL reference number use COUNT-based sequences (race condition)
-
-- **Date found:** 2026-06-23
-- **Severity:** Medium — concurrent report creation or concurrent final approvals can produce duplicate identifiers
-- **Evidence:** `backend/app/routers/expenses.py:80-95` (`_generate_report_number`) and `backend/app/services/gl_posting.py:98-112` (`_generate_reference_number`) both use `SELECT COUNT(*) + 1`. Under concurrent requests two callers read the same count and generate the same identifier. `expense_reports.report_number` has no UNIQUE constraint (only an index), so duplicates persist silently. `journal_entries` has a UNIQUE constraint on `(tenant_id, reference_number)` which will raise a 500 integrity error for the approver on collision.
-- **Fix:** Replace COUNT-based generation with a PostgreSQL sequence (`CREATE SEQUENCE`) or with a `SERIAL`/`identity` column, or use `SELECT ... FOR UPDATE` on a counters table.
-
-#### #006 — GL posting uses report_date (employee-entered) as the journal entry date
-
-- **Date found:** 2026-06-23
-- **Severity:** Medium — reports with dates in closed periods will fail at final-approval time with an unrecoverable 422
-- **Evidence:** `backend/app/services/expense_posting.py:154-165` passes `entry_date=report.report_date` to `post_journal`. `gl_posting.py:302-314` runs `is_date_postable` for POSTED entries. If `report_date` falls in a HARD_CLOSED or FUTURE period, the approval call returns 422 ("DATE_NOT_POSTABLE"). The approver cannot resolve this without period reopen (super_admin action). No pre-submission validation warns the employee their date is in a closed period.
-- **Fix:** Add a period postability check at submit time (`POST /api/approvals/reports/{id}/submit`) or surface a clear warning in the expense form before the employee selects a report date in a closed period.
-
----
-
-### LOW
-
-#### #007 — Debug `print()` statements left in production router code
-
-- **Date found:** 2026-06-23
-- **Severity:** Low — log noise + potential sensitive data exposure in server output
-- **Evidence:**
-  - `backend/app/routers/config.py:137` — `print("DEBUG parse_upload called")` (fires on every CoA/dimension upload)
-  - `backend/app/routers/config.py:951` — `print("ERROR in download_dimension_values_template:")` + `traceback.print_exc()` (bypasses logger)
-  - `backend/app/routers/config.py:1230` — same pattern for universal dimension values template
-  - `backend/app/routers/hr.py:1166` — `print(f"[ONBOARDING] Invite for {data.email}: {onboarding_link}")` — exposes the invite URL and employee email in server stdout
-  - `backend/app/routers/hr.py:1216` — `print(f"[ONBOARDING] Rejected employee {employee_id}: {comment}")` — exposes rejection comment
-- **Fix:** Replace all `print()` calls in router files with `logger.debug()` / `logger.info()` / `logger.error()` using the module-level `logger = logging.getLogger(__name__)` pattern already used elsewhere in the codebase.
-
-#### #008 — `POST /api/tenant/purge-test-data` returns 200 OK for a no-op stub
-
-- **Date found:** 2026-06-23
-- **Severity:** Low — misleading success response; callers cannot distinguish stub from real execution
-- **Evidence:** `backend/app/routers/tenant.py:408-424` — endpoint returns `{"message": "purge-test-data is a no-op stub..."}` with HTTP 200. Any caller (future automation, frontend) that calls this endpoint and checks for 200 will believe data was purged.
-- **Fix:** Return HTTP 501 Not Implemented until the scheduled purge is built.
-
-#### #009 — MASTER_CONTEXT.md §8 API paths are stale (corrected in PROJECT_STATE)
-
-- **Date found:** 2026-06-23
-- **Severity:** Low — documentation drift only; no runtime impact
-- **Evidence:** MASTER_CONTEXT.md previously listed `/api/config/cost-centers` and `/api/config/finance-review`. Actual routes are `/api/hr/cost-centers` and `/api/hr/finance-review` (verified in `backend/app/routers/hr.py:1-36`). MASTER_CONTEXT.md has been cleaned up (volatile API paths removed); PROJECT_STATE.md §4.10 is authoritative.
-- **Fix:** ✅ Resolved in MASTER_CONTEXT.md cleanup (this session).
-
----
-
-### UNCONFIRMED SUSPICIONS (not yet verified — need deeper investigation before adding as findings)
-
-1. **Promotion engine may not clone org_structure**: `promotion_engine.py` handles 5 entity types (TenantDimension, ChartOfAccount, DimensionValue, GLDimensionRequirement, TenantAccountMapping). The `tenant_clone.py` clone engine includes org_structure in Step 13, but the promotion engine (test→live config copy) does NOT appear to include org_structure. If org_structure changes on test need to be promoted to live, the promotion diff/apply would silently miss them. Need to read full promotion_engine.py to confirm.
-
-2. **`expenses.py GET /reports` visibility bypass**: The role-based visibility filter at `expenses.py:195-215` checks `finance_roles` for non-admin users. If a non-admin user has no roles assigned at all (which is possible — role assignment is optional), the `NOT IN (finance_roles)` path might apply the employee filter correctly. But if a user's roles query fails or returns stale data, all reports might be visible. Low-confidence; need to trace the query under zero-roles condition.
+2. **GET /reports visibility under zero-roles**: The role-based filter at `expenses.py` checks finance roles for non-admin users. If a user has no roles assigned, the query might default to showing only their own reports (correct) or all reports (wrong). Low-confidence; trace the query under zero-roles condition to confirm.
 
 ---
 

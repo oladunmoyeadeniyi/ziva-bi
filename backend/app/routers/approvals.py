@@ -32,7 +32,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.approvals import ApprovalMatrix, ExpenseApproval
 from app.models.auth import AuditLog, User, UserTenant
 from app.models.expenses import ExpenseReport, ExpenseReportSnapshot
@@ -52,6 +52,7 @@ from app.schemas.expenses import ExpenseReportResponse
 from app.services.account_determination import AccountMappingError
 from app.services.expense_posting import ExpensePostingError, post_expense_to_gl
 from app.services.gl_posting import PostingError
+from app.services.periods import is_date_postable
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ def _require_admin(current_user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant admin access is required.",
         )
+    block_if_readonly_impersonation(current_user)
 
 
 async def _get_matrix(tenant_id: uuid.UUID, db: AsyncSession) -> ApprovalMatrix | None:
@@ -189,6 +191,7 @@ async def _write_snapshot(
 
     lines_data = [
         {
+            # Legacy text fields
             "line_number": ln.line_number,
             "gl_account": ln.gl_account,
             "pl_group": ln.pl_group,
@@ -199,6 +202,15 @@ async def _write_snapshot(
             "invoice_number": ln.invoice_number,
             "description": ln.description,
             "amount": str(ln.amount),
+            # M9 structured fields — must be captured for a legally complete audit record.
+            # Capturing at submission time ensures the snapshot reflects the GL/dimension
+            # coding as it existed when submitted, even if accounts are later remapped/retired.
+            "gl_id": str(ln.gl_id) if ln.gl_id else None,
+            "dimension_values": ln.dimension_values,
+            "is_split_parent": ln.is_split_parent,
+            "split_parent_id": str(ln.split_parent_id) if ln.split_parent_id else None,
+            "flag_incorrect": ln.flag_incorrect,
+            "flag_comment": ln.flag_comment,
         }
         for ln in (report.lines or [])
     ]
@@ -398,6 +410,7 @@ async def submit_with_approvers(
     Sends an email notification to the first active approver.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     if current_user.is_tenant_admin and not current_user.has_non_admin_role:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -414,6 +427,22 @@ async def submit_with_approvers(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="A report must have at least one expense line before submitting.",
+        )
+
+    # Period check at submission time (fix for audit finding #006).
+    # Validates report_date is in an open period NOW, while the submitter can still
+    # change the date. Without this, the report is locked at submission and a
+    # DATE_NOT_POSTABLE error at final approval gives the approver no way to resolve it.
+    postable, period_reason = await is_date_postable(
+        tenant_id, report.report_date, db, module="expense"
+    )
+    if not postable:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Cannot submit: report date {report.report_date} is not in an open accounting period "
+                f"({period_reason}). Please update the report date to a date in an open period before submitting."
+            ),
         )
 
     matrix = await _get_matrix(tenant_id, db)
@@ -853,6 +882,7 @@ async def approve(
     Sends a full-approval email to the requestor when the last level approves.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
 
     result = await db.execute(
         select(ExpenseApproval).where(
@@ -985,7 +1015,34 @@ async def approve(
                 journal_entry = await post_expense_to_gl(
                     db, tenant_id, report, current_user.user_id
                 )
-            except (ExpensePostingError, AccountMappingError, PostingError) as exc:
+            except ExpensePostingError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            except AccountMappingError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"{exc} "
+                        "Configure the missing posting role(s) in Setup → Account Mapping, then re-approve."
+                    ),
+                ) from exc
+            except PostingError as exc:
+                # Surface a clear error with a path forward.
+                # DATE_NOT_POSTABLE at this stage means the report date fell in a period that
+                # was closed after submission; the submitter couldn't have known. The approver
+                # must either reject+return the report for date correction, or a consultant
+                # can reopen the period via the Periods management page.
+                if exc.code == "DATE_NOT_POSTABLE":
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Cannot post: {exc.message} "
+                            "To resolve: either reject the report so the submitter can correct the date, "
+                            "or ask a Ziva consultant to reopen the period via Setup → Periods."
+                        ),
+                    ) from exc
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
@@ -1038,6 +1095,7 @@ async def reject(
     Sends a rejection email to the employee.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
 
     result = await db.execute(
         select(ExpenseApproval).where(
@@ -1120,6 +1178,7 @@ async def refer_back(
       control returns to the referring level.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
 
     result = await db.execute(
         select(ExpenseApproval).where(

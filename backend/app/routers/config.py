@@ -49,10 +49,13 @@ Admin-only operations require is_tenant_admin or is_super_admin.
 
 import csv
 import io
+import logging
 import re
 import traceback
 import uuid
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -61,7 +64,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.expenses import ExpenseCategory
 from app.models.master_data import (
     CategoryGLMapping,
@@ -125,6 +128,7 @@ def _require_admin(current_user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Tenant Admins can modify configuration.",
         )
+    block_if_readonly_impersonation(current_user)
 
 
 async def _parse_upload(file: UploadFile) -> tuple[list[str], list[list[str]]]:
@@ -134,7 +138,6 @@ async def _parse_upload(file: UploadFile) -> tuple[list[str], list[list[str]]]:
     Returns headers as a list of strings and rows as lists of strings.
     Raises HTTPException for unsupported formats.
     """
-    print("DEBUG parse_upload called")
     content = await file.read()
     fname = (file.filename or "").lower()
 
@@ -948,8 +951,7 @@ async def download_dimension_values_template(
             headers={"Content-Disposition": "attachment; filename=dimension_values_template.xlsx"},
         )
     except Exception as exc:
-        print("ERROR in download_dimension_values_template:")
-        traceback.print_exc()
+        logger.error("download_dimension_values_template failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Template generation failed: {exc}") from exc
 
 
@@ -1227,8 +1229,7 @@ async def download_universal_dimension_values_template(
             headers={"Content-Disposition": "attachment; filename=dimension_values_universal_template.xlsx"},
         )
     except Exception as exc:
-        print("ERROR in download_universal_dimension_values_template:")
-        traceback.print_exc()
+        logger.error("download_universal_dimension_values_template failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Template generation failed: {exc}") from exc
 
 

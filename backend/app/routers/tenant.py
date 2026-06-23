@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.auth import AuditLog, Role, Tenant, User, UserRole, UserTenant
 from app.models.tenant_management import TenantInvitation
 from app.schemas.auth import CreateTestEnvRequest, PromoteRequest, PromoteResponse, TestTenantResponse
@@ -58,6 +58,7 @@ def _require_tenant_admin(current_user: CurrentUser) -> uuid.UUID:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Business account required.")
     if not current_user.is_tenant_admin and not current_user.is_super_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant Admin access required.")
+    block_if_readonly_impersonation(current_user)
     return current_user.tenant_id
 
 
@@ -405,23 +406,29 @@ async def promote(
 
 # ── M9.0: Purge test data (stub) ─────────────────────────────────────────────
 
-@router.post("/purge-test-data", response_model=dict)
+@router.post("/purge-test-data")
 async def purge_test_data(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-) -> dict:
+) -> None:
     """
-    STUB — documented no-op. Scheduled purge of test transactional data is not yet built.
+    NOT YET IMPLEMENTED — returns 501. Scheduled purge of test transactional data.
 
-    # FUTURE: scheduled purge of test transactional data older than retention
-    # When implemented, this endpoint will delete all transactional rows (expenses,
-    # journals, approval events, documents) in the test tenant that are older than
-    # Tenant.test_data_retention_days (default 90 days). Config-only tables (CoA,
-    # dimensions, tax, org_config, fx) are never purged. A background scheduler
-    # (APScheduler or Celery Beat) will call this on a nightly cron once added.
+    # FUTURE: when implemented, will delete transactional rows (expenses, journals,
+    # approval events, documents) older than Tenant.test_data_retention_days (default 90)
+    # in test-environment tenants only. Gated strictly on environment='test'.
+    # Config-only tables (CoA, dimensions, tax, org_config, fx) are never purged.
+    # Will require a background scheduler (APScheduler or Celery Beat).
     """
     _require_consultant(current_user)
-    return {"message": "purge-test-data is a no-op stub. Scheduled purge not yet implemented."}
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=(
+            "Test data purge is not yet implemented. "
+            "To purge test data manually, delete rows directly in the test tenant database, "
+            "or re-create the test environment via POST /api/tenant/create-test-environment."
+        ),
+    )
 
 
 # ── User Listing ──────────────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.auth import Role, UserRole, UserTenant
 from app.models.expenses import ExpenseLine, ExpenseReport
 from app.schemas.expenses import (
@@ -78,13 +78,20 @@ async def _get_report_or_404(
 
 
 async def _generate_report_number(tenant_id: uuid.UUID, db: AsyncSession) -> str:
-    """
-    Generate a unique EXP-{YEAR}-{SEQUENCE:04d} number for the tenant.
+    """Generate a unique EXP-{YEAR}-{SEQUENCE:04d} number for the tenant.
 
-    Sequence is scoped to the current calendar year by matching existing
-    report_number patterns. Race-condition safe enough for M3 single-user tenants.
+    Uses pg_advisory_xact_lock to serialize concurrent number generation for the
+    same tenant+year, preventing duplicate report numbers under concurrent requests.
+    The lock is transaction-scoped and released automatically on commit or rollback.
     """
+    from sqlalchemy import text
     year = datetime.now(timezone.utc).year
+    # Acquire a per-tenant-per-year advisory lock (transaction-scoped).
+    # hashtext() returns a stable 32-bit int; abs() ensures it's positive.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(abs(hashtext(:key)))"),
+        {"key": f"exp-seq:{tenant_id}:{year}"},
+    )
     count_result = await db.execute(
         select(func.count(ExpenseReport.id)).where(
             ExpenseReport.tenant_id == tenant_id,
@@ -96,10 +103,16 @@ async def _generate_report_number(tenant_id: uuid.UUID, db: AsyncSession) -> str
 
 
 async def _recalculate_total(report: ExpenseReport, db: AsyncSession) -> None:
-    """Recalculate and persist report total_amount from all current lines."""
+    """Recalculate total_amount from leaf lines only (excludes split-parent containers).
+
+    Split parents (is_split_parent=True) hold the rolled-up total of their children
+    for UI purposes only — the children carry the actual amounts that post to GL.
+    Including both parent and children would double-count the amount.
+    """
     result = await db.execute(
         select(func.coalesce(func.sum(ExpenseLine.amount), 0)).where(
-            ExpenseLine.report_id == report.id
+            ExpenseLine.report_id == report.id,
+            ExpenseLine.is_split_parent.is_(False),
         )
     )
     report.total_amount = result.scalar_one() or Decimal("0.00")
@@ -142,6 +155,7 @@ async def create_report(
     Returns the created report with an empty lines array.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     if current_user.is_tenant_admin and not current_user.has_non_admin_role:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -244,6 +258,7 @@ async def add_line(
     Returns the updated report with all lines.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
     if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
@@ -311,6 +326,7 @@ async def delete_line(
     Returns the updated report with remaining lines.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
     if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
@@ -358,6 +374,7 @@ async def update_line(
     so that document attachments (keyed on line_id) are never orphaned.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
     if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
@@ -402,6 +419,7 @@ async def delete_report(
     are immutable and can only be voided via an approval workflow (M4).
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db, with_lines=False)
 
     if report.status != "DRAFT":
@@ -423,6 +441,7 @@ async def update_report(
 ) -> ExpenseReportResponse:
     """Update header fields on a DRAFT expense report."""
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
     if report.status not in ("DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"):
@@ -463,6 +482,7 @@ async def submit_report(
     Sets submitted_at to the current UTC timestamp.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
     report = await _get_report_or_404(report_id, tenant_id, db)
 
     if report.status != "DRAFT":

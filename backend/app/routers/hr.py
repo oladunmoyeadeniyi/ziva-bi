@@ -51,7 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.master_data import (
     CostCenterConfig,
     Employee,
@@ -102,6 +102,7 @@ def _require_admin(current_user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Tenant Admins can perform this action.",
         )
+    block_if_readonly_impersonation(current_user)
 
 
 async def _get_employee_or_404(
@@ -1161,9 +1162,9 @@ async def send_employee_invite(
     db.add(token)
     await db.commit()
 
-    # Log link to console — email integration in a future milestone
+    # Log invite link at debug level — sensitive, should not appear in production logs
     onboarding_link = f"/onboard/{token_value}"
-    print(f"[ONBOARDING] Invite for {data.email}: {onboarding_link}")
+    logger.debug("[ONBOARDING] Invite created for %s (link suppressed at non-debug level)", data.email)
 
     return {
         "message": "Invite created successfully.",
@@ -1212,6 +1213,5 @@ async def reject_employee_onboarding(
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found.")
 
-    # Log rejection comment — store in employee notes in future
-    print(f"[ONBOARDING] Rejected employee {employee_id}: {comment}")
+    logger.info("[ONBOARDING] HR rejected onboarding for employee %s", employee_id)
     return {"message": "Onboarding rejected.", "comment": comment}

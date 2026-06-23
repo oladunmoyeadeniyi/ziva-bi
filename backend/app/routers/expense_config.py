@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser, require_auth
+from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.auth import Role, UserRole, UserTenant
 from app.models.expenses import (
     ExpenseCategory,
@@ -91,6 +91,7 @@ def _require_admin(current_user: CurrentUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Tenant Admins can modify expense configuration.",
         )
+    block_if_readonly_impersonation(current_user)
 
 
 async def _get_config(tenant_id: uuid.UUID, db: AsyncSession) -> TenantExpenseConfig | None:
@@ -539,6 +540,7 @@ async def save_finance_gl_codes(
     role within the tenant.
     """
     tenant_id = _require_tenant(current_user)
+    block_if_readonly_impersonation(current_user)
 
     if not await _has_finance_role(current_user, tenant_id, db):
         raise HTTPException(

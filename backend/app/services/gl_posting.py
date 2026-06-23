@@ -96,13 +96,19 @@ def _to2dp(v: Decimal) -> Decimal:
 
 
 async def _generate_reference_number(tenant_id: UUID, entry_date: date, db: AsyncSession) -> str:
-    """
-    Generate a unique human reference number for this tenant.
+    """Generate a unique JE-{YYYY}-{000001} reference number for this tenant.
 
-    Format: JE-{YYYY}-{000001} where YYYY comes from entry_date and the sequence
-    is a 1-based count of all journal entries for this tenant (across all years).
-    The (tenant_id, reference_number) unique constraint catches collisions.
+    Uses pg_advisory_xact_lock to serialize concurrent generation for the same tenant,
+    preventing duplicate reference numbers under concurrent final-approvals.
+    The (tenant_id, reference_number) UNIQUE constraint remains as a last-resort guard,
+    but the advisory lock prevents collisions before they reach the DB layer.
     """
+    from sqlalchemy import text
+    # Transaction-scoped lock per tenant; released on commit/rollback.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(abs(hashtext(:key)))"),
+        {"key": f"je-ref:{tenant_id}"},
+    )
     count_result = await db.execute(
         select(func.count()).select_from(JournalEntry).where(
             JournalEntry.tenant_id == tenant_id
