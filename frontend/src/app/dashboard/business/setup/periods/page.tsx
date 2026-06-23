@@ -130,6 +130,22 @@ function TabBtn({
 const inputCls =
   "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
+const YEAR_FORMAT_OPTIONS = [
+  { label: "FY2025", value: "FY{year}" },
+  { label: "2025/2026", value: "{year}/{nextyear}" },
+  { label: "2025-2026", value: "{year}-{nextyear}" },
+  { label: "2025", value: "{year}" },
+  { label: "Apr 2025 – Mar 2026", value: "MMM {year} – MMM {nextyear}" },
+];
+
+const previewYearFormat = (fmt: string): string => {
+  const y = new Date().getFullYear();
+  return fmt
+    .replace("{year}", String(y))
+    .replace("{nextyear}", String(y + 1))
+    .replace(/MMM/g, new Date(y, 0).toLocaleString("en", { month: "short" }));
+};
+
 const STATUS_COLORS: Record<string, string> = {
   FUTURE: "bg-gray-100 text-gray-600",
   OPEN: "bg-blue-100 text-blue-700",
@@ -643,15 +659,22 @@ export default function PeriodsPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Year name format</label>
-                <input
-                  type="text"
-                  placeholder="e.g. FY{year}"
-                  value={orgSettings.fiscal_year_name_format ?? ""}
+                <select
+                  value={orgSettings.fiscal_year_name_format ?? "FY{year}"}
                   onChange={(e) =>
-                    setOrgSettings((s) => ({ ...s, fiscal_year_name_format: e.target.value || undefined }))
+                    setOrgSettings((s) => ({ ...s, fiscal_year_name_format: e.target.value }))
                   }
                   className={inputCls}
-                />
+                >
+                  {YEAR_FORMAT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Preview: {previewYearFormat(orgSettings.fiscal_year_name_format ?? "FY{year}")}
+                </p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Closing frequency</label>

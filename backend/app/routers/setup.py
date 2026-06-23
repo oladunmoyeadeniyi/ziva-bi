@@ -1134,18 +1134,24 @@ async def generate_periods(
 
     fy_start = date(start_year, start_month, start_day)
 
-    # ── Registration-date floor check (reject, not clamp) ────────────────────
-    # Secondary guard: catches cases where the FY start date (day 1) falls
-    # within the registration year but still before the registration date
-    # (e.g. company registered June 2024, FY2024 starts January 2024).
+    # ── Registration-date floor: stub or reject ──────────────────────────────
+    # If fy_start falls before date_of_registration within the SAME year,
+    # clamp fy_start to the registration date so the first FY generates a
+    # stub year (e.g. registered 25/08/2021 → FY2021 runs 25/08–31/12/2021).
+    # If it's a DIFFERENT (earlier) year the year-level check above already
+    # rejected it; this branch only fires when start_year == reg_year.
     if org.date_of_registration and fy_start < org.date_of_registration:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Fiscal year {label} starts on {fy_start}, which is before the organisation's "
-                f"date of registration ({org.date_of_registration}). Choose a later fiscal year."
-            ),
-        )
+        if start_year == org.date_of_registration.year:
+            fy_start = org.date_of_registration
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Fiscal year FY{start_year} starts before the "
+                    f"organisation's date of registration "
+                    f"({org.date_of_registration.strftime('%d/%m/%Y')})."
+                ),
+            )
 
     # ── Idempotent guard: refuse if any period is already HARD_CLOSED ────────
     hc_result = await db.execute(
