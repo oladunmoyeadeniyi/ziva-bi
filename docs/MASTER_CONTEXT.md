@@ -1,6 +1,9 @@
 # MASTER CONTEXT — Ziva BI
-> Single source of truth. If anything conflicts with this, **this wins**.
-> Last updated: June 2026 — updated after OS reload + M8.3 Currencies & FX completion
+> **Role of this document:** Durable decisions and rationale (the "why") — locked principles, architectural choices, milestone intent, and process guidance. This does NOT contain volatile facts.
+> **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
+> If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
+>
+> Last updated: June 2026
 
 ---
 
@@ -191,68 +194,19 @@ Three GL coding modes. All M7 bugs fixed:
 
 ---
 
-## 7. KEY DATABASE TABLES
+## 7. DATABASE & API REFERENCE
 
-### Core
-- tenants (name, country, slug, is_active, dimensions_not_applicable, documents_setup_complete), users (email, full_name, first_name, account_type, is_active, is_super_admin), user_roles
+> Schema (tables, columns, FKs), API endpoint paths, and feature status are volatile — they change every session. See **`docs/PROJECT_STATE.md`** for the authoritative, verified current state of all of these.
 
-### Org & Config
-- tenant_org_config (legal_name, functional_currency, reporting_currency, all identity/fiscal fields, branding JSONB)
-- org_structure (node_type, name, code, parent_id, cost_center_code, entity_code, is_active, sort_order) — self-referencing tree
-- fiscal_periods (fiscal_year, period_name, start_date, end_date, status)
-- tenant_modules (module_key, is_active, is_licensed)
-- tenant_expense_config (coding_level, show_location, require_location)
-- cost_center_config (cost center head assignments)
-- finance_review_config (reviewer chain per module)
-
-### CoA & Dimensions
-- chart_of_accounts (gl_number, gl_name, account_type SOCI/SOFP, gl_group, gl_subgroup, gl_sub_subgroup, fs_head, fs_note, tb_mapping, group_account_number, group_account_name, is_active)
-- tenant_dimensions (name, code, is_required, is_active, sort_order)
-- dimension_values (code, name, value_type, cascade_dimension_id, cascade_value_id, valid_from, valid_to, is_active)
-- gl_dimension_requirements (gl_id, dimension_id, requirement: required/optional/na)
-- expense_categories (parent_id null for top-level, two-level hierarchy)
-- category_gl_mappings (category_id, gl_id, is_default)
-
-### Employees
-- employees (employee_code, first_name, last_name, email, cost_center_id, line_manager_id, resumption_date, is_active)
-- employee_code_history (old_code, new_code, change_type: retrospective/progressive, effective_date)
-- employee_transfers (from_cost_center_id, to_cost_center_id, effective_date)
-
-### Expenses
-- expense_reports (header fields)
-- expense_lines (gl_id, category_id, dimension_values JSONB, amount, is_split_parent, split_parent_id, flag_incorrect, flag_comment)
-- expense_documents (report-level and line-level attachments)
+Architectural invariants that are durable decisions (the WHY):
+- **Cost center source of truth:** cost centers live in `org_structure`, NOT in `dimension_values`. Both `employees.cost_center_id` and `cost_center_config.cost_center_id` FK to `org_structure.id`.
+- **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusively in `tenant_org_config`. `tenant_fx_config` holds ONLY FX mechanics (rates, revaluation rules).
+- **Environment isolation:** test tenants are shadow tenants with distinct `tenant_id` values — NOT an environment column on shared tables. This was the explicit architectural choice (Option 3 in the M9 design session) over environment columns (Option 1) and schema-per-env (Option 2).
+- **Expense→GL posting is synchronous, same-transaction** at final approval. This is intentional so a GL failure rolls back the approval — no partial state.
 
 ---
 
-## 8. API STRUCTURE
-
-All endpoints tenant-scoped via JWT. Base: /api/
-
-- /auth/* — login, signup, refresh, invite, invite accept
-- /api/config/dimensions — CRUD dimensions
-- /api/config/dimensions/{id}/values — CRUD + upload values
-- /api/config/coa — CRUD + upload + template download
-- /api/config/categories — category tree CRUD
-- /api/config/expense-config — coding level + form config
-- /api/config/cost-centers — cost center head assignments
-- /api/config/finance-review — reviewer config
-- /api/hr/employees — CRUD + upload + template
-- /api/hr/employees/{id}/transfer — cost center transfer
-- /api/hr/employees/{id}/update-code — code change
-- /api/hr/employees/{id}/history — history
-- /api/expenses/reports — CRUD expense reports
-- /api/expenses/reports/{id}/lines — CRUD lines
-- /api/expenses/reports/{id}/submit — submit for approval
-- /api/expenses/suggestions — AI suggestions per employee + GL
-- /api/config/gl/search — GL search for Level 4
-- /api/documents/reports/{id}/upload — file upload
-- /api/approvals — list, approve, reject, refer
-- /api/users/me, /api/users/tenant — user management
-
----
-
-## 9. CODING STANDARDS (NON-NEGOTIABLE)
+## 8. CODING STANDARDS (NON-NEGOTIABLE)
 
 ### Backend
 - Every file fully commented: purpose, each function, inputs/outputs, edge cases
@@ -342,7 +296,7 @@ All committed and pushed in May 2026 session.
 - Template generator rebuilt: 2-sheet xlsx (Instructions + Org Structure), Node Type dropdown validation, conditional formatting (amber row + red cell for Cost center nodes missing Cost Center Code, green cell when present), Entity Code column added
 - Upload handler reads 7 columns (was 5); `VALID_TYPES` updated to include "Division / Business unit"
 
-## 10. NEXT MILESTONE — M8.3 Backend + M8.4 Tax & Statutory
+## 9. NEXT MILESTONE — M8.3 Backend + M8.4 Tax & Statutory
 
 ### M8.3 Backend (immediate — unblock the Currencies & FX UI)
 The Currencies & FX UI is fully built but has no backend storage. This milestone creates the DB layer:
@@ -357,7 +311,7 @@ Implementation portal section for VAT, WHT, PAYE, and non-resident withholding r
 
 ---
 
-## 11. FUTURE MILESTONES
+## 10. FUTURE MILESTONES
 
 - M10 — OCR & Receipt Scanning (Anthropic Vision API)
 - M11 — Accounts Payable
@@ -374,16 +328,17 @@ Implementation portal section for VAT, WHT, PAYE, and non-resident withholding r
 
 ---
 
-## 12. KNOWN ISSUES / TECH DEBT
+## 11. KNOWN ISSUES / TECH DEBT
 
-- **Local DB is fresh** — OS reload in June 2026 wiped the local `ziva_dev` database. All migrations must be reapplied clean (`alembic upgrade head`). No seed data exists — tenant must be recreated via signup.
-- **Production Render DB** — run `alembic upgrade head` via the Render shell to apply latest migrations (through `f2g3h4i5j6k7`).
-- "Invalid or expired token" errors on some admin pages — restart backend + re-login
-- UI polish deferred to dedicated milestone — do not fix piecemeal
+> Current issues register (with severity, evidence, and fix guidance) is maintained in **`docs/PROJECT_STATE.md §8 Known Issues Register`**. Only durable, architectural-level notes belong here.
+
+- **UI polish deferred to dedicated milestone** — do not fix UI piecemeal across feature milestones. One dedicated UI polish milestone will do a global overhaul.
+- **role_tier enforcement is incomplete** — `role_tier` column exists on `user_tenants` and is included in the JWT, but full gate enforcement (blocking power_admin from overriding consultant-locked sections) is not wired end to end. Addressed in the ZIVA_BI_ROADMAP.md Phase 1 work.
+- **"Invalid or expired token" errors** on some admin pages after extended sessions — restart backend + re-login resolves it. Root cause is token expiry without smooth refresh; will be addressed in a dedicated session management improvement.
 
 ---
 
-## 13. CURRENCY SINGLE SOURCE OF TRUTH (June 2026)
+## 12. CURRENCY SINGLE SOURCE OF TRUTH (June 2026)
 
 Migration `f2g3h4i5j6k7` consolidated all currency identity into `tenant_org_config`:
 
@@ -403,4 +358,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: June 2026.*
+*End of Master Context. Last updated: June 2026. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
