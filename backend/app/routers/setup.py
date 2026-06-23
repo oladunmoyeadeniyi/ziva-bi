@@ -1153,27 +1153,24 @@ async def generate_periods(
                 ),
             )
 
-    # ── Idempotent guard: refuse if any period is already HARD_CLOSED ────────
-    hc_result = await db.execute(
+    # ── Idempotent guard: refuse if ANY period already exists for this FY ──────
+    # Blocks regeneration regardless of status (FUTURE, OPEN, SOFT_CLOSED,
+    # OVERDUE, HARD_CLOSED). The user must explicitly delete all periods for
+    # the year before regenerating — silent overwrites are too destructive.
+    existing_result = await db.execute(
         select(AccountingPeriod).where(
             AccountingPeriod.tenant_id == tenant_id,
             AccountingPeriod.fiscal_year == label,
-            AccountingPeriod.status == "HARD_CLOSED",
         )
     )
-    if hc_result.scalar_one_or_none() is not None:
+    if existing_result.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Fiscal year {label} has hard-closed periods and cannot be regenerated.",
+            detail=(
+                f"Fiscal year {label} has already been generated. "
+                "Delete all periods for this year before regenerating."
+            ),
         )
-
-    # ── Delete any existing (non-hard-closed) periods for this FY ────────────
-    await db.execute(
-        delete(AccountingPeriod).where(
-            AccountingPeriod.tenant_id == tenant_id,
-            AccountingPeriod.fiscal_year == label,
-        )
-    )
 
     # ── Fiscal year end date ─────────────────────────────────────────────────
     # Always derived from tenant config, not from fy_start + 12 months.
