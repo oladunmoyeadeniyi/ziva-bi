@@ -146,6 +146,21 @@ const previewYearFormat = (fmt: string, year?: number): string => {
     .replace(/MMM/g, new Date(y, 0).toLocaleString("en", { month: "short" }));
 };
 
+/** Extract the first 4-digit year from a stored fiscal_year label (e.g. "FY2026" → 2026). */
+const parseFYYear = (fy: string): number | null => {
+  const m = fy.match(/\d{4}/);
+  return m ? parseInt(m[0], 10) : null;
+};
+
+/**
+ * Re-format a stored fiscal_year label using the tenant's current name format.
+ * Falls back to the raw stored value if no year can be parsed.
+ */
+const formatFY = (fy: string, fmt: string): string => {
+  const year = parseFYYear(fy);
+  return year !== null ? previewYearFormat(fmt, year) : fy;
+};
+
 const STATUS_COLORS: Record<string, string> = {
   FUTURE: "bg-gray-100 text-gray-600",
   OPEN: "bg-blue-100 text-blue-700",
@@ -307,10 +322,9 @@ export default function PeriodsPage() {
     loadPeriods();
   }, [loadOrg, loadPeriods]);
 
-  // Auto-derive fyLabel from the selected year + fiscal_year_name_format.
-  // Runs whenever the user picks a different year or changes the format in
-  // the settings card above.  The user can still type into the fyLabel
-  // input directly to override the derived value.
+  // Keep fyLabel in sync with the selected year + fiscal_year_name_format.
+  // fyLabel is a hidden derived value — it is never shown to the user directly
+  // and is only used as the fiscal_year_label payload for the generate API call.
   useEffect(() => {
     const fmt = orgSettings.fiscal_year_name_format ?? "FY{year}";
     setFyLabel(previewYearFormat(fmt, selectedFYYear));
@@ -328,6 +342,10 @@ export default function PeriodsPage() {
   useEffect(() => {
     if (selectedPeriodId) loadPeriodChecklist(selectedPeriodId);
   }, [selectedPeriodId, loadPeriodChecklist]);
+
+  // Current fiscal year name format — used throughout to display all FY labels.
+  // Declared before actions so closures (e.g. doStatutoryClose) can reference it.
+  const fmt = orgSettings.fiscal_year_name_format ?? "FY{year}";
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -366,7 +384,6 @@ export default function PeriodsPage() {
         body: { fiscal_year_label: fyLabel.trim() },
       });
       setGenerateMsg({ type: "ok", text: `Periods generated for ${fyLabel.trim()}.` });
-      setFyLabel("");
       await loadPeriods();
     } catch (e) {
       setGenerateMsg({ type: "error", text: e instanceof Error ? e.message : "Generation failed" });
@@ -431,7 +448,7 @@ export default function PeriodsPage() {
 
   const doStatutoryClose = async () => {
     if (!accessToken || !selectedFY) return;
-    if (!window.confirm(`Permanently lock ${selectedFY}? This is irreversible.`)) return;
+    if (!window.confirm(`Permanently lock ${formatFY(selectedFY, fmt)}? This is irreversible.`)) return;
     setClosingStat(true);
     setError(null);
     try {
@@ -728,56 +745,36 @@ export default function PeriodsPage() {
               <>
                 <p className="text-xs text-gray-500">
                   Fiscal years from{" "}
-                  <strong>FY{validFYYears[validFYYears.length - 1]}</strong> to{" "}
-                  <strong>FY{validFYYears[0]}</strong> are available
+                  <strong>{previewYearFormat(fmt, validFYYears[validFYYears.length - 1])}</strong> to{" "}
+                  <strong>{previewYearFormat(fmt, validFYYears[0])}</strong> are available
                   {orgSettings.date_of_registration
                     ? ` (registration date: ${orgSettings.date_of_registration})`
                     : ""}.
                 </p>
-                <div className="space-y-2 max-w-sm">
-                  <div className="flex gap-3">
-                    {/* Year selector — drives selectedFYYear, which auto-updates fyLabel */}
-                    <select
-                      value={selectedFYYear}
-                      onChange={(e) => {
-                        setSelectedFYYear(Number(e.target.value));
-                        setGenerateMsg(null);
-                      }}
-                      className={inputCls}
-                    >
-                      {validFYYears.map((year) => (
-                        <option key={year} value={year}>
-                          {previewYearFormat(
-                            orgSettings.fiscal_year_name_format ?? "FY{year}",
-                            year,
-                          )}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={generatePeriods}
-                      disabled={generating || !fyLabel}
-                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                    >
-                      {generating ? "Generating…" : "Generate"}
-                    </button>
-                  </div>
-                  {/* Editable label — auto-populated from year + format, but overridable */}
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">
-                      Fiscal year label sent to API
-                    </label>
-                    <input
-                      type="text"
-                      value={fyLabel}
-                      onChange={(e) => {
-                        setFyLabel(e.target.value);
-                        setGenerateMsg(null);
-                      }}
-                      className={inputCls}
-                    />
-                  </div>
+                <div className="flex gap-3 max-w-sm">
+                  {/* Year selector — drives selectedFYYear; fyLabel is derived silently */}
+                  <select
+                    value={selectedFYYear}
+                    onChange={(e) => {
+                      setSelectedFYYear(Number(e.target.value));
+                      setGenerateMsg(null);
+                    }}
+                    className={inputCls}
+                  >
+                    {validFYYears.map((year) => (
+                      <option key={year} value={year}>
+                        {previewYearFormat(fmt, year)}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={generatePeriods}
+                    disabled={generating || !fyLabel}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {generating ? "Generating…" : "Generate"}
+                  </button>
                 </div>
               </>
             )}
@@ -803,7 +800,7 @@ export default function PeriodsPage() {
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     {uniqueFYs.map((fy) => (
-                      <option key={fy} value={fy}>{fy}</option>
+                      <option key={fy} value={fy}>{formatFY(fy, fmt)}</option>
                     ))}
                   </select>
                 </div>
@@ -892,7 +889,7 @@ export default function PeriodsPage() {
           {selectedFY && decPeriod && (
             <section className="border border-gray-200 rounded-lg p-4 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-800">Year-end close — {selectedFY}</h2>
+                <h2 className="text-sm font-semibold text-gray-800">Year-end close — {formatFY(selectedFY, fmt)}</h2>
                 {loadingFyState && <span className="text-xs text-gray-400">Loading…</span>}
               </div>
 
@@ -973,7 +970,7 @@ export default function PeriodsPage() {
                       <div className="pt-1 border-t border-amber-200">
                         <p className="text-xs text-gray-600 mb-2">
                           <strong>Stage 2 — Statutory close (permanent):</strong> permanently locks this fiscal year.
-                          All periods in {selectedFY} will be locked for posting and reopen. This cannot be undone.
+                          All periods in {formatFY(selectedFY, fmt)} will be locked for posting and reopen. This cannot be undone.
                         </p>
                         <div className="flex items-center gap-3">
                           <button
@@ -1003,7 +1000,7 @@ export default function PeriodsPage() {
                           {fyState.statutory_closed_at
                             ? new Date(fyState.statutory_closed_at).toLocaleDateString()
                             : ""}
-                          . All periods in {selectedFY} are locked for posting and reopen.
+                          . All periods in {formatFY(selectedFY, fmt)} are locked for posting and reopen.
                         </p>
                       </div>
                     </div>
@@ -1283,7 +1280,7 @@ export default function PeriodsPage() {
                 <option value="">— select —</option>
                 {periods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.period_name} ({p.fiscal_year})
+                    {p.period_name} ({formatFY(p.fiscal_year, fmt)})
                   </option>
                 ))}
               </select>
