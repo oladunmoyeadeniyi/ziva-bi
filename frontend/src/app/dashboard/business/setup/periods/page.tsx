@@ -138,8 +138,8 @@ const YEAR_FORMAT_OPTIONS = [
   { label: "Apr 2025 – Mar 2026", value: "MMM {year} – MMM {nextyear}" },
 ];
 
-const previewYearFormat = (fmt: string): string => {
-  const y = new Date().getFullYear();
+const previewYearFormat = (fmt: string, year?: number): string => {
+  const y = year ?? new Date().getFullYear();
   return fmt
     .replace("{year}", String(y))
     .replace("{nextyear}", String(y + 1))
@@ -182,7 +182,10 @@ export default function PeriodsPage() {
   const [savingOrg, setSavingOrg] = useState(false);
   const [orgSaved, setOrgSaved] = useState(false);
 
-  const [fyLabel, setFyLabel] = useState(`FY${new Date().getFullYear()}`);
+  const [selectedFYYear, setSelectedFYYear] = useState(new Date().getFullYear());
+  const [fyLabel, setFyLabel] = useState(
+    previewYearFormat("FY{year}", new Date().getFullYear()),
+  );
   const [generating, setGenerating] = useState(false);
   const [generateMsg, setGenerateMsg] = useState<{ type: "error" | "ok"; text: string } | null>(null);
 
@@ -303,6 +306,15 @@ export default function PeriodsPage() {
     loadOrg();
     loadPeriods();
   }, [loadOrg, loadPeriods]);
+
+  // Auto-derive fyLabel from the selected year + fiscal_year_name_format.
+  // Runs whenever the user picks a different year or changes the format in
+  // the settings card above.  The user can still type into the fyLabel
+  // input directly to override the derived value.
+  useEffect(() => {
+    const fmt = orgSettings.fiscal_year_name_format ?? "FY{year}";
+    setFyLabel(previewYearFormat(fmt, selectedFYYear));
+  }, [selectedFYYear, orgSettings.fiscal_year_name_format]);
 
   useEffect(() => {
     if (selectedFY) loadFyState(selectedFY);
@@ -722,29 +734,50 @@ export default function PeriodsPage() {
                     ? ` (registration date: ${orgSettings.date_of_registration})`
                     : ""}.
                 </p>
-                <div className="flex gap-3 max-w-sm">
-                  <select
-                    value={fyLabel}
-                    onChange={(e) => {
-                      setFyLabel(e.target.value);
-                      setGenerateMsg(null);
-                    }}
-                    className={inputCls}
-                  >
-                    {validFYYears.map((year) => (
-                      <option key={year} value={`FY${year}`}>
-                        FY{year}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={generatePeriods}
-                    disabled={generating || !fyLabel}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {generating ? "Generating…" : "Generate"}
-                  </button>
+                <div className="space-y-2 max-w-sm">
+                  <div className="flex gap-3">
+                    {/* Year selector — drives selectedFYYear, which auto-updates fyLabel */}
+                    <select
+                      value={selectedFYYear}
+                      onChange={(e) => {
+                        setSelectedFYYear(Number(e.target.value));
+                        setGenerateMsg(null);
+                      }}
+                      className={inputCls}
+                    >
+                      {validFYYears.map((year) => (
+                        <option key={year} value={year}>
+                          {previewYearFormat(
+                            orgSettings.fiscal_year_name_format ?? "FY{year}",
+                            year,
+                          )}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={generatePeriods}
+                      disabled={generating || !fyLabel}
+                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {generating ? "Generating…" : "Generate"}
+                    </button>
+                  </div>
+                  {/* Editable label — auto-populated from year + format, but overridable */}
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">
+                      Fiscal year label sent to API
+                    </label>
+                    <input
+                      type="text"
+                      value={fyLabel}
+                      onChange={(e) => {
+                        setFyLabel(e.target.value);
+                        setGenerateMsg(null);
+                      }}
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
               </>
             )}
