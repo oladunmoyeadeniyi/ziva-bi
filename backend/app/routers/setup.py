@@ -56,7 +56,7 @@ go-live / reopen: require is_super_admin (consultant role_tier stripped M9.3a).
 
 import io
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
@@ -1175,8 +1175,20 @@ async def generate_periods(
         )
     )
 
-    # ── Generate the 12 monthly periods ──────────────────────────────────────
+    # ── Fiscal year end date ─────────────────────────────────────────────────
+    # Always derived from tenant config, not from fy_start + 12 months.
+    # For a stub year (fy_start clamped to registration date) this is essential:
+    # the FY must end on its configured last day regardless of when it started.
+    # Formula: day before the next fiscal year begins.
+    next_fy_start = date(start_year + 1, start_month, start_day)
+    fy_end = next_fy_start - timedelta(days=1)
+
+    # ── Generate monthly periods up to fy_end ────────────────────────────────
+    # Generate up to 12 candidates then discard any that begin after fy_end.
+    # For a normal (non-stub) year all 12 are retained; for a stub year only
+    # the months that fall within the FY are kept (e.g. Aug–Dec = 5 periods).
     period_specs = generate_monthly_periods(fy_start, num_periods=12, start_day=start_day)
+    period_specs = [spec for spec in period_specs if spec[2] <= fy_end]
 
     created: list[AccountingPeriod] = []
     for period_no, period_name, start, end in period_specs:
