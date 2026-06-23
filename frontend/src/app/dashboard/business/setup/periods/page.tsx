@@ -166,7 +166,7 @@ export default function PeriodsPage() {
   const [savingOrg, setSavingOrg] = useState(false);
   const [orgSaved, setOrgSaved] = useState(false);
 
-  const [fyLabel, setFyLabel] = useState("");
+  const [fyLabel, setFyLabel] = useState(`FY${new Date().getFullYear()}`);
   const [generating, setGenerating] = useState(false);
   const [generateMsg, setGenerateMsg] = useState<{ type: "error" | "ok"; text: string } | null>(null);
 
@@ -538,6 +538,21 @@ export default function PeriodsPage() {
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
+  // Valid fiscal years for period generation.
+  // Lower bound: year of date_of_registration (matches backend validation 1).
+  // Upper bound: current calendar year (matches backend validation 2).
+  // Parsed from the ISO date string by slicing the first 4 chars to avoid
+  // timezone-offset issues that Date() parsing can introduce.
+  const _currentYear = new Date().getFullYear();
+  const _regYear = orgSettings.date_of_registration
+    ? parseInt(orgSettings.date_of_registration.slice(0, 4), 10)
+    : _currentYear;
+  const _minYear = Math.min(_regYear, _currentYear);
+  const validFYYears: number[] = Array.from(
+    { length: _currentYear - _minYear + 1 },
+    (_, i) => _minYear + i,
+  ).reverse(); // newest first so the default selection is current year
+
   const uniqueFYs = [...new Set(periods.map((p) => p.fiscal_year))].sort();
   const fyPeriods = periods.filter((p) => p.fiscal_year === selectedFY);
   const decPeriod = fyPeriods.find((p) => p.period_no === 12);
@@ -670,23 +685,46 @@ export default function PeriodsPage() {
           {/* Generate periods */}
           <section className="border border-gray-200 rounded-lg p-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-800">Generate periods</h2>
-            <div className="flex gap-3 max-w-sm">
-              <input
-                type="text"
-                placeholder="e.g. FY2027"
-                value={fyLabel}
-                onChange={(e) => setFyLabel(e.target.value)}
-                className={inputCls}
-              />
-              <button
-                type="button"
-                onClick={generatePeriods}
-                disabled={generating || !fyLabel.trim()}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-              >
-                {generating ? "Generating…" : "Generate"}
-              </button>
-            </div>
+            {validFYYears.length === 0 ? (
+              <p className="text-xs text-amber-700">
+                No valid fiscal years available. Set a registration date on the Organisation page.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-gray-500">
+                  Fiscal years from{" "}
+                  <strong>FY{validFYYears[validFYYears.length - 1]}</strong> to{" "}
+                  <strong>FY{validFYYears[0]}</strong> are available
+                  {orgSettings.date_of_registration
+                    ? ` (registration date: ${orgSettings.date_of_registration})`
+                    : ""}.
+                </p>
+                <div className="flex gap-3 max-w-sm">
+                  <select
+                    value={fyLabel}
+                    onChange={(e) => {
+                      setFyLabel(e.target.value);
+                      setGenerateMsg(null);
+                    }}
+                    className={inputCls}
+                  >
+                    {validFYYears.map((year) => (
+                      <option key={year} value={`FY${year}`}>
+                        FY{year}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={generatePeriods}
+                    disabled={generating || !fyLabel}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {generating ? "Generating…" : "Generate"}
+                  </button>
+                </div>
+              </>
+            )}
             {generateMsg && (
               <p
                 className={`text-sm ${generateMsg.type === "ok" ? "text-green-700" : "text-red-600"}`}

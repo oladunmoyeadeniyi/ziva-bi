@@ -1112,9 +1112,32 @@ async def generate_periods(
     if start_year is None:
         raise HTTPException(status_code=422, detail="Could not parse year from fiscal_year_label.")
 
+    # ── Validation 1: FY year must be >= year of date_of_registration ────────
+    # Checked at year-level so "FY2021" is rejected outright when the company
+    # registered in 2022, regardless of which month the FY starts.
+    if org.date_of_registration and start_year < org.date_of_registration.year:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create periods before the company's registration date.",
+        )
+
+    # ── Validation 2: FY year must be <= current calendar year ───────────────
+    # Prevents generating periods for years that have not yet started, which
+    # would produce FUTURE-status rows with no operational value and could
+    # mislead the posting engine.
+    current_year = date.today().year
+    if start_year > current_year:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create periods for a future fiscal year.",
+        )
+
     fy_start = date(start_year, start_month, start_day)
 
     # ── Registration-date floor check (reject, not clamp) ────────────────────
+    # Secondary guard: catches cases where the FY start date (day 1) falls
+    # within the registration year but still before the registration date
+    # (e.g. company registered June 2024, FY2024 starts January 2024).
     if org.date_of_registration and fy_start < org.date_of_registration:
         raise HTTPException(
             status_code=422,
