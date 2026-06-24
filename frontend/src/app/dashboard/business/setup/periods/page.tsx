@@ -197,13 +197,6 @@ export default function PeriodsPage() {
   const [savingOrg, setSavingOrg] = useState(false);
   const [orgSaved, setOrgSaved] = useState(false);
 
-  const [selectedFYYear, setSelectedFYYear] = useState(new Date().getFullYear());
-  const [fyLabel, setFyLabel] = useState(
-    previewYearFormat("FY{year}", new Date().getFullYear()),
-  );
-  const [generating, setGenerating] = useState(false);
-  const [generateMsg, setGenerateMsg] = useState<{ type: "error" | "ok"; text: string } | null>(null);
-
   const [periods, setPeriods] = useState<AccountingPeriod[]>([]);
   const [selectedFY, setSelectedFY] = useState<string>("");
   const [fyState, setFyState] = useState<FiscalYearState | null>(null);
@@ -213,7 +206,6 @@ export default function PeriodsPage() {
   const [hardClosing, setHardClosing] = useState<string | null>(null);
   const [hardCloseMsg, setHardCloseMsg] = useState<string | null>(null);
   const [reopening, setReopening] = useState<string | null>(null);
-  const [deletingFY, setDeletingFY] = useState(false);
 
   // ── Grace overrides state ─────────────────────────────────────────────────
   const [graceRows, setGraceRows] = useState<GraceOverride[]>([]);
@@ -323,14 +315,6 @@ export default function PeriodsPage() {
     loadPeriods();
   }, [loadOrg, loadPeriods]);
 
-  // Keep fyLabel in sync with the selected year + fiscal_year_name_format.
-  // fyLabel is a hidden derived value — it is never shown to the user directly
-  // and is only used as the fiscal_year_label payload for the generate API call.
-  useEffect(() => {
-    const fmt = orgSettings.fiscal_year_name_format ?? "FY{year}";
-    setFyLabel(previewYearFormat(fmt, selectedFYYear));
-  }, [selectedFYYear, orgSettings.fiscal_year_name_format]);
-
   useEffect(() => {
     if (selectedFY) loadFyState(selectedFY);
   }, [selectedFY, loadFyState]);
@@ -374,25 +358,6 @@ export default function PeriodsPage() {
     }
   };
 
-  const generatePeriods = async () => {
-    if (!accessToken || !fyLabel.trim()) return;
-    setGenerating(true);
-    setGenerateMsg(null);
-    try {
-      await apiFetch("/api/setup/periods/generate", {
-        method: "POST",
-        token: accessToken,
-        body: { fiscal_year_label: fyLabel.trim() },
-      });
-      setGenerateMsg({ type: "ok", text: `Periods generated for ${fyLabel.trim()}.` });
-      await loadPeriods();
-    } catch (e) {
-      setGenerateMsg({ type: "error", text: e instanceof Error ? e.message : "Generation failed" });
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   const hardClosePeriod = async (periodId: string) => {
     if (!accessToken) return;
     setHardClosing(periodId);
@@ -408,25 +373,6 @@ export default function PeriodsPage() {
       setHardCloseMsg(e instanceof Error ? e.message : "Hard close failed");
     } finally {
       setHardClosing(null);
-    }
-  };
-
-  const deleteFiscalYear = async () => {
-    if (!accessToken || !selectedFY) return;
-    if (!window.confirm(`Delete all periods for ${formatFY(selectedFY, fmt)}? This cannot be undone.`)) return;
-    setDeletingFY(true);
-    setHardCloseMsg(null);
-    try {
-      await apiFetch(`/api/setup/periods/fiscal-year/${encodeURIComponent(selectedFY)}`, {
-        method: "DELETE",
-        token: accessToken,
-      });
-      setSelectedFY("");
-      await loadPeriods();
-    } catch (e) {
-      setHardCloseMsg(e instanceof Error ? e.message : "Delete failed");
-    } finally {
-      setDeletingFY(false);
     }
   };
 
@@ -603,21 +549,6 @@ export default function PeriodsPage() {
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
-  // Valid fiscal years for period generation.
-  // Lower bound: year of date_of_registration (matches backend validation 1).
-  // Upper bound: current calendar year (matches backend validation 2).
-  // Parsed from the ISO date string by slicing the first 4 chars to avoid
-  // timezone-offset issues that Date() parsing can introduce.
-  const _currentYear = new Date().getFullYear();
-  const _regYear = orgSettings.date_of_registration
-    ? parseInt(orgSettings.date_of_registration.slice(0, 4), 10)
-    : _currentYear;
-  const _minYear = Math.min(_regYear, _currentYear);
-  const validFYYears: number[] = Array.from(
-    { length: _currentYear - _minYear + 1 },
-    (_, i) => _minYear + i,
-  ).reverse(); // newest first so the default selection is current year
-
   const uniqueFYs = [...new Set(periods.map((p) => p.fiscal_year))].sort();
   const fyPeriods = periods.filter((p) => p.fiscal_year === selectedFY);
   const decPeriod = fyPeriods.find((p) => p.period_no === 12);
@@ -632,11 +563,6 @@ export default function PeriodsPage() {
   const canStatutoryClose =
     fyState?.status === "AUDIT_PENDING" || fyState?.status === "AUDIT_OVERDUE";
 
-  // Show the Delete fiscal year button only when every period in the selected FY
-  // is OPEN or FUTURE — if any period is closed, deletion is blocked by the backend.
-  const canDeleteFY =
-    fyPeriods.length > 0 &&
-    fyPeriods.every((p) => p.status === "OPEN" || p.status === "FUTURE");
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -758,59 +684,9 @@ export default function PeriodsPage() {
               </button>
               {orgSaved && <span className="text-sm text-green-600">Saved</span>}
             </div>
-          </section>
-
-          {/* Generate periods */}
-          <section className="border border-gray-200 rounded-lg p-4 space-y-3">
-            <h2 className="text-sm font-semibold text-gray-800">Generate periods</h2>
-            {validFYYears.length === 0 ? (
-              <p className="text-xs text-amber-700">
-                No valid fiscal years available. Set a registration date on the Organisation page.
-              </p>
-            ) : (
-              <>
-                <p className="text-xs text-gray-500">
-                  Fiscal years from{" "}
-                  <strong>{previewYearFormat(fmt, validFYYears[validFYYears.length - 1])}</strong> to{" "}
-                  <strong>{previewYearFormat(fmt, validFYYears[0])}</strong> are available
-                  {orgSettings.date_of_registration
-                    ? ` (registration date: ${orgSettings.date_of_registration})`
-                    : ""}.
-                </p>
-                <div className="flex gap-3 max-w-sm">
-                  {/* Year selector — drives selectedFYYear; fyLabel is derived silently */}
-                  <select
-                    value={selectedFYYear}
-                    onChange={(e) => {
-                      setSelectedFYYear(Number(e.target.value));
-                      setGenerateMsg(null);
-                    }}
-                    className={inputCls}
-                  >
-                    {validFYYears.map((year) => (
-                      <option key={year} value={year}>
-                        {previewYearFormat(fmt, year)}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={generatePeriods}
-                    disabled={generating || !fyLabel}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {generating ? "Generating…" : "Generate"}
-                  </button>
-                </div>
-              </>
-            )}
-            {generateMsg && (
-              <p
-                className={`text-sm ${generateMsg.type === "ok" ? "text-green-700" : "text-red-600"}`}
-              >
-                {generateMsg.text}
-              </p>
-            )}
+            <p className="text-xs text-gray-400">
+              Saving these settings will automatically generate periods for the current fiscal year if not already created.
+            </p>
           </section>
 
           {/* Period grid */}
@@ -818,7 +694,7 @@ export default function PeriodsPage() {
             <section className="border border-gray-200 rounded-lg p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-800">Period grid</h2>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Fiscal year:</label>
                   <select
                     value={selectedFY}
@@ -829,16 +705,6 @@ export default function PeriodsPage() {
                       <option key={fy} value={fy}>{formatFY(fy, fmt)}</option>
                     ))}
                   </select>
-                  {canDeleteFY && (
-                    <button
-                      type="button"
-                      onClick={deleteFiscalYear}
-                      disabled={deletingFY}
-                      className="px-2.5 py-1 text-[11px] font-medium text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50 transition-colors"
-                    >
-                      {deletingFY ? "Deleting…" : "Delete fiscal year"}
-                    </button>
-                  )}
                 </div>
               </div>
 

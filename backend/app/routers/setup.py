@@ -55,6 +55,7 @@ Admin-only: require is_tenant_admin or is_super_admin.
 go-live / reopen: require is_super_admin (consultant role_tier stripped M9.3a).
 """
 
+import calendar as _cal
 import io
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -637,6 +638,25 @@ async def patch_org(
 
     await db.commit()
     await db.refresh(org)
+
+    # ── Auto-generate current fiscal year on settings save ───────────────────
+    # Trigger 1: when the tenant saves fiscal year settings, silently generate
+    # periods for the current FY if they don't exist yet. This is the primary
+    # discovery moment — the admin just configured the FY, so generate immediately.
+    # All validations (registration floor, stub year, etc.) are inside the helper.
+    current_year = date.today().year
+    current_label = _build_fy_label(org.fiscal_year_name_format, current_year)
+    existing_current = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == current_label,
+        ).limit(1)
+    )
+    if not existing_current.scalar_one_or_none():
+        created = await _generate_periods_for_year(db, tenant_id, current_year, org)
+        if created:
+            await db.commit()
+
     return _org_to_response(org, tenant_id)
 
 
@@ -1047,6 +1067,112 @@ async def upload_org_structure(
 
 # ── Accounting Periods (M8.3 Brief 1) ────────────────────────────────────────
 
+def _build_fy_label(fmt: Optional[str], year: int) -> str:
+    """Build a fiscal year label from the tenant's name format template and a start year.
+
+    Mirrors the frontend previewYearFormat helper so labels are consistent.
+    Falls back to "FY{year}" when no format is configured.
+    """
+    template = fmt or "FY{year}"
+    # Replace all MMM with 3-letter January abbreviation (matches frontend behaviour).
+    month_abbr = _cal.month_abbr[1]  # "Jan"
+    return (
+        template
+        .replace("{year}", str(year))
+        .replace("{nextyear}", str(year + 1))
+        .replace("MMM", month_abbr)
+    )
+
+
+async def _generate_periods_for_year(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    year: int,
+    org: TenantOrgConfig,
+    *,
+    label: Optional[str] = None,
+) -> list[AccountingPeriod]:
+    """Insert monthly AccountingPeriod rows for the given fiscal year start year.
+
+    Shared by the deprecated POST /periods/generate endpoint and both auto-generation
+    triggers (on fiscal settings save and on last-period hard-close).
+
+    Parameters
+    ----------
+    db        Async session. Caller is responsible for committing.
+    tenant_id Tenant UUID.
+    year      Calendar year of the FY start (e.g. 2026 for FY2026 / 2026-27).
+    org       TenantOrgConfig — must be loaded and up to date.
+    label     Fiscal year label stored on AccountingPeriod.fiscal_year. Defaults to
+              _build_fy_label(org.fiscal_year_name_format, year).
+
+    Returns the list of created (flushed) AccountingPeriod rows, or an empty list
+    when org config is not ready (missing start month, non-monthly frequency, or the
+    year is before the company's registration date).
+
+    Validations applied
+    -------------------
+    - fiscal_year_start_month must be set.
+    - period_closing_frequency must be monthly (or unset, which defaults to monthly).
+    - year must be >= year(date_of_registration) when registration date is set.
+    - Stub first year: if fy_start falls before date_of_registration in the same
+      calendar year, fy_start is clamped to the registration date.
+    - fy_end is always derived from tenant config (day before next FY starts),
+      never from fy_start + 12 months.
+
+    Does NOT check whether periods already exist — the caller decides.
+    """
+    if not org.fiscal_year_start_month:
+        return []
+
+    frequency = (org.period_closing_frequency or "monthly").lower()
+    if frequency != "monthly":
+        return []
+
+    start_month: int = org.fiscal_year_start_month
+    start_day: int = org.fiscal_year_start_day or 1
+    fy_label = label or _build_fy_label(org.fiscal_year_name_format, year)
+
+    # Year-level registration floor
+    if org.date_of_registration and year < org.date_of_registration.year:
+        return []
+
+    fy_start = date(year, start_month, start_day)
+
+    # Stub first year: clamp if fy_start precedes registration date within the same year
+    if org.date_of_registration and fy_start < org.date_of_registration:
+        if year == org.date_of_registration.year:
+            fy_start = org.date_of_registration
+        else:
+            return []  # year-level check above should have caught this
+
+    # Fiscal year end = day before next FY starts (derived from config, not +12 months)
+    next_fy_start = date(year + 1, start_month, start_day)
+    fy_end = next_fy_start - timedelta(days=1)
+
+    period_specs = generate_monthly_periods(fy_start, num_periods=12, start_day=start_day)
+    period_specs = [spec for spec in period_specs if spec[2] <= fy_end]
+
+    created: list[AccountingPeriod] = []
+    for period_no, period_name, start, end in period_specs:
+        p = AccountingPeriod(
+            tenant_id=tenant_id,
+            fiscal_year=fy_label,
+            period_no=period_no,
+            period_name=period_name,
+            start_date=start,
+            end_date=end,
+            status=initial_status_for(start, end),
+        )
+        db.add(p)
+        created.append(p)
+
+    if created:
+        await db.flush()
+
+    return created
+
+
 def _period_to_response(p: AccountingPeriod) -> AccountingPeriodResponse:
     """Map an AccountingPeriod ORM row to the API response schema."""
     return AccountingPeriodResponse(
@@ -1072,18 +1198,21 @@ async def generate_periods(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[AccountingPeriodResponse]:
-    """
-    Generate 12 monthly accounting periods for the given fiscal year label.
+    """Generate monthly accounting periods for the given fiscal year label.
 
-    Reads fiscal_year_start_month, fiscal_year_start_day, and period_closing_frequency
-    from org config. Only monthly frequency is supported in M8.3 (422 otherwise).
+    Deprecated: auto-generation now handles this — periods are created automatically
+    on fiscal year settings save and when the last period of a fiscal year is
+    hard-closed. This endpoint remains for backward compatibility and manual override.
 
-    Registration-date floor: REJECTED (422) if the fiscal year starts before
-    date_of_registration. Rationale: clamping creates a broken year with missing
-    early periods; rejection tells the user to choose a later FY.
+    User-facing validations (all raise HTTPException):
+    - org.fiscal_year_start_month must be configured.
+    - Only monthly frequency is supported.
+    - FY start year must be >= year(date_of_registration).
+    - FY start year must be <= current calendar year.
+    - No periods may already exist for the requested label (409).
 
-    Idempotent guard: if any period in the FY is already HARD_CLOSED, the FY
-    cannot be regenerated (409) — hard-close history is permanent.
+    The actual period creation is delegated to _generate_periods_for_year, which
+    is also used by the auto-generation triggers.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
@@ -1105,59 +1234,26 @@ async def generate_periods(
             detail="Only monthly periods are supported in M8.3. Quarterly/annual support will be added later.",
         )
 
-    start_month = org.fiscal_year_start_month
-    start_day = org.fiscal_year_start_day or 1
     label = data.fiscal_year_label
-
     start_year = parse_fy_start_year(label)
     if start_year is None:
         raise HTTPException(status_code=422, detail="Could not parse year from fiscal_year_label.")
 
-    # ── Validation 1: FY year must be >= year of date_of_registration ────────
-    # Checked at year-level so "FY2021" is rejected outright when the company
-    # registered in 2022, regardless of which month the FY starts.
+    # Year must be >= year of date_of_registration
     if org.date_of_registration and start_year < org.date_of_registration.year:
         raise HTTPException(
             status_code=400,
             detail="Cannot create periods before the company's registration date.",
         )
 
-    # ── Validation 2: FY year must be <= current calendar year ───────────────
-    # Prevents generating periods for years that have not yet started, which
-    # would produce FUTURE-status rows with no operational value and could
-    # mislead the posting engine.
-    current_year = date.today().year
-    if start_year > current_year:
+    # Year must be <= current calendar year
+    if start_year > date.today().year:
         raise HTTPException(
             status_code=400,
             detail="Cannot create periods for a future fiscal year.",
         )
 
-    fy_start = date(start_year, start_month, start_day)
-
-    # ── Registration-date floor: stub or reject ──────────────────────────────
-    # If fy_start falls before date_of_registration within the SAME year,
-    # clamp fy_start to the registration date so the first FY generates a
-    # stub year (e.g. registered 25/08/2021 → FY2021 runs 25/08–31/12/2021).
-    # If it's a DIFFERENT (earlier) year the year-level check above already
-    # rejected it; this branch only fires when start_year == reg_year.
-    if org.date_of_registration and fy_start < org.date_of_registration:
-        if start_year == org.date_of_registration.year:
-            fy_start = org.date_of_registration
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Fiscal year FY{start_year} starts before the "
-                    f"organisation's date of registration "
-                    f"({org.date_of_registration.strftime('%d/%m/%Y')})."
-                ),
-            )
-
-    # ── Idempotent guard: refuse if ANY period already exists for this FY ──────
-    # Blocks regeneration regardless of status (FUTURE, OPEN, SOFT_CLOSED,
-    # OVERDUE, HARD_CLOSED). The user must explicitly delete all periods for
-    # the year before regenerating — silent overwrites are too destructive.
+    # Idempotent guard: raise 409 if any periods already exist for this label
     existing_result = await db.execute(
         select(AccountingPeriod).where(
             AccountingPeriod.tenant_id == tenant_id,
@@ -1173,34 +1269,9 @@ async def generate_periods(
             ),
         )
 
-    # ── Fiscal year end date ─────────────────────────────────────────────────
-    # Always derived from tenant config, not from fy_start + 12 months.
-    # For a stub year (fy_start clamped to registration date) this is essential:
-    # the FY must end on its configured last day regardless of when it started.
-    # Formula: day before the next fiscal year begins.
-    next_fy_start = date(start_year + 1, start_month, start_day)
-    fy_end = next_fy_start - timedelta(days=1)
-
-    # ── Generate monthly periods up to fy_end ────────────────────────────────
-    # Generate up to 12 candidates then discard any that begin after fy_end.
-    # For a normal (non-stub) year all 12 are retained; for a stub year only
-    # the months that fall within the FY are kept (e.g. Aug–Dec = 5 periods).
-    period_specs = generate_monthly_periods(fy_start, num_periods=12, start_day=start_day)
-    period_specs = [spec for spec in period_specs if spec[2] <= fy_end]
-
-    created: list[AccountingPeriod] = []
-    for period_no, period_name, start, end in period_specs:
-        p = AccountingPeriod(
-            tenant_id=tenant_id,
-            fiscal_year=label,
-            period_no=period_no,
-            period_name=period_name,
-            start_date=start,
-            end_date=end,
-            status=initial_status_for(start, end),
-        )
-        db.add(p)
-        created.append(p)
+    # Delegate creation to shared helper (pass user-provided label explicitly so
+    # periods carry exactly the label the user specified, not the format-derived one).
+    created = await _generate_periods_for_year(db, tenant_id, start_year, org, label=label)
 
     await db.commit()
     for p in created:
@@ -1425,6 +1496,42 @@ async def hard_close_period(
     db.add(period)
     await db.commit()
     await db.refresh(period)
+
+    # ── Auto-generate next fiscal year when the last period is hard-closed ───
+    # Trigger 2: if every period in this FY is now HARD_CLOSED, the year is
+    # fully closed — automatically generate the next FY so the team can
+    # immediately start submitting for it.
+    all_fy_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == period.fiscal_year,
+        )
+    )
+    all_fy_periods = all_fy_result.scalars().all()
+    if all_fy_periods and all(p.status == "HARD_CLOSED" for p in all_fy_periods):
+        fy_start_year = parse_fy_start_year(period.fiscal_year)
+        if fy_start_year is not None:
+            next_year = fy_start_year + 1
+            # Guard: only generate up to current year + 1 to avoid creating
+            # far-future FUTURE-status periods with no operational value.
+            if next_year <= date.today().year + 1:
+                org_result = await db.execute(
+                    select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
+                )
+                org = org_result.scalar_one_or_none()
+                if org:
+                    next_label = _build_fy_label(org.fiscal_year_name_format, next_year)
+                    next_existing = await db.execute(
+                        select(AccountingPeriod).where(
+                            AccountingPeriod.tenant_id == tenant_id,
+                            AccountingPeriod.fiscal_year == next_label,
+                        ).limit(1)
+                    )
+                    if not next_existing.scalar_one_or_none():
+                        created = await _generate_periods_for_year(db, tenant_id, next_year, org)
+                        if created:
+                            await db.commit()
+
     return _period_to_response(period)
 
 
