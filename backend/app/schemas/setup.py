@@ -70,6 +70,7 @@ class OrgIdentityUpdate(BaseModel):
 class FiscalYearUpdate(BaseModel):
     """Fiscal year tab fields."""
 
+    first_fiscal_year_end: Optional[date] = None
     fiscal_year_start_month: Optional[int] = None
     fiscal_year_start_day: Optional[int] = None
     fiscal_year_name_format: Optional[str] = None
@@ -116,6 +117,7 @@ class OrgConfigResponse(BaseModel):
     reporting_currency: Optional[str] = None
     authorised_share_capital: Optional[float] = None
     # Fiscal year
+    first_fiscal_year_end: Optional[date] = None
     fiscal_year_start_month: Optional[int] = None
     fiscal_year_start_day: Optional[int] = None
     fiscal_year_name_format: Optional[str] = None

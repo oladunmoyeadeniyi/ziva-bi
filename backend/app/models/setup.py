@@ -297,6 +297,11 @@ class TenantOrgConfig(Base):
     enabled_currencies: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     authorised_share_capital: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 2), nullable=True)
     # Fiscal year
+    # first_fiscal_year_end: the last day of the company's very first accounting year.
+    # When set, the system derives fiscal_year_start_month and fiscal_year_start_day
+    # automatically (the month after the end month, day 1). Kept nullable so tenants
+    # that configured FY settings via the old start_month/day fields are unaffected.
+    first_fiscal_year_end: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     fiscal_year_start_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fiscal_year_start_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fiscal_year_name_format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)

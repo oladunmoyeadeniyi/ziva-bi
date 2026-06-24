@@ -25,6 +25,7 @@ interface OrgConfig {
   rc_number?: string;
   date_of_registration?: string;
   commencement_date?: string;
+  first_fiscal_year_end?: string;
   company_type?: string;
   industry?: string;
   tin?: string;
@@ -558,6 +559,40 @@ function OrganisationPage() {
             <Field label="Business commencement date">
               <Input type="date" value={org.commencement_date ?? ""} onChange={e => setOrg(o => ({ ...o, commencement_date: e.target.value }))} />
             </Field>
+            <Field label="First fiscal year end" required>
+              {(() => {
+                const reg = org.date_of_registration;
+                const comm = org.commencement_date;
+                const anchorDate = reg && comm ? (reg < comm ? reg : comm) : (reg ?? comm ?? "");
+                const maxFyEndDate = (() => {
+                  if (!anchorDate) return "";
+                  const d = new Date(anchorDate + "T00:00:00");
+                  d.setFullYear(d.getFullYear() + 1);
+                  d.setDate(d.getDate() - 1);
+                  return d.toISOString().slice(0, 10);
+                })();
+                const earlierLabel = !reg ? "commencement" : !comm ? "registration" : reg <= comm ? "registration" : "commencement";
+                const anchorFmt = anchorDate ? anchorDate.split("-").reverse().join("/") : "";
+                return (
+                  <>
+                    <Input
+                      type="date"
+                      value={org.first_fiscal_year_end ?? ""}
+                      min={anchorDate || undefined}
+                      max={maxFyEndDate || undefined}
+                      onBlur={e => {
+                        if (e.target.value) setOrg(o => ({ ...o, first_fiscal_year_end: e.target.value }));
+                      }}
+                    />
+                    {anchorDate && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        The last day of your first accounting year. Must be within one year of your {earlierLabel} date ({anchorFmt}).
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
+            </Field>
             <Field label="Company type">
               <Select value={org.company_type ?? ""} onChange={e => setOrg(o => ({ ...o, company_type: e.target.value }))}>
                 <option value="">— Select —</option>
@@ -649,6 +684,7 @@ function OrganisationPage() {
                 rc_number: org.rc_number,
                 date_of_registration: org.date_of_registration,
                 commencement_date: org.commencement_date,
+                first_fiscal_year_end: org.first_fiscal_year_end,
                 company_type: org.company_type,
                 industry: org.industry,
                 tin: org.tin,

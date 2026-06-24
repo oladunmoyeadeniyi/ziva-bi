@@ -131,19 +131,50 @@ const inputCls =
   "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
 const YEAR_FORMAT_OPTIONS = [
-  { label: "FY2025", value: "FY{year}" },
-  { label: "2025/2026", value: "{year}/{nextyear}" },
-  { label: "2025-2026", value: "{year}-{nextyear}" },
-  { label: "2025", value: "{year}" },
-  { label: "Apr 2025 – Mar 2026", value: "MMM {year} – MMM {nextyear}" },
+  { label: "YYYY",                value: "YYYY",                description: "e.g. 2025" },
+  { label: "FYYYYY",              value: "FYYYYY",              description: "e.g. FY2025" },
+  { label: "YYYY/YYYY",           value: "YYYY/YYYY",           description: "e.g. 2025/2026" },
+  { label: "YYYY-YYYY",           value: "YYYY-YYYY",           description: "e.g. 2025-2026" },
+  { label: "MMM YYYY - MMM YYYY", value: "MMM YYYY - MMM YYYY", description: "e.g. Jan 2025 - Dec 2025" },
 ];
 
-const previewYearFormat = (fmt: string, year?: number): string => {
+/**
+ * Apply a fiscal year name format template to a specific year.
+ *
+ * Handles new format codes (YYYY, FYYYYY, YYYY/YYYY, YYYY-YYYY,
+ * MMM YYYY - MMM YYYY) and legacy codes ({year}, {nextyear}, MMM)
+ * for backward compatibility.
+ *
+ * @param fmt        Format string from YEAR_FORMAT_OPTIONS or orgSettings.
+ * @param year       The FY start year (defaults to current calendar year).
+ * @param startMonth The FY start month 1–12 (defaults to 1 = January),
+ *                   used for the MMM YYYY - MMM YYYY format end-month.
+ */
+const previewYearFormat = (fmt: string, year?: number, startMonth?: number): string => {
   const y = year ?? new Date().getFullYear();
+  const nextY = y + 1;
+  const sm = startMonth ?? 1;
+
+  // Start month abbreviation
+  const startMon = new Date(y, sm - 1, 1).toLocaleString("en", { month: "short" });
+  // End month = month immediately before start month
+  const endMonNum = ((sm - 2 + 12) % 12) + 1;  // 1-based
+  const endMon = new Date(y, endMonNum - 1, 1).toLocaleString("en", { month: "short" });
+  // End year: same as start year when the end month falls later in the calendar;
+  // next year when the end month wraps around (e.g. Apr→Mar crosses a year boundary).
+  const endYear = endMonNum >= sm ? y : nextY;
+
   return fmt
-    .replace("{year}", String(y))
-    .replace("{nextyear}", String(y + 1))
-    .replace(/MMM/g, new Date(y, 0).toLocaleString("en", { month: "short" }));
+    // New format codes — FYYYYY before YYYY to avoid partial match
+    .replace("FYYYYY", `FY${y}`)
+    .replace("YYYY/YYYY", `${y}/${nextY}`)
+    .replace("YYYY-YYYY", `${y}-${nextY}`)
+    .replace("MMM YYYY - MMM YYYY", `${startMon} ${y} - ${endMon} ${endYear}`)
+    .replace("YYYY", `${y}`)
+    // Legacy template codes (backward compat)
+    .replace("{year}", `${y}`)
+    .replace("{nextyear}", `${nextY}`)
+    .replace(/MMM/g, startMon);
 };
 
 /** Extract the first 4-digit year from a stored fiscal_year label (e.g. "FY2026" → 2026). */
@@ -156,9 +187,9 @@ const parseFYYear = (fy: string): number | null => {
  * Re-format a stored fiscal_year label using the tenant's current name format.
  * Falls back to the raw stored value if no year can be parsed.
  */
-const formatFY = (fy: string, fmt: string): string => {
+const formatFY = (fy: string, fmt: string, startMonth?: number): string => {
   const year = parseFYYear(fy);
-  return year !== null ? previewYearFormat(fmt, year) : fy;
+  return year !== null ? previewYearFormat(fmt, year, startMonth) : fy;
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -414,7 +445,7 @@ export default function PeriodsPage() {
 
   const doStatutoryClose = async () => {
     if (!accessToken || !selectedFY) return;
-    if (!window.confirm(`Permanently lock ${formatFY(selectedFY, fmt)}? This is irreversible.`)) return;
+    if (!window.confirm(`Permanently lock ${formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)}? This is irreversible.`)) return;
     setClosingStat(true);
     setError(null);
     try {
@@ -641,7 +672,7 @@ export default function PeriodsPage() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Year name format</label>
                 <select
-                  value={orgSettings.fiscal_year_name_format ?? "FY{year}"}
+                  value={orgSettings.fiscal_year_name_format ?? "FYYYYY"}
                   onChange={(e) =>
                     setOrgSettings((s) => ({ ...s, fiscal_year_name_format: e.target.value }))
                   }
@@ -649,12 +680,16 @@ export default function PeriodsPage() {
                 >
                   {YEAR_FORMAT_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
-                      {opt.label}
+                      {opt.label} — {opt.description}
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  Preview: {previewYearFormat(orgSettings.fiscal_year_name_format ?? "FY{year}")}
+                  Preview: {previewYearFormat(
+                    orgSettings.fiscal_year_name_format ?? "FYYYYY",
+                    undefined,
+                    orgSettings.fiscal_year_start_month,
+                  )}
                 </p>
               </div>
               <div>
@@ -702,7 +737,7 @@ export default function PeriodsPage() {
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     {uniqueFYs.map((fy) => (
-                      <option key={fy} value={fy}>{formatFY(fy, fmt)}</option>
+                      <option key={fy} value={fy}>{formatFY(fy, fmt, orgSettings.fiscal_year_start_month)}</option>
                     ))}
                   </select>
                 </div>
@@ -791,7 +826,7 @@ export default function PeriodsPage() {
           {selectedFY && decPeriod && (
             <section className="border border-gray-200 rounded-lg p-4 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-800">Year-end close — {formatFY(selectedFY, fmt)}</h2>
+                <h2 className="text-sm font-semibold text-gray-800">Year-end close — {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)}</h2>
                 {loadingFyState && <span className="text-xs text-gray-400">Loading…</span>}
               </div>
 
@@ -872,7 +907,7 @@ export default function PeriodsPage() {
                       <div className="pt-1 border-t border-amber-200">
                         <p className="text-xs text-gray-600 mb-2">
                           <strong>Stage 2 — Statutory close (permanent):</strong> permanently locks this fiscal year.
-                          All periods in {formatFY(selectedFY, fmt)} will be locked for posting and reopen. This cannot be undone.
+                          All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)} will be locked for posting and reopen. This cannot be undone.
                         </p>
                         <div className="flex items-center gap-3">
                           <button
@@ -902,7 +937,7 @@ export default function PeriodsPage() {
                           {fyState.statutory_closed_at
                             ? new Date(fyState.statutory_closed_at).toLocaleDateString()
                             : ""}
-                          . All periods in {formatFY(selectedFY, fmt)} are locked for posting and reopen.
+                          . All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)} are locked for posting and reopen.
                         </p>
                       </div>
                     </div>
@@ -1182,7 +1217,7 @@ export default function PeriodsPage() {
                 <option value="">— select —</option>
                 {periods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.period_name} ({formatFY(p.fiscal_year, fmt)})
+                    {p.period_name} ({formatFY(p.fiscal_year, fmt, orgSettings.fiscal_year_start_month)})
                   </option>
                 ))}
               </select>

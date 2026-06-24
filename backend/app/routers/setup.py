@@ -311,6 +311,7 @@ def _org_to_response(org: Optional[TenantOrgConfig], tenant_id: uuid.UUID) -> Or
         functional_currency=org.functional_currency,
         reporting_currency=org.reporting_currency,
         authorised_share_capital=float(org.authorised_share_capital) if org.authorised_share_capital else None,
+        first_fiscal_year_end=org.first_fiscal_year_end,
         fiscal_year_start_month=org.fiscal_year_start_month,
         fiscal_year_start_day=org.fiscal_year_start_day,
         fiscal_year_name_format=org.fiscal_year_name_format,
@@ -620,11 +621,50 @@ async def patch_org(
     PROTECTED_ORG_FIELDS = {"functional_currency"}
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # ── first_fiscal_year_end: validate before applying ────────────────────────
+    # When this field is provided, we validate it falls within one year of the
+    # earlier of date_of_registration / commencement_date, then derive the
+    # recurring fiscal_year_start_month and fiscal_year_start_day automatically.
+    raw_fye = update_data.get("first_fiscal_year_end")
+    if raw_fye is not None:
+        fye: date = raw_fye
+        # Prefer already-updated anchor values from the same payload
+        reg_date = update_data.get("date_of_registration", org.date_of_registration)
+        comm_date = update_data.get("commencement_date", org.commencement_date)
+        anchor: Optional[date] = None
+        if reg_date and comm_date:
+            anchor = min(reg_date, comm_date)
+        elif reg_date:
+            anchor = reg_date
+        elif comm_date:
+            anchor = comm_date
+        if anchor is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Set registration or commencement date before fiscal year end.",
+            )
+        max_fy_end = date(anchor.year + 1, anchor.month, anchor.day) - timedelta(days=1)
+        if not (anchor <= fye <= max_fy_end):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"First fiscal year end must be between "
+                    f"{anchor.strftime('%d/%m/%Y')} and "
+                    f"{max_fy_end.strftime('%d/%m/%Y')}."
+                ),
+            )
+
     for field, value in update_data.items():
         if field in PROTECTED_ORG_FIELDS:
             continue
         if hasattr(org, field):
             setattr(org, field, value)
+
+    # Derive fiscal_year_start_month/day from first_fiscal_year_end after applying update
+    if raw_fye is not None:
+        org.fiscal_year_start_month = (raw_fye.month % 12) + 1
+        org.fiscal_year_start_day = 1
 
     # Sync dimensions toggle with tenant.dimensions_not_applicable
     org_config_update = update_data.get("org_configuration")
@@ -645,7 +685,7 @@ async def patch_org(
     # discovery moment — the admin just configured the FY, so generate immediately.
     # All validations (registration floor, stub year, etc.) are inside the helper.
     current_year = date.today().year
-    current_label = _build_fy_label(org.fiscal_year_name_format, current_year)
+    current_label = _build_fy_label(org.fiscal_year_name_format, current_year, org.fiscal_year_start_month or 1)
     existing_current = await db.execute(
         select(AccountingPeriod).where(
             AccountingPeriod.tenant_id == tenant_id,
@@ -1067,20 +1107,44 @@ async def upload_org_structure(
 
 # ── Accounting Periods (M8.3 Brief 1) ────────────────────────────────────────
 
-def _build_fy_label(fmt: Optional[str], year: int) -> str:
+def _build_fy_label(fmt: Optional[str], year: int, start_month: int = 1) -> str:
     """Build a fiscal year label from the tenant's name format template and a start year.
 
-    Mirrors the frontend previewYearFormat helper so labels are consistent.
-    Falls back to "FY{year}" when no format is configured.
+    Handles both the new format codes (YYYY, FYYYYY, YYYY/YYYY, YYYY-YYYY,
+    MMM YYYY - MMM YYYY) and the legacy template codes ({year}, {nextyear}, MMM)
+    for backward compatibility.
+
+    Args:
+        fmt:          The fiscal_year_name_format value from TenantOrgConfig.
+                      Defaults to "FYYYYY" (e.g. "FY2026") when None.
+        year:         The calendar year the fiscal year starts in.
+        start_month:  The FY start month (1=Jan, …, 12=Dec). Used for the
+                      "MMM YYYY - MMM YYYY" format to compute the end month.
     """
-    template = fmt or "FY{year}"
-    # Replace all MMM with 3-letter January abbreviation (matches frontend behaviour).
-    month_abbr = _cal.month_abbr[1]  # "Jan"
+    template = fmt or "FYYYYY"
+    next_year = year + 1
+
+    # Compute month abbreviations for "MMM YYYY - MMM YYYY" format
+    start_mon_abbr = _cal.month_abbr[start_month]
+    end_mon_num = ((start_month - 2) % 12) + 1  # month immediately before start
+    end_mon_abbr = _cal.month_abbr[end_mon_num]
+    # The end year equals the start year when the FY end month falls later in
+    # the calendar year than the start month (e.g. Jan→Dec within same year).
+    # Otherwise the end falls in the following calendar year (e.g. Apr→Mar).
+    end_year = year if end_mon_num >= start_month else next_year
+
     return (
         template
+        # New format codes — order matters: FYYYYY before plain YYYY
+        .replace("FYYYYY", f"FY{year}")
+        .replace("YYYY/YYYY", f"{year}/{next_year}")
+        .replace("YYYY-YYYY", f"{year}-{next_year}")
+        .replace("MMM YYYY - MMM YYYY", f"{start_mon_abbr} {year} - {end_mon_abbr} {end_year}")
+        .replace("YYYY", str(year))
+        # Legacy template codes (backward compat for existing tenants)
         .replace("{year}", str(year))
-        .replace("{nextyear}", str(year + 1))
-        .replace("MMM", month_abbr)
+        .replace("{nextyear}", str(next_year))
+        .replace("MMM", _cal.month_abbr[1])
     )
 
 
@@ -1131,20 +1195,38 @@ async def _generate_periods_for_year(
 
     start_month: int = org.fiscal_year_start_month
     start_day: int = org.fiscal_year_start_day or 1
-    fy_label = label or _build_fy_label(org.fiscal_year_name_format, year)
+    fy_label = label or _build_fy_label(org.fiscal_year_name_format, year, start_month)
 
-    # Year-level registration floor
-    if org.date_of_registration and year < org.date_of_registration.year:
+    # Anchor date: the earlier of date_of_registration and commencement_date.
+    # Used as the fy_start for the first fiscal year and as the registration floor.
+    anchor: Optional[date] = None
+    if org.date_of_registration and org.commencement_date:
+        anchor = min(org.date_of_registration, org.commencement_date)
+    elif org.date_of_registration:
+        anchor = org.date_of_registration
+    elif org.commencement_date:
+        anchor = org.commencement_date
+
+    # Year-level floor: skip years before the anchor
+    if anchor and year < anchor.year:
         return []
 
-    fy_start = date(year, start_month, start_day)
-
-    # Stub first year: clamp if fy_start precedes registration date within the same year
-    if org.date_of_registration and fy_start < org.date_of_registration:
-        if year == org.date_of_registration.year:
-            fy_start = org.date_of_registration
-        else:
-            return []  # year-level check above should have caught this
+    # Determine fy_start
+    if org.first_fiscal_year_end and anchor and year == anchor.year:
+        # First fiscal year: start exactly from the anchor date.
+        # first_fiscal_year_end confirms the tenant has configured this year as the
+        # first FY, so we don't apply the normal start_month/day.
+        fy_start = anchor
+    else:
+        # Subsequent fiscal years: start from the configured start_month/start_day.
+        fy_start = date(year, start_month, start_day)
+        # Legacy stub-year clamp when first_fiscal_year_end is not configured:
+        # if the computed start is before the anchor (same year), clamp to anchor.
+        if not org.first_fiscal_year_end and anchor and fy_start < anchor:
+            if year == anchor.year:
+                fy_start = anchor
+            else:
+                return []
 
     # Fiscal year end = day before next FY starts (derived from config, not +12 months)
     next_fy_start = date(year + 1, start_month, start_day)
@@ -1520,7 +1602,7 @@ async def hard_close_period(
                 )
                 org = org_result.scalar_one_or_none()
                 if org:
-                    next_label = _build_fy_label(org.fiscal_year_name_format, next_year)
+                    next_label = _build_fy_label(org.fiscal_year_name_format, next_year, org.fiscal_year_start_month or 1)
                     next_existing = await db.execute(
                         select(AccountingPeriod).where(
                             AccountingPeriod.tenant_id == tenant_id,
