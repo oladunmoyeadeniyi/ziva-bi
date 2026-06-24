@@ -213,6 +213,7 @@ export default function PeriodsPage() {
   const [hardClosing, setHardClosing] = useState<string | null>(null);
   const [hardCloseMsg, setHardCloseMsg] = useState<string | null>(null);
   const [reopening, setReopening] = useState<string | null>(null);
+  const [deletingFY, setDeletingFY] = useState(false);
 
   // ── Grace overrides state ─────────────────────────────────────────────────
   const [graceRows, setGraceRows] = useState<GraceOverride[]>([]);
@@ -407,6 +408,25 @@ export default function PeriodsPage() {
       setHardCloseMsg(e instanceof Error ? e.message : "Hard close failed");
     } finally {
       setHardClosing(null);
+    }
+  };
+
+  const deleteFiscalYear = async () => {
+    if (!accessToken || !selectedFY) return;
+    if (!window.confirm(`Delete all periods for ${formatFY(selectedFY, fmt)}? This cannot be undone.`)) return;
+    setDeletingFY(true);
+    setHardCloseMsg(null);
+    try {
+      await apiFetch(`/api/setup/periods/fiscal-year/${encodeURIComponent(selectedFY)}`, {
+        method: "DELETE",
+        token: accessToken,
+      });
+      setSelectedFY("");
+      await loadPeriods();
+    } catch (e) {
+      setHardCloseMsg(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingFY(false);
     }
   };
 
@@ -612,6 +632,12 @@ export default function PeriodsPage() {
   const canStatutoryClose =
     fyState?.status === "AUDIT_PENDING" || fyState?.status === "AUDIT_OVERDUE";
 
+  // Show the Delete fiscal year button only when every period in the selected FY
+  // is OPEN or FUTURE — if any period is closed, deletion is blocked by the backend.
+  const canDeleteFY =
+    fyPeriods.length > 0 &&
+    fyPeriods.every((p) => p.status === "OPEN" || p.status === "FUTURE");
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -792,7 +818,7 @@ export default function PeriodsPage() {
             <section className="border border-gray-200 rounded-lg p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-800">Period grid</h2>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <label className="text-xs text-gray-500">Fiscal year:</label>
                   <select
                     value={selectedFY}
@@ -803,6 +829,16 @@ export default function PeriodsPage() {
                       <option key={fy} value={fy}>{formatFY(fy, fmt)}</option>
                     ))}
                   </select>
+                  {canDeleteFY && (
+                    <button
+                      type="button"
+                      onClick={deleteFiscalYear}
+                      disabled={deletingFY}
+                      className="px-2.5 py-1 text-[11px] font-medium text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50 transition-colors"
+                    >
+                      {deletingFY ? "Deleting…" : "Delete fiscal year"}
+                    </button>
+                  )}
                 </div>
               </div>
 

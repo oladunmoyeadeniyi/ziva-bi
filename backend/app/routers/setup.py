@@ -13,7 +13,8 @@ Endpoints:
   DELETE /api/setup/org-structure/{id}        Remove a node
   GET   /api/setup/org-structure/template     Download xlsx template
   POST  /api/setup/org-structure/upload       Upload structure from xlsx/csv
-  POST  /api/setup/periods/generate           Generate 12 monthly periods for a FY
+  POST   /api/setup/periods/generate                    Generate 12 monthly periods for a FY
+  DELETE /api/setup/periods/fiscal-year/{fiscal_year}  Delete all periods for a FY (only if none are closed)
   GET   /api/setup/periods                    List accounting periods (filter by ?fiscal_year=)
   GET   /api/setup/periods/check              Postability check for a date (?date=YYYY-MM-DD)
   POST  /api/setup/periods/{id}/soft-close    Manually soft-close a period
@@ -1206,6 +1207,59 @@ async def generate_periods(
         await db.refresh(p)
 
     return [_period_to_response(p) for p in created]
+
+
+@router.delete("/periods/fiscal-year/{fiscal_year}", status_code=200)
+async def delete_fiscal_year(
+    fiscal_year: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Delete all periods for a fiscal year label, plus its FiscalYearState if present.
+
+    Blocked (409) if any period is in a closed state (SOFT_CLOSED, OVERDUE, or
+    HARD_CLOSED). Only FUTURE and OPEN periods may be deleted — this prevents
+    accidental destruction of close history.
+
+    Intended use: correct a misconfigured generation before any period is closed.
+    After deletion the fiscal year label may be regenerated via POST /periods/generate.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    # Block if any period is in a closed state
+    closed_result = await db.execute(
+        select(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == fiscal_year,
+            AccountingPeriod.status.in_(["SOFT_CLOSED", "OVERDUE", "HARD_CLOSED"]),
+        )
+    )
+    if closed_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete a fiscal year with closed periods.",
+        )
+
+    # Delete all periods for this fiscal year
+    await db.execute(
+        delete(AccountingPeriod).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == fiscal_year,
+        )
+    )
+
+    # Delete FiscalYearState if present
+    await db.execute(
+        delete(FiscalYearState).where(
+            FiscalYearState.tenant_id == tenant_id,
+            FiscalYearState.fiscal_year == fiscal_year,
+        )
+    )
+
+    await db.commit()
+    return {"deleted": fiscal_year}
 
 
 @router.get("/periods", response_model=list[AccountingPeriodResponse])
