@@ -296,6 +296,42 @@ All committed and pushed in May 2026 session.
 - Template generator rebuilt: 2-sheet xlsx (Instructions + Org Structure), Node Type dropdown validation, conditional formatting (amber row + red cell for Cost center nodes missing Cost Center Code, green cell when present), Entity Code column added
 - Upload handler reads 7 columns (was 5); `VALID_TYPES` updated to include "Division / Business unit"
 
+### Period Management Enhancements ✅ COMPLETE (June 2026 — commits 384fd0e → 17491da)
+
+Full overhaul of period generation to be automatic and config-driven. No more manual FY label input.
+
+**New DB column (migration `j6k7l8m9n0o1`):**
+- `tenant_org_config.first_fiscal_year_end DATE NULL` — last day of the company's very first accounting year. When set, backend derives `fiscal_year_start_month`/`fiscal_year_start_day` automatically (next month, day 1). Validated to fall within one year of `date_of_registration`/`commencement_date`.
+
+**Auto-generation triggers (replaces manual "Generate" section in UI):**
+1. **On org settings save** (`PATCH /api/setup/org`): if current FY periods don't exist yet, silently generate them.
+2. **On last period hard-close**: when every period in a FY is `HARD_CLOSED`, automatically generate the next FY (capped at current year + 1).
+
+**New endpoint:**
+- `DELETE /api/setup/periods/fiscal-year/{fiscal_year}` — delete all periods + FiscalYearState for a label. Blocked (409) if any period is `SOFT_CLOSED`, `OVERDUE`, or `HARD_CLOSED`. Intended for pre-close corrections.
+
+**`POST /api/setup/periods/generate` changes:**
+- Now delegates to shared `_generate_periods_for_year()` helper (same logic used by both triggers).
+- Idempotent guard strengthened: 409 if *any* period exists for the label (was: only if HARD_CLOSED periods exist).
+- Bounds enforced: year ≥ `date_of_registration.year` AND year ≤ current calendar year.
+- Marked deprecated in docstring — manual use is now a fallback/override only.
+
+**Fiscal year name format:**
+- Frontend dropdown with 5 structured codes (was free-text input): `YYYY`, `FYYYYY`, `YYYY/YYYY`, `YYYY-YYYY`, `MMM YYYY - MMM YYYY`
+- Live preview label shown beneath dropdown (e.g. "Preview: FY2026")
+- All FY labels in the periods page (grid selector, year-end close heading, statutory close confirm) are now formatted via `formatFY()` using the tenant's stored format — not the raw stored value.
+
+**Stub first-year logic:**
+- `first_fiscal_year_end` takes precedence over the start_month/day clamp for the company's first FY.
+- Subsequent FYs always use configured `fiscal_year_start_month`/`fiscal_year_start_day`.
+- FY end date derived from config (day before next FY start) — never from fy_start + 12 months.
+
+**`_build_fy_label()` helper (backend, `routers/setup.py`):**
+- Handles all 5 new format codes plus legacy `{year}`/`{nextyear}`/`MMM` codes for backward compatibility.
+- Used by both auto-generation triggers and `parse_fy_start_year()`.
+
+---
+
 ## 9. NEXT MILESTONE — M8.3 Backend + M8.4 Tax & Statutory
 
 ### M8.3 Backend (immediate — unblock the Currencies & FX UI)
@@ -358,4 +394,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: June 2026. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-06-28 (session end — Period Management Enhancements complete, commit 17491da). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
