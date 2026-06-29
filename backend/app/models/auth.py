@@ -54,9 +54,19 @@ class Tenant(Base):
     """
     Company record. Every business user_tenant row references one of these.
 
-    M9.0 environment model: a live tenant may have one shadow test tenant linked via
-    parent_tenant_id. The environment column ("live" | "test") drives routing.
-    Switching environments reissues the JWT to point at the target tenant's id.
+    Environment model (M9.0, direction flipped by M9.0.1): a tenant pair is
+    linked via parent_tenant_id. The environment column ("live" | "test")
+    drives routing. Switching environments reissues the JWT to point at the
+    target tenant's id.
+
+    Since M9.0.1: signup creates ONLY a test tenant (parent_tenant_id=NULL).
+    Live is born second, only via super-admin promotion, with
+    live.parent_tenant_id pointing back at the test tenant it came from --
+    the inverse of the original M9.0 live-first/clone design, where
+    parent_tenant_id lived on the test row instead. See
+    docs/BRIEF_M9_0_1_test_first_environment_flow.md. Tenants created before
+    this change (e.g. the original Red Bull pair) may still have the old
+    direction until retrofitted -- see backend/scripts/retrofit_*_test_first.py.
     """
 
     __tablename__ = "tenants"
@@ -73,11 +83,15 @@ class Tenant(Base):
     documents_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     module_setup_visited: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     # M9.0: environment architecture
-    # "live" | "test" — test tenants are shadow copies of their live parent.
+    # "live" | "test" — a test tenant and its live counterpart are a linked pair.
     environment: Mapped[str] = mapped_column(
         String(20), nullable=False, default="live", server_default="live"
     )
-    # Null for live tenants; set on test tenants to point at their live parent.
+    # M9.0.1: set on the LIVE tenant, pointing back at the test tenant it was
+    # promoted from. NULL on test tenants (every signup creates a parentless
+    # test tenant; live doesn't exist until promotion). Pre-M9.0.1 tenants may
+    # still have this set the old way (on the test row, pointing at live) until
+    # retrofitted.
     parent_tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="SET NULL"),

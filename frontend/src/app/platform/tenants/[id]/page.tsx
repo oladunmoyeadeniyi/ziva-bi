@@ -1,12 +1,14 @@
 "use client";
 
 /**
- * Platform tenant detail page — M9.2 / M9.4.
+ * Platform tenant detail page — M9.2 / M9.4, updated for M9.0.1 (test-first).
  *
  * Route: /platform/tenants/[id]
- * Shows tenant fields, user list, module count, test env. Actions: set lifecycle,
- * suspend, reactivate, create test environment, promote config test→live.
- * All API errors surfaced inline.
+ * Shows tenant fields, user list, module count, and the tenant's environment
+ * counterpart (test↔live, whichever this tenant doesn't already have).
+ * Actions: set lifecycle, suspend, reactivate, create test environment,
+ * review & promote (first promotion creates live; repeat promotions update it
+ * — see PromotionReviewDialog). All API errors surfaced inline.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -17,12 +19,6 @@ import { apiFetch } from "@/lib/api";
 import PromotionReviewDialog from "@/components/PromotionReviewDialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface PromoteResult {
-  promoted: string[];
-  deferred: string[];
-  message: string;
-}
 
 interface TenantUserSummary {
   id: string;
@@ -53,6 +49,8 @@ interface TenantDetail {
   active_module_count: number;
   users: TenantUserSummary[];
   test_environment: TestEnvSummary | null;
+  /** M9.0.1 — populated when this tenant is itself a test tenant with a born-from-promotion live counterpart. */
+  live_environment: TestEnvSummary | null;
   created_at: string;
   updated_at: string;
 }
@@ -106,17 +104,10 @@ export default function TenantDetailPage() {
   // Enter tenant
   const [entering, setEntering] = useState(false);
 
-  // Test environment management
+  // Test/live environment management (M9.0.1: promotion is the single mechanism
+  // for both "create live" and "update live" — see PromotionReviewDialog below).
   const [creatingTestEnv, setCreatingTestEnv]     = useState(false);
   const [showReviewDialog, setShowReviewDialog]   = useState(false);
-  const [showPromoteDialog, setShowPromoteDialog] = useState(false);
-  const [promoting, setPromoting]                 = useState(false);
-  const [promoteResult, setPromoteResult]         = useState<PromoteResult | null>(null);
-  const [selectedSections, setSelectedSections]   = useState<Record<string, boolean>>({
-    org_config: true,
-    tax:        true,
-    fx:         true,
-  });
 
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
@@ -215,33 +206,6 @@ export default function TenantDetailPage() {
       setActionMsg({ type: "err", text: e instanceof Error ? e.message : "Create failed" });
     } finally {
       setCreatingTestEnv(false);
-    }
-  };
-
-  const runPromote = async () => {
-    if (!accessToken || !tenant) return;
-    const sections = Object.entries(selectedSections)
-      .filter(([, checked]) => checked)
-      .map(([key]) => key);
-    if (sections.length === 0) {
-      setActionMsg({ type: "err", text: "Select at least one section to promote." });
-      return;
-    }
-    setPromoting(true);
-    setPromoteResult(null);
-    try {
-      const result = await apiFetch<PromoteResult>(`/api/platform/tenants/${id}/promote`, {
-        method: "POST",
-        token: accessToken,
-        body: { sections },
-      });
-      setPromoteResult(result);
-      setShowPromoteDialog(false);
-      setActionMsg({ type: "ok", text: result.message });
-    } catch (e) {
-      setActionMsg({ type: "err", text: e instanceof Error ? e.message : "Promote failed" });
-    } finally {
-      setPromoting(false);
     }
   };
 
@@ -477,198 +441,144 @@ export default function TenantDetailPage() {
         </dl>
       </section>
 
-      {/* ── Test environment (Super Admin only) ──────────────────────────────── */}
-      {user?.is_super_admin && tenant.environment === "live" && (
+      {/* ── Test/live environment & promotion (Super Admin only, M9.0.1) ───────
+           Every tenant starts test-only (no live counterpart) until its first
+           promotion. This section therefore renders for BOTH environments and
+           branches on which side of the pair is currently being viewed. */}
+      {user?.is_super_admin && (tenant.environment === "live" || tenant.environment === "test") && (
         <section className="border border-amber-200 rounded-xl bg-amber-50 p-5 space-y-4">
           <h2 className="text-xs font-semibold text-amber-700 uppercase tracking-widest">
-            Test environment
+            {tenant.environment === "live" ? "Test environment" : "Live environment"}
           </h2>
 
-          {tenant.test_environment ? (
-            /* Shadow exists — show summary + promote button */
+          {tenant.environment === "live" ? (
+            tenant.test_environment ? (
+              /* Live tenant with a test shadow — repeat promotion */
+              <>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">{tenant.test_environment.name}</p>
+                    <p className="text-xs text-amber-600 font-mono mt-0.5">{tenant.test_environment.slug}</p>
+                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-200 text-amber-800">
+                      {tenant.test_environment.lifecycle_status.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                  <Link
+                    href={`/platform/tenants/${tenant.test_environment.id}`}
+                    className="text-xs font-medium text-amber-700 hover:text-amber-900 underline shrink-0"
+                  >
+                    View detail
+                  </Link>
+                </div>
+
+                <div className="pt-1 border-t border-amber-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowReviewDialog(true)}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Review &amp; promote to live
+                  </button>
+                  <p className="text-xs text-amber-600 mt-1">
+                    Diff and selectively promote Chart of Accounts, Dimensions, GL requirements.
+                    Organisation, tax &amp; FX config are always carried over in full.
+                  </p>
+                </div>
+              </>
+            ) : (
+              /* Live tenant with no shadow — offer create (unrelated to promotion) */
+              <>
+                <p className="text-sm text-amber-800">
+                  No test environment exists for this tenant. Create one to rehearse configuration
+                  changes in an isolated sandbox before applying them to live.
+                </p>
+                <ul className="text-xs text-amber-700 list-disc list-inside space-y-0.5">
+                  <li>All users mirrored from the live tenant (same credentials).</li>
+                  <li>Data is isolated — test changes never affect live.</li>
+                  <li>Once created, promote config sections from test → live on demand.</li>
+                </ul>
+                <button
+                  type="button"
+                  onClick={createTestEnv}
+                  disabled={creatingTestEnv}
+                  className="px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                >
+                  {creatingTestEnv ? "Creating…" : "Create test environment"}
+                </button>
+              </>
+            )
+          ) : tenant.live_environment ? (
+            /* Test tenant with a born-live counterpart — repeat promotion, viewed from test side */
             <>
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-amber-900">{tenant.test_environment.name}</p>
-                  <p className="text-xs text-amber-600 font-mono mt-0.5">{tenant.test_environment.slug}</p>
+                  <p className="text-sm font-medium text-amber-900">{tenant.live_environment.name}</p>
+                  <p className="text-xs text-amber-600 font-mono mt-0.5">{tenant.live_environment.slug}</p>
                   <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-200 text-amber-800">
-                    {tenant.test_environment.lifecycle_status.replace(/_/g, " ")}
+                    {tenant.live_environment.lifecycle_status.replace(/_/g, " ")}
                   </span>
                 </div>
                 <Link
-                  href={`/platform/tenants/${tenant.test_environment.id}`}
+                  href={`/platform/tenants/${tenant.live_environment.id}`}
                   className="text-xs font-medium text-amber-700 hover:text-amber-900 underline shrink-0"
                 >
                   View detail
                 </Link>
               </div>
 
-              <div className="pt-1 border-t border-amber-200 space-y-3">
-                {/* Phase 2: org/tax/fx simple promote */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => { setShowPromoteDialog(true); setPromoteResult(null); }}
-                    className="px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition-colors"
-                  >
-                    Promote configuration to live
-                  </button>
-                  <p className="text-xs text-amber-600 mt-1">
-                    Copy org, tax &amp; FX config from the test shadow to the live tenant.
-                  </p>
-                </div>
-                {/* Phase 3b: CoA / Dimensions / DimValues diff + apply */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowReviewDialog(true)}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Review &amp; promote master data
-                  </button>
-                  <p className="text-xs text-amber-600 mt-1">
-                    Diff and selectively promote Chart of Accounts, Dimensions, GL requirements.
-                  </p>
-                </div>
+              <div className="pt-1 border-t border-amber-200">
+                <button
+                  type="button"
+                  onClick={() => setShowReviewDialog(true)}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Review &amp; promote to live
+                </button>
+                <p className="text-xs text-amber-600 mt-1">
+                  Diff and selectively promote Chart of Accounts, Dimensions, GL requirements.
+                  Organisation, tax &amp; FX config are always carried over in full.
+                </p>
               </div>
             </>
           ) : (
-            /* No shadow — offer create */
+            /* Test tenant, no live counterpart yet — first-ever promotion */
             <>
               <p className="text-sm text-amber-800">
-                No test environment exists for this tenant. Create one to rehearse configuration
-                changes in an isolated sandbox before applying them to live.
+                No live environment exists yet for this tenant — this is its only environment
+                so far. Promoting its validated configuration creates the live environment for
+                the first time.
               </p>
               <ul className="text-xs text-amber-700 list-disc list-inside space-y-0.5">
-                <li>All users mirrored from the live tenant (same credentials).</li>
-                <li>Data is isolated — test changes never affect live.</li>
-                <li>Once created, promote config sections from test → live on demand.</li>
+                <li>Creates the live tenant and copies every accepted CoA / Dimensions item.</li>
+                <li>Organisation, tax &amp; FX config are carried over in full automatically.</li>
+                <li>All current users are mirrored onto the new live tenant.</li>
               </ul>
               <button
                 type="button"
-                onClick={createTestEnv}
-                disabled={creatingTestEnv}
-                className="px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                onClick={() => setShowReviewDialog(true)}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
               >
-                {creatingTestEnv ? "Creating…" : "Create test environment"}
+                Review &amp; create live environment
               </button>
             </>
           )}
         </section>
       )}
 
-      {/* ── Promote confirmation dialog ─────────────────────────────────────── */}
-      {showPromoteDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 space-y-5">
-            <h2 className="text-base font-semibold text-gray-900">
-              Promote configuration to live
-            </h2>
-
-            {/* Warning */}
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
-              <strong>Warning:</strong> Promoting will overwrite the live tenant&apos;s selected
-              configuration with the values from the test environment. This cannot be undone.
-            </div>
-
-            {/* Will be promoted */}
-            <div>
-              <p className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
-                Select sections to promote
-              </p>
-              <div className="space-y-2">
-                {[
-                  {
-                    key: "org_config",
-                    label: "Organisation config",
-                    desc: "Legal info, fiscal year, currencies, branding",
-                  },
-                  {
-                    key: "tax",
-                    label: "Tax & statutory",
-                    desc: "VAT, WHT, PAYE configuration",
-                  },
-                  {
-                    key: "fx",
-                    label: "Currencies & FX",
-                    desc: "Exchange rates, revaluation rules",
-                  },
-                ].map(({ key, label, desc }) => (
-                  <label
-                    key={key}
-                    className="flex items-start gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedSections[key] ?? true}
-                      onChange={(e) =>
-                        setSelectedSections((prev) => ({ ...prev, [key]: e.target.checked }))
-                      }
-                      className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0"
-                    />
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">{label}</p>
-                      <p className="text-xs text-gray-500">{desc}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Not included (deferred) */}
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                Not included — require manual handling
-              </p>
-              <div className="space-y-1">
-                {[
-                  { label: "Chart of Accounts", reason: "GL account IDs require remapping" },
-                  { label: "Dimensions",         reason: "Dimension value IDs require remapping" },
-                  { label: "Accounting periods", reason: "Operational state — not config" },
-                ].map(({ label, reason }) => (
-                  <div
-                    key={label}
-                    className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg"
-                  >
-                    <i className="ti ti-ban text-gray-400" style={{ fontSize: 12 }} />
-                    <span className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-600">{label}</span> — {reason}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-3 justify-end pt-1">
-              <button
-                type="button"
-                onClick={() => setShowPromoteDialog(false)}
-                disabled={promoting}
-                className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={runPromote}
-                disabled={promoting || !Object.values(selectedSections).some(Boolean)}
-                className="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 disabled:opacity-50"
-              >
-                {promoting ? "Promoting…" : "Confirm promote"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Phase 3b: Master data promotion review dialog ────────────────────── */}
-      {showReviewDialog && tenant.test_environment && accessToken && (
+      {/* ── Promotion review dialog (M9.0.1 unified engine) ───────────────────
+           tenantId is always THIS page's tenant id -- the backend resolves the
+           test/live pair from either side. Name props branch on which side of
+           the pair we're viewing, and on whether live exists yet at all. */}
+      {showReviewDialog && accessToken && (
         <PromotionReviewDialog
           tenantId={tenant.id}
-          tenantName={tenant.name}
-          shadowName={tenant.test_environment.name}
-          onClose={() => setShowReviewDialog(false)}
+          tenantName={
+            tenant.environment === "live"
+              ? tenant.name
+              : tenant.live_environment?.name ?? null
+          }
+          shadowName={tenant.environment === "live" ? (tenant.test_environment?.name ?? "Test") : tenant.name}
+          onClose={() => { setShowReviewDialog(false); load(); }}
           accessToken={accessToken}
         />
       )}

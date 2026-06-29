@@ -46,6 +46,7 @@ class OrgIdentityUpdate(BaseModel):
     rc_number: Optional[str] = None
     date_of_registration: Optional[date] = None
     commencement_date: Optional[date] = None
+    first_fiscal_year_end: Optional[date] = None
     company_type: Optional[str] = None
     industry: Optional[str] = None
     tin: Optional[str] = None

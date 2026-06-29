@@ -39,7 +39,13 @@ class TenantUserSummary(BaseModel):
 
 
 class TestEnvSummary(BaseModel):
-    """Summary of a test-shadow tenant shown inside the live tenant detail."""
+    """
+    Summary of a tenant's environment counterpart, shown inside tenant detail.
+
+    Used both directions: a live tenant's test shadow (test_environment) and,
+    since M9.0.1, a test tenant's born-from-promotion live counterpart
+    (live_environment). Same shape either way -- id/name/slug/lifecycle_status.
+    """
 
     id: str
     name: str
@@ -63,6 +69,7 @@ class TenantDetail(BaseModel):
     active_module_count: int
     users: list[TenantUserSummary]
     test_environment: TestEnvSummary | None
+    live_environment: TestEnvSummary | None = None
     created_at: datetime
     updated_at: datetime
 

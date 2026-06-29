@@ -39,6 +39,7 @@ interface OrgSettings {
   fiscal_year_name_format?: string;
   period_closing_frequency?: string;
   date_of_registration?: string;
+  first_fiscal_year_end?: string;
 }
 
 interface AccountingPeriod {
@@ -185,11 +186,39 @@ const parseFYYear = (fy: string): number | null => {
 
 /**
  * Re-format a stored fiscal_year label using the tenant's current name format.
+ *
+ * For the "MMM YYYY - MMM YYYY" format, derives the displayed month range from
+ * the ACTUAL period start/end dates in `fyPeriodsForLabel` when provided, not
+ * from the tenant's currently configured start month. This matters for a
+ * registration-truncated stub first year (e.g. periods running Aug-Dec): using
+ * the configured start month would always render "Jan YYYY - Dec YYYY" even
+ * though no period before the registration month exists. Other formats
+ * (YYYY, FYYYYY, etc.) don't encode months, so they always use the generic
+ * preview regardless.
+ *
  * Falls back to the raw stored value if no year can be parsed.
  */
-const formatFY = (fy: string, fmt: string, startMonth?: number): string => {
+const formatFY = (
+  fy: string,
+  fmt: string,
+  startMonth?: number,
+  fyPeriodsForLabel?: AccountingPeriod[],
+): string => {
   const year = parseFYYear(fy);
-  return year !== null ? previewYearFormat(fmt, year, startMonth) : fy;
+  if (year === null) return fy;
+
+  if (fmt === "MMM YYYY - MMM YYYY" && fyPeriodsForLabel && fyPeriodsForLabel.length > 0) {
+    const sorted = [...fyPeriodsForLabel].sort((a, b) => a.start_date.localeCompare(b.start_date));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const startMon = new Date(first.start_date).toLocaleString("en", { month: "short", timeZone: "UTC" });
+    const endMon = new Date(last.end_date).toLocaleString("en", { month: "short", timeZone: "UTC" });
+    const startY = new Date(first.start_date).getUTCFullYear();
+    const endY = new Date(last.end_date).getUTCFullYear();
+    return `${startMon} ${startY} - ${endMon} ${endY}`;
+  }
+
+  return previewYearFormat(fmt, year, startMonth);
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -374,8 +403,6 @@ export default function PeriodsPage() {
         method: "PATCH",
         token: accessToken,
         body: {
-          fiscal_year_start_month: orgSettings.fiscal_year_start_month ?? null,
-          fiscal_year_start_day: orgSettings.fiscal_year_start_day ?? null,
           fiscal_year_name_format: orgSettings.fiscal_year_name_format ?? null,
           period_closing_frequency: orgSettings.period_closing_frequency ?? null,
         },
@@ -445,7 +472,7 @@ export default function PeriodsPage() {
 
   const doStatutoryClose = async () => {
     if (!accessToken || !selectedFY) return;
-    if (!window.confirm(`Permanently lock ${formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)}? This is irreversible.`)) return;
+    if (!window.confirm(`Permanently lock ${formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)}? This is irreversible.`)) return;
     setClosingStat(true);
     setError(null);
     try {
@@ -582,7 +609,13 @@ export default function PeriodsPage() {
 
   const uniqueFYs = [...new Set(periods.map((p) => p.fiscal_year))].sort();
   const fyPeriods = periods.filter((p) => p.fiscal_year === selectedFY);
-  const decPeriod = fyPeriods.find((p) => p.period_no === 12);
+  // The FY's final period -- highest period_no, NOT a hardcoded 12. A
+  // registration-truncated stub first year can have fewer than 12 periods
+  // (e.g. Aug-Dec = 5), and a hardcoded 12 would never match, permanently
+  // hiding the Year-end close section for that year.
+  const decPeriod = fyPeriods.length > 0
+    ? fyPeriods.reduce((latest, p) => (p.period_no > latest.period_no ? p : latest))
+    : undefined;
 
   // Earliest non-hard-closed period across all FYs (sequential close gate)
   const earliestOpen = [...periods]
@@ -642,33 +675,19 @@ export default function PeriodsPage() {
                 </p>
               </div>
             )}
+            {!orgSettings.first_fiscal_year_end && (
+              <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-md">
+                <i className="ti ti-alert-triangle text-amber-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                <p className="text-xs text-amber-700">
+                  First fiscal year end is not set yet. Set it on the{" "}
+                  <a href="/dashboard/business/setup/organisation" className="underline font-medium">
+                    Organisation → Identity
+                  </a>{" "}
+                  tab — start month/day below are derived from it automatically.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4 max-w-lg">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Start month (1–12)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={orgSettings.fiscal_year_start_month ?? ""}
-                  onChange={(e) =>
-                    setOrgSettings((s) => ({ ...s, fiscal_year_start_month: e.target.value ? +e.target.value : undefined }))
-                  }
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Start day (1–31)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={orgSettings.fiscal_year_start_day ?? ""}
-                  onChange={(e) =>
-                    setOrgSettings((s) => ({ ...s, fiscal_year_start_day: e.target.value ? +e.target.value : undefined }))
-                  }
-                  className={inputCls}
-                />
-              </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Year name format</label>
                 <select
@@ -737,7 +756,7 @@ export default function PeriodsPage() {
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     {uniqueFYs.map((fy) => (
-                      <option key={fy} value={fy}>{formatFY(fy, fmt, orgSettings.fiscal_year_start_month)}</option>
+                      <option key={fy} value={fy}>{formatFY(fy, fmt, orgSettings.fiscal_year_start_month, periods.filter((p) => p.fiscal_year === fy))}</option>
                     ))}
                   </select>
                 </div>
@@ -826,7 +845,7 @@ export default function PeriodsPage() {
           {selectedFY && decPeriod && (
             <section className="border border-gray-200 rounded-lg p-4 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-800">Year-end close — {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)}</h2>
+                <h2 className="text-sm font-semibold text-gray-800">Year-end close — {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)}</h2>
                 {loadingFyState && <span className="text-xs text-gray-400">Loading…</span>}
               </div>
 
@@ -854,7 +873,7 @@ export default function PeriodsPage() {
                   {fyState.status === "OPEN" && (
                     <div className="space-y-2">
                       <p className="text-xs text-gray-600">
-                        <strong>Stage 1 — Management close:</strong> hard-close December first, then click to roll the year.
+                        <strong>Stage 1 — Management close:</strong> hard-close {decPeriod?.period_name ?? "the final period"} first, then click to roll the year.
                         The new fiscal year remains open and runs normally while audit proceeds.
                       </p>
                       <button
@@ -867,7 +886,7 @@ export default function PeriodsPage() {
                         {closingMgmt ? "Processing…" : "Management close"}
                       </button>
                       {!canManagementClose && (
-                        <p className="text-xs text-amber-600">December must be hard-closed before management close.</p>
+                        <p className="text-xs text-amber-600">{decPeriod?.period_name ?? "The final period"} must be hard-closed before management close.</p>
                       )}
                     </div>
                   )}
@@ -907,7 +926,7 @@ export default function PeriodsPage() {
                       <div className="pt-1 border-t border-amber-200">
                         <p className="text-xs text-gray-600 mb-2">
                           <strong>Stage 2 — Statutory close (permanent):</strong> permanently locks this fiscal year.
-                          All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)} will be locked for posting and reopen. This cannot be undone.
+                          All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)} will be locked for posting and reopen. This cannot be undone.
                         </p>
                         <div className="flex items-center gap-3">
                           <button
@@ -937,7 +956,7 @@ export default function PeriodsPage() {
                           {fyState.statutory_closed_at
                             ? new Date(fyState.statutory_closed_at).toLocaleDateString()
                             : ""}
-                          . All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month)} are locked for posting and reopen.
+                          . All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)} are locked for posting and reopen.
                         </p>
                       </div>
                     </div>
@@ -1217,7 +1236,7 @@ export default function PeriodsPage() {
                 <option value="">— select —</option>
                 {periods.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.period_name} ({formatFY(p.fiscal_year, fmt, orgSettings.fiscal_year_start_month)})
+                    {p.period_name} ({formatFY(p.fiscal_year, fmt, orgSettings.fiscal_year_start_month, periods.filter((pp) => pp.fiscal_year === p.fiscal_year))})
                   </option>
                 ))}
               </select>

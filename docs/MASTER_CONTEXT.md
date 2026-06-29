@@ -202,6 +202,7 @@ Architectural invariants that are durable decisions (the WHY):
 - **Cost center source of truth:** cost centers live in `org_structure`, NOT in `dimension_values`. Both `employees.cost_center_id` and `cost_center_config.cost_center_id` FK to `org_structure.id`.
 - **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusively in `tenant_org_config`. `tenant_fx_config` holds ONLY FX mechanics (rates, revaluation rules).
 - **Environment isolation:** test tenants are shadow tenants with distinct `tenant_id` values — NOT an environment column on shared tables. This was the explicit architectural choice (Option 3 in the M9 design session) over environment columns (Option 1) and schema-per-env (Option 2).
+- **Tenant lifecycle direction (M9.0.1, 2026-06-29):** signup creates ONLY a test tenant; live is born second, only via explicit super-admin promotion. `parent_tenant_id` runs test→live (live points back at the test it came from) — the inverse of the original live-first/clone design. Test stays active permanently after go-live; it's never archived. See the M9.0.1 entry below (§8) for the full change.
 - **Expense→GL posting is synchronous, same-transaction** at final approval. This is intentional so a GL failure rolls back the approval — no partial state.
 
 ---
@@ -330,6 +331,31 @@ Full overhaul of period generation to be automatic and config-driven. No more ma
 - Handles all 5 new format codes plus legacy `{year}`/`{nextyear}`/`MMM` codes for backward compatibility.
 - Used by both auto-generation triggers and `parse_fy_start_year()`.
 
+### Period Management Hardening — duplicate-FY + stub-year fixes (2026-06-28, uncommitted)
+
+Two bugs found after the Period Management Enhancements above shipped, both root-caused to the same pattern: deriving behavior from *configuration* instead of *actual stored data*.
+
+1. **Duplicate fiscal years.** Changing `fiscal_year_name_format` or `fiscal_year_start_month` after periods already existed produced a new formatted FY label that didn't collide with the old one under the then-current `UQ(tenant_id, fiscal_year, period_no)` constraint — so the auto-generation triggers silently created a second, fully duplicate period set for the same calendar months. Fixed with an app-level date-range-overlap check plus a DB-level constraint change to `UQ(tenant_id, start_date)` (migration `k7l8m9n0o1p2`) — `start_date` is the one identity a period has that never changes regardless of label/format. `backend/scripts/cleanup_duplicate_periods.py` cleans existing duplicates before the migration can apply.
+2. **Stub first-year (registration-truncated) gaps.** A first FY clamped to the registration date (e.g. Aug–Dec, 5 periods) had no "Year-end close" section at all, and its dropdown showed an incorrect "Jan YYYY – Dec YYYY" label. Root cause: three places hardcoded the literal `period_no == 12` (or "December") as "the final period of the year" instead of computing `MAX(period_no)` for that fiscal year — `management_close` and `get_period_checklist` in `backend/app/routers/setup.py`, and `decPeriod` in the periods page. The FY label issue was a separate root cause in the same area: `formatFY()`'s `"MMM YYYY - MMM YYYY"` format derived the range purely from configured `fiscal_year_start_month`, ignoring the period's real dates — fixed by deriving the displayed range from the earliest/latest period `start_date`/`end_date` when periods are available.
+
+**Status:** code changes complete and verified (`ast.parse`/`py_compile` backend, `npx tsc --noEmit` frontend — zero errors). Migration applied to local DB. **Not yet committed/pushed** — see `docs/PROJECT_STATE.md` §8 for the exact file list pending commit.
+
+### M9.0.1 — Test-first environment flow inversion (2026-06-29, uncommitted)
+
+Reconciled the tenant environment architecture per `docs/BRIEF_M9_0_1_test_first_environment_flow.md`, flipping it from "live-first" (the original M9.0 shadow-tenant model — clone live → test at signup) to "test-first": signup now creates *only* a test tenant, and live is born second, only via an explicit super-admin promotion.
+
+**What changed:**
+- Signup (`auth.py`) creates a single tenant: `environment="test"`, `parent_tenant_id=NULL`, `lifecycle_status="in_implementation"`. No clone runs at signup.
+- Direction flip: live is created second, with `live.parent_tenant_id = test.id` — the inverse of the old model, where test pointed at live.
+- The Phase 3a promotion engine (`platform.py`, `/promotion/diff` + `/promotion/apply`) was unified into one bidirectional resolver (`_resolve_promotion_pair`) that handles both a tenant's first promotion (creates live, mirrors every `UserTenant` row test→live to auto-grant access, copies org/tax/fx config) and repeat promotion (existing Phase 3a CoA/dimension/account-mapping diff behavior, unchanged). Trigger remains super-admin only.
+- Test environment stays active permanently after go-live — it is never archived.
+- Three now-redundant promote-style endpoints were deprecated to `410 Gone` (not removed, so old clients get a clear signal): `/api/tenant/promote`, and a previously-undocumented duplicate `/api/platform/tenants/{id}/promote` found mid-implementation. `mark_go_live` (`/api/setup/go-live`) was kept but guarded — 400 if `tenant.environment != "live"`.
+- Frontend: the live/test environment toggle on the platform tenant detail page only renders once a live counterpart exists; `PromotionReviewDialog` branches its copy (title, warning banner, empty-diff state, success message, footer button) between "create live" (first promotion) and "promote" (repeat) framing; the business-side go-live page now routes to the platform promotion review instead of calling the old endpoint directly.
+- **Explicitly NOT done** (per the brief, locked decisions): no `environment` column added to any of the ~30 tenant-scoped tables; no transaction/audit/approval history copied in any promotion path.
+- **Not yet done:** retrofit of the existing Red Bull live+test pair (created under the old direction) to the new `parent_tenant_id` direction — script written (`backend/scripts/retrofit_red_bull_test_first.py`), dry-run by default with `--apply` to commit and an automatic `pg_dump` backup first. Logic-checked against fabricated tenant shapes (no live Postgres in this sandbox to test against for real). Must run against the user's real local Postgres, unreachable from this sandbox. Until that runs, Red Bull's pair keeps the old direction (test→live) — see `docs/PROJECT_STATE.md` §7.
+
+**Status:** code changes complete and verified (`py_compile` backend on all 5 touched files, `npx tsc --noEmit` frontend — zero errors across the whole project). Two unrelated pre-existing file-corruption issues (NUL-byte padding, stale bash-mount cache) were found and fixed in passing during verification, with no content lost. **Not yet committed/pushed.** Red Bull retrofit (task tracked separately) not started.
+
 ---
 
 ## 9. NEXT MILESTONE — M8.3 Backend + M8.4 Tax & Statutory
@@ -394,4 +420,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-06-28 (session end — Period Management Enhancements complete, commit 17491da). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-06-29 (M9.0.1 test-first environment flow inversion added, pending commit; last pushed commit 17491da). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

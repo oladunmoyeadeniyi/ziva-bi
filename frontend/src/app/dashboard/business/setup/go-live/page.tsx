@@ -1,11 +1,16 @@
 "use client";
 
 /**
- * Readiness & Go-live page — M8.2 Implementation Portal.
+ * Readiness & Go-live page — M8.2 Implementation Portal, updated for M9.0.1.
  *
  * Shows a checklist of all setup sections with blocking/non-blocking status.
- * "Mark tenant as live" button is enabled only when all blocking items are complete.
- * Requires consultant or super admin role to trigger go-live.
+ * Under the test-first model every tenant viewed here IS the test tenant
+ * (no live counterpart exists until first promotion). Going live is no
+ * longer a direct action on this page -- it routes to the platform
+ * promotion review (/platform/tenants/[id]), which creates or updates the
+ * live tenant via the unified promotion engine. The old direct
+ * POST /api/setup/go-live call is gone from this page because the backend
+ * now rejects it for any non-live tenant.
  *
  * Route: /dashboard/business/setup/go-live
  */
@@ -62,10 +67,6 @@ export default function GoLivePage() {
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [goingLive, setGoingLive] = useState(false);
-  const [liveSuccess, setLiveSuccess] = useState(false);
-
   const isConsultant = user?.is_super_admin;
 
   useEffect(() => {
@@ -82,21 +83,13 @@ export default function GoLivePage() {
 
   const allBlockingComplete = blockingIncomplete.length === 0;
 
-  const handleGoLive = async () => {
-    if (!accessToken) return;
-    setGoingLive(true);
-    try {
-      await apiFetch("/api/setup/go-live", {
-        method: "POST",
-        token: accessToken,
-      });
-      setLiveSuccess(true);
-      setShowConfirm(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Go-live failed");
-    } finally {
-      setGoingLive(false);
-    }
+  // M9.0.1: live environments are now created/updated exclusively via the
+  // platform promotion engine (super-admin only), not by flipping this
+  // tenant's own is_active/lifecycle_status in place. Navigate there instead
+  // of calling the old /api/setup/go-live endpoint directly -- that endpoint
+  // now 400s for any tenant that isn't already live.
+  const goToPromotionReview = () => {
+    if (user?.tenant_id) router.push(`/platform/tenants/${user.tenant_id}`);
   };
 
   if (loading) {
@@ -119,12 +112,6 @@ export default function GoLivePage() {
       </p>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
-
-      {liveSuccess && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
-          🚀 Tenant is now live! Welcome emails have been sent to all Power Admins.
-        </div>
-      )}
 
       {progress && (
         <>
@@ -186,17 +173,17 @@ export default function GoLivePage() {
             </table>
           </div>
 
-          {/* Go-live button */}
-          {isConsultant && !liveSuccess && (
+          {/* Go live -- routes to the platform promotion review (M9.0.1) */}
+          {isConsultant && (
             <div className="relative inline-block">
               <button
                 type="button"
                 disabled={!allBlockingComplete}
-                onClick={() => setShowConfirm(true)}
+                onClick={goToPromotionReview}
                 title={
                   !allBlockingComplete
                     ? `${blockingIncomplete.length} blocking item${blockingIncomplete.length !== 1 ? "s" : ""} still incomplete`
-                    : "Mark this tenant as live"
+                    : "Review and promote this tenant's configuration to live"
                 }
                 className={`px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${
                   allBlockingComplete
@@ -204,11 +191,17 @@ export default function GoLivePage() {
                     : "bg-gray-200 text-gray-400 cursor-not-allowed"
                 }`}
               >
-                Mark tenant as live
+                Review &amp; go live →
               </button>
               {!allBlockingComplete && (
                 <p className="mt-1.5 text-xs text-gray-500">
                   {blockingIncomplete.length} blocking item{blockingIncomplete.length !== 1 ? "s" : ""} still incomplete
+                </p>
+              )}
+              {allBlockingComplete && (
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Opens the platform promotion review, where a super admin creates or updates
+                  this tenant&apos;s live environment.
                 </p>
               )}
             </div>
@@ -220,36 +213,6 @@ export default function GoLivePage() {
             </p>
           )}
         </>
-      )}
-
-      {/* Confirmation modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-base font-semibold text-gray-900 mb-2">Confirm go-live</h2>
-            <p className="text-sm text-gray-600 mb-6">
-              This will activate the tenant for all users. Welcome emails will be sent to all Power
-              Admins. Are you sure?
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                type="button"
-                onClick={() => setShowConfirm(false)}
-                className="px-4 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleGoLive}
-                disabled={goingLive}
-                className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                {goingLive ? "Activating…" : "Yes, mark as live"}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

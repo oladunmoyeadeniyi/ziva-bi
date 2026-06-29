@@ -1,10 +1,14 @@
 "use client";
 
 /**
- * PromotionReviewDialog — Phase 3b
+ * PromotionReviewDialog — Phase 3b, extended for M9.0.1 (test-first flow).
  *
  * Full diff review UI for CoA / Dimensions / DimensionValues /
- * GL Dimension Requirements / Account Mappings promotion.
+ * GL Dimension Requirements / Account Mappings promotion. Doubles as the
+ * "create live environment" flow: when `tenantName` is null, no live
+ * tenant exists yet for this tenant, so every item in the diff is a CREATE
+ * and applying births the live tenant (org/tax/FX config and all current
+ * users are carried over automatically by the backend on every apply).
  *
  * Fetches a fresh diff on every open, renders items grouped by entity type
  * in collapsible sections (color-coded CREATE / UPDATE / DEACTIVATE), lets
@@ -47,7 +51,12 @@ interface PromotionApplyResult {
 
 export interface PromotionReviewDialogProps {
   tenantId: string;
-  tenantName: string;
+  /**
+   * Name of the live tenant, or `null` if no live counterpart exists yet
+   * (M9.0.1: this is the tenant's first-ever promotion — applying will
+   * create the live tenant rather than update an existing one).
+   */
+  tenantName: string | null;
   shadowName: string;
   onClose: () => void;
   accessToken: string;
@@ -340,6 +349,8 @@ export default function PromotionReviewDialog({
 
   const isEmpty = diff && diff.total_changes === 0;
   const acceptedCount = accepted.size;
+  // M9.0.1: no live tenant exists yet -- applying creates it for the first time.
+  const isFirstPromotion = !tenantName;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -350,13 +361,19 @@ export default function PromotionReviewDialog({
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-base font-semibold text-gray-900">
-                Review &amp; promote master data
+                {isFirstPromotion ? "Review & create live environment" : "Review & promote master data"}
               </h2>
               <p className="text-xs text-gray-500 mt-0.5">
                 <span className="font-medium">{shadowName}</span>
                 {" "}→{" "}
-                <span className="font-medium">{tenantName}</span>
-                {" (live)"}
+                {isFirstPromotion ? (
+                  <span className="font-medium italic">new live environment</span>
+                ) : (
+                  <>
+                    <span className="font-medium">{tenantName}</span>
+                    {" (live)"}
+                  </>
+                )}
               </p>
             </div>
             <button
@@ -368,11 +385,21 @@ export default function PromotionReviewDialog({
             </button>
           </div>
 
-          {/* Overwrite warning */}
+          {/* Overwrite / create warning */}
           {diff && !isEmpty && !applyResult && (
             <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
-              <strong>Warning:</strong> Promoting overwrites matching live rows with test values.
-              Deactivated items will be set inactive in live. This cannot be undone.
+              {isFirstPromotion ? (
+                <>
+                  <strong>This creates the live environment.</strong> Accepted items, plus
+                  organisation/tax/FX config, become the tenant&apos;s live data for the first
+                  time. All current test users are mirrored onto it. This cannot be undone.
+                </>
+              ) : (
+                <>
+                  <strong>Warning:</strong> Promoting overwrites matching live rows with test values.
+                  Deactivated items will be set inactive in live. This cannot be undone.
+                </>
+              )}
             </div>
           )}
         </div>
@@ -399,8 +426,20 @@ export default function PromotionReviewDialog({
           {!loading && isEmpty && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <i className="ti ti-circle-check text-green-500" style={{ fontSize: 36 }} />
-              <p className="text-sm font-medium text-gray-700">Live is already up to date with test.</p>
-              <p className="text-xs text-gray-400">No changes were detected across all entity types.</p>
+              {isFirstPromotion ? (
+                <>
+                  <p className="text-sm font-medium text-gray-700">Nothing to promote yet.</p>
+                  <p className="text-xs text-gray-400 max-w-sm text-center">
+                    No Chart of Accounts, Dimensions, or related master data exists in test yet.
+                    Add configuration in test before promoting.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-gray-700">Live is already up to date with test.</p>
+                  <p className="text-xs text-gray-400">No changes were detected across all entity types.</p>
+                </>
+              )}
             </div>
           )}
 
@@ -411,7 +450,9 @@ export default function PromotionReviewDialog({
                 <i className="ti ti-circle-check text-green-600 shrink-0" style={{ fontSize: 22 }} />
                 <div>
                   <p className="text-sm font-semibold text-green-800">
-                    Promotion complete — {applyResult.total_applied} change(s) applied.
+                    {isFirstPromotion
+                      ? `Live environment created — ${applyResult.total_applied} item(s) applied.`
+                      : `Promotion complete — ${applyResult.total_applied} change(s) applied.`}
                   </p>
                   <p className="text-xs text-green-700 mt-0.5">{applyResult.message}</p>
                 </div>
@@ -516,8 +557,10 @@ export default function PromotionReviewDialog({
                 className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
                 {applying
-                  ? "Promoting…"
-                  : `Promote ${acceptedCount} accepted change${acceptedCount !== 1 ? "s" : ""}`}
+                  ? (isFirstPromotion ? "Creating live…" : "Promoting…")
+                  : isFirstPromotion
+                    ? `Create live with ${acceptedCount} accepted item${acceptedCount !== 1 ? "s" : ""}`
+                    : `Promote ${acceptedCount} accepted change${acceptedCount !== 1 ? "s" : ""}`}
               </button>
             )}
           </div>

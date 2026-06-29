@@ -12,9 +12,10 @@ Endpoints:
     POST  /api/platform/tenants/{tenant_id}/suspend      Suspend tenant (blocks login)
     POST  /api/platform/tenants/{tenant_id}/reactivate   Restore prior lifecycle state
 
-Default list scope: LIVE tenants only (environment="live"). Use ?environment=test
-or ?environment=all to widen. Test shadows (parent_tenant_id IS NOT NULL) are
-excluded from the live default to keep the list uncluttered.
+Default list scope: LIVE tenants only (environment="live"), regardless of
+parent_tenant_id — a live tenant born from promotion (M9.0.1) has
+parent_tenant_id pointing at its test origin and still appears here. Use
+?environment=test or ?environment=all to widen.
 
 Suspend idempotency: POST /suspend on an already-suspended tenant returns 409.
 """
@@ -344,6 +345,24 @@ async def get_tenant(
                 lifecycle_status=shadow.lifecycle_status,
             )
 
+    # ── Live environment (M9.0.1 — if test tenant with a born-live counterpart) ─
+    live_env: TestEnvSummary | None = None
+    if tenant.environment == "test":
+        live_res = await db.execute(
+            select(Tenant).where(
+                Tenant.parent_tenant_id == tenant_id,
+                Tenant.environment == "live",  # type: ignore[arg-type]
+            )
+        )
+        live_row = live_res.scalar_one_or_none()
+        if live_row:
+            live_env = TestEnvSummary(
+                id=str(live_row.id),
+                name=live_row.name,
+                slug=live_row.slug,
+                lifecycle_status=live_row.lifecycle_status,
+            )
+
     return TenantDetail(
         id=str(tenant.id),
         name=tenant.name,
@@ -357,6 +376,7 @@ async def get_tenant(
         user_count=len(users),
         active_module_count=active_module_count,
         users=users,
+        live_environment=live_env,
         test_environment=test_env,
         created_at=tenant.created_at,
         updated_at=tenant.updated_at,
@@ -552,9 +572,9 @@ async def platform_create_test_environment(
     )
 
 
-# ── Promote config test → live (SA proxy) ─────────────────────────────────────
+# ── Promote config test → live (SA proxy) — DEPRECATED M9.0.1 ────────────────
 
-@router.post("/tenants/{tenant_id}/promote", response_model=PromoteResponse)
+@router.post("/tenants/{tenant_id}/promote", response_model=PromoteResponse, deprecated=True)
 async def platform_promote(
     tenant_id: uuid.UUID,
     data: PromoteRequest,
@@ -562,148 +582,29 @@ async def platform_promote(
     db: AsyncSession = Depends(get_db),
 ) -> PromoteResponse:
     """
-    Super Admin proxy — copy selected config sections from the tenant's test shadow to live.
+    DEPRECATED (M9.0.1) — superseded by the unified platform promotion engine.
 
-    Callable from the platform portal where the SA token has no tenant_id.
-    tenant_id must be the LIVE tenant; this endpoint locates the test shadow automatically.
-    Guard: super admin only.
-
-    Implemented sections (copied test → live):
-        org_config  — TenantOrgConfig (all identity/fiscal/branding fields)
-        tax         — TenantTaxConfig (VAT/WHT/PAYE JSONB blobs)
-        fx          — TenantFxConfig  (FX rates, revaluation rules)
-
-    Deferred (returned in PromoteResponse.deferred, not copied):
-        chart_of_accounts — internal FK tree requires id remapping
-        dimensions        — dimension_value → dimension FK requires id remapping
-        periods           — operational state machine, not pure config
+    This was a Super Admin proxy that copied org_config/tax/fx from a tenant's
+    test shadow to its (already-existing) live tenant. Two problems under the
+    test-first model: (1) it required `live_tenant.environment == "live"` —
+    impossible to call pre-first-promotion, since every tenant starts test-only;
+    (2) its org/tax/fx copy logic is now redundant with `_copy_flat_config`,
+    which `platform_promotion_apply` below calls unconditionally on every
+    promotion (first or repeat). Use that engine instead:
+        POST /api/platform/tenants/{tenant_id}/promotion/diff
+        POST /api/platform/tenants/{tenant_id}/promotion/apply
+    `tenant_id` may be either the test or the live tenant's id — both resolve
+    to the same pair (see `_resolve_promotion_pair`).
     """
     _sa(current_user)
-
-    live_tenant = await _get_tenant_or_404(tenant_id, db)
-    if live_tenant.environment != "live":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Target tenant must be the live tenant.",
-        )
-
-    shadow_res = await db.execute(
-        select(Tenant).where(
-            Tenant.parent_tenant_id == tenant_id,
-            Tenant.environment == "test",  # type: ignore[arg-type]
-        )
-    )
-    shadow = shadow_res.scalar_one_or_none()
-    if not shadow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No test environment found for this tenant. Create one first.",
-        )
-
-    from app.models.setup import TenantFxConfig, TenantOrgConfig, TenantTaxConfig
-
-    _DEFERRED = {"chart_of_accounts", "dimensions", "periods"}
-    promoted: list[str] = []
-    deferred: list[str] = []
-
-    for section in data.sections:
-        if section in _DEFERRED:
-            deferred.append(section)
-            continue
-
-        if section == "org_config":
-            test_cfg_res = await db.execute(
-                select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == shadow.id)
-            )
-            test_cfg = test_cfg_res.scalar_one_or_none()
-            if test_cfg:
-                live_cfg_res = await db.execute(
-                    select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant_id)
-                )
-                live_cfg = live_cfg_res.scalar_one_or_none()
-                _ORG_FIELDS = [
-                    "legal_name", "rc_number", "date_of_registration", "commencement_date",
-                    "company_type", "industry", "tin", "vat_reg_number", "country",
-                    "registered_address", "operating_address", "company_phone", "company_email",
-                    "website", "external_auditor", "group_structure", "parent_company_name",
-                    "functional_currency", "reporting_currency", "enabled_currencies",
-                    "authorised_share_capital", "fiscal_year_start_month", "fiscal_year_start_day",
-                    "fiscal_year_name_format", "period_closing_frequency", "branding",
-                    "org_configuration", "block_journal_into_open_prior", "default_audit_grace_months",
-                ]
-                if live_cfg:
-                    for f in _ORG_FIELDS:
-                        setattr(live_cfg, f, getattr(test_cfg, f))
-                else:
-                    new_cfg = TenantOrgConfig(tenant_id=tenant_id)
-                    for f in _ORG_FIELDS:
-                        setattr(new_cfg, f, getattr(test_cfg, f))
-                    db.add(new_cfg)
-            promoted.append("org_config")
-
-        elif section == "tax":
-            test_tax_res = await db.execute(
-                select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == shadow.id)
-            )
-            test_tax = test_tax_res.scalar_one_or_none()
-            if test_tax:
-                live_tax_res = await db.execute(
-                    select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == tenant_id)
-                )
-                live_tax = live_tax_res.scalar_one_or_none()
-                _TAX_FIELDS = ["vat_config", "wht_config", "paye_config", "other_statutory"]
-                if live_tax:
-                    for f in _TAX_FIELDS:
-                        setattr(live_tax, f, getattr(test_tax, f))
-                else:
-                    new_tax = TenantTaxConfig(tenant_id=tenant_id)
-                    for f in _TAX_FIELDS:
-                        setattr(new_tax, f, getattr(test_tax, f))
-                    db.add(new_tax)
-            promoted.append("tax")
-
-        elif section == "fx":
-            test_fx_res = await db.execute(
-                select(TenantFxConfig).where(TenantFxConfig.tenant_id == shadow.id)
-            )
-            test_fx = test_fx_res.scalar_one_or_none()
-            if test_fx:
-                live_fx_res = await db.execute(
-                    select(TenantFxConfig).where(TenantFxConfig.tenant_id == tenant_id)
-                )
-                live_fx = live_fx_res.scalar_one_or_none()
-                _FX_FIELDS = ["fx_rates", "revaluation_rules"]
-                if live_fx:
-                    for f in _FX_FIELDS:
-                        setattr(live_fx, f, getattr(test_fx, f))
-                else:
-                    new_fx = TenantFxConfig(tenant_id=tenant_id)
-                    for f in _FX_FIELDS:
-                        setattr(new_fx, f, getattr(test_fx, f))
-                    db.add(new_fx)
-            promoted.append("fx")
-
-    await db.flush()
-    await _log(
-        "platform.config.promoted",
-        current_user.user_id,
-        tenant_id,
-        {"promoted": promoted, "deferred": deferred, "shadow_id": str(shadow.id)},
-        db,
-    )
-
-    promoted_labels = {"org_config": "Organisation config", "tax": "Tax config", "fx": "FX config"}
-    deferred_labels = {
-        "chart_of_accounts": "Chart of Accounts",
-        "dimensions": "Dimensions",
-        "periods": "Accounting periods",
-    }
-    msg_promoted = ", ".join(promoted_labels.get(s, s) for s in promoted) or "nothing"
-    msg_deferred = ", ".join(deferred_labels.get(s, s) for s in deferred) or "none"
-    return PromoteResponse(
-        promoted=promoted,
-        deferred=deferred,
-        message=f"Promoted: {msg_promoted}. Deferred (require manual handling): {msg_deferred}.",
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "This endpoint is deprecated. Promotion (org_config/tax/fx, and creation "
+            "of the live tenant on first promotion) is now handled by the platform "
+            "promotion engine: POST /api/platform/tenants/{tenant_id}/promotion/diff "
+            "then POST .../promotion/apply."
+        ),
     )
 
 
@@ -751,28 +652,42 @@ async def reactivate_tenant(
     )
 
 
-# ── Phase 3a: CoA / Dimensions promotion — diff + apply ──────────────────────
+# ── M9.0.1: CoA / Dimensions / config promotion — diff + apply ──────────────
+# Test-first model: signup creates only a test tenant. tenant_id passed to the
+# endpoints below may be EITHER environment -- if it is a test tenant with no
+# live counterpart yet, this is that tenant's FIRST promotion and live is born
+# here (never created empty). Repeat promotions (live already exists) behave
+# exactly as the original Phase 3a engine did. See
+# docs/BRIEF_M9_0_1_test_first_environment_flow.md.
 
-def _get_shadow(live_tenant: Tenant) -> None:
-    """Placeholder — shadow lookup is done inline in each endpoint."""
-    pass
-
-
-async def _require_live_with_shadow(
+async def _resolve_promotion_pair(
     tenant_id: uuid.UUID,
     db: AsyncSession,
-) -> tuple[Tenant, Tenant]:
+) -> tuple[Tenant, Tenant | None]:
     """
-    Load the live tenant and its test shadow.
+    Resolve (test_tenant, live_tenant_or_None) for a promotion diff/apply call.
 
-    Returns (live_tenant, shadow_tenant). Raises 404 if either is missing.
+    tenant_id may refer to either environment:
+      - TEST tenant: live is looked up via parent_tenant_id == tenant_id,
+        environment == "live". May be None -- that's the normal pre-go-live
+        state under the test-first model, not an error.
+      - LIVE tenant: test is the existing shadow via parent_tenant_id ==
+        tenant_id, environment == "test". Must exist (404 if not) -- same
+        guard the original Phase 3a engine used.
     """
-    live = await _get_tenant_or_404(tenant_id, db)
-    if live.environment != "live":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Target tenant must be a live tenant.",
+    tenant = await _get_tenant_or_404(tenant_id, db)
+
+    if tenant.environment == "test":
+        live_res = await db.execute(
+            select(Tenant).where(
+                Tenant.parent_tenant_id == tenant_id,
+                Tenant.environment == "live",  # type: ignore[arg-type]
+            )
         )
+        live = live_res.scalar_one_or_none()
+        return tenant, live
+
+    # tenant.environment == "live"
     shadow_res = await db.execute(
         select(Tenant).where(
             Tenant.parent_tenant_id == tenant_id,
@@ -785,7 +700,121 @@ async def _require_live_with_shadow(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No test environment exists for this tenant. Create one first.",
         )
-    return live, shadow
+    return shadow, tenant
+
+
+async def _copy_flat_config(
+    db: AsyncSession,
+    test_id: uuid.UUID,
+    live_id: uuid.UUID,
+) -> list[str]:
+    """
+    Copy the simple flat-row config sections (org_config, tax, fx) test -> live.
+
+    These are JSONB-blob rows with no internal FK tree, so unlike CoA/Dimensions
+    they need no id remapping -- always copied in full on every promotion call,
+    porting the exact behaviour of the now-deprecated simple
+    POST /api/tenant/promote endpoint. Returns the list of sections copied.
+
+    NOTE: periods, approval workflows, document rules, module settings, and
+    roles/permissions are NOT covered here -- promotion support for those
+    sections does not exist anywhere in the codebase yet and is tracked as a
+    follow-up (see brief), not silently dropped.
+    """
+    from app.models.setup import TenantFxConfig, TenantOrgConfig, TenantTaxConfig
+    from app.services.tenant_clone import _ORG_COPY_FIELDS
+
+    copied: list[str] = []
+
+    test_cfg_res = await db.execute(select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == test_id))
+    test_cfg = test_cfg_res.scalar_one_or_none()
+    if test_cfg:
+        live_cfg_res = await db.execute(select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == live_id))
+        live_cfg = live_cfg_res.scalar_one_or_none()
+        if live_cfg:
+            for f in _ORG_COPY_FIELDS:
+                setattr(live_cfg, f, getattr(test_cfg, f))
+        else:
+            new_cfg = TenantOrgConfig(tenant_id=live_id)
+            for f in _ORG_COPY_FIELDS:
+                setattr(new_cfg, f, getattr(test_cfg, f))
+            db.add(new_cfg)
+        copied.append("org_config")
+
+    test_tax_res = await db.execute(select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == test_id))
+    test_tax = test_tax_res.scalar_one_or_none()
+    if test_tax:
+        live_tax_res = await db.execute(select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == live_id))
+        live_tax = live_tax_res.scalar_one_or_none()
+        tax_fields = ["vat_config", "wht_config", "paye_config", "other_statutory"]
+        if live_tax:
+            for f in tax_fields:
+                setattr(live_tax, f, getattr(test_tax, f))
+        else:
+            new_tax = TenantTaxConfig(tenant_id=live_id)
+            for f in tax_fields:
+                setattr(new_tax, f, getattr(test_tax, f))
+            db.add(new_tax)
+        copied.append("tax")
+
+    test_fx_res = await db.execute(select(TenantFxConfig).where(TenantFxConfig.tenant_id == test_id))
+    test_fx = test_fx_res.scalar_one_or_none()
+    if test_fx:
+        live_fx_res = await db.execute(select(TenantFxConfig).where(TenantFxConfig.tenant_id == live_id))
+        live_fx = live_fx_res.scalar_one_or_none()
+        fx_fields = ["fx_rates", "revaluation_rules"]
+        if live_fx:
+            for f in fx_fields:
+                setattr(live_fx, f, getattr(test_fx, f))
+        else:
+            new_fx = TenantFxConfig(tenant_id=live_id)
+            for f in fx_fields:
+                setattr(new_fx, f, getattr(test_fx, f))
+            db.add(new_fx)
+        copied.append("fx")
+
+    return copied
+
+
+async def _create_live_from_test(db: AsyncSession, test_tenant: Tenant) -> Tenant:
+    """
+    Create the live Tenant row born from a test tenant's first promotion.
+
+    parent_tenant_id points back at the test tenant -- the inverse of the old
+    live-first direction (where parent_tenant_id lived on the test row).
+    Caller must flush() this before using live.id as an FK target for the
+    CoA/Dimensions/etc rows apply_promotion is about to insert.
+    """
+    import re as _re
+    import secrets as _secrets
+
+    def _make_slug(name: str) -> str:
+        return _re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:50] or "live"
+
+    base_name = test_tenant.name
+    if base_name.endswith(" (Test)"):
+        base_name = base_name[: -len(" (Test)")]
+
+    base_slug = _make_slug(base_name)
+    live_slug = base_slug
+    while True:
+        slug_check = await db.execute(select(Tenant).where(Tenant.slug == live_slug))
+        if slug_check.scalar_one_or_none() is None:
+            break
+        live_slug = f"{base_slug}-{_secrets.token_hex(3)}"
+
+    live = Tenant(
+        name=base_name,
+        country=test_tenant.country,
+        slug=live_slug,
+        environment="live",
+        parent_tenant_id=test_tenant.id,
+        lifecycle_status="live",
+        is_active=True,
+    )
+    db.add(live)
+    await db.flush()  # live.id must exist before FK-dependent inserts below
+    return live
 
 
 @router.post("/tenants/{tenant_id}/promotion/diff", response_model=PromotionDiff)
@@ -796,19 +825,28 @@ async def platform_promotion_diff(
 ) -> PromotionDiff:
     """
     Compute a read-only diff of CoA, Dimensions, DimensionValues, GLDimRequirements,
-    and AccountMappings between the test shadow and the live tenant.
+    and AccountMappings between the test tenant and its live counterpart.
+
+    tenant_id may be either environment (see _resolve_promotion_pair). If no
+    live tenant exists yet, every test-side row diffs as a CREATE -- this
+    previews what the tenant's first promotion (which births live) would do.
 
     Returns a structured PromotionDiff where each item has a stable item_id that
     the caller submits in the subsequent apply call to accept that change.
 
-    Guard: super admin only. Target must be a live tenant with an existing test shadow.
-    No DB writes — purely a preview / review step.
+    Guard: super admin only. No DB writes — purely a preview / review step.
+
+    NOTE: org_config / tax / fx are not represented as diff items -- they are
+    always copied in full on apply (see _copy_flat_config). Periods, approval
+    workflows, document rules, module settings, and roles/permissions are not
+    yet implemented for promotion at all (follow-up, not silently dropped).
     """
     _sa(current_user)
-    live, shadow = await _require_live_with_shadow(tenant_id, db)
+    test, live = await _resolve_promotion_pair(tenant_id, db)
+    effective_live_id = live.id if live else uuid.uuid4()
 
     from app.services.promotion_engine import compute_promotion_diff
-    diff, _ = await compute_promotion_diff(db, shadow.id, live.id)
+    diff, _ = await compute_promotion_diff(db, test.id, effective_live_id)
     return diff
 
 
@@ -820,14 +858,22 @@ async def platform_promotion_apply(
     db: AsyncSession = Depends(get_db),
 ) -> PromotionApplyResult:
     """
-    Apply a selection of promotion diff items to the live tenant.
+    Apply a selection of promotion diff items test -> live.
 
-    The server recomputes the diff fresh from the current DB state (ignoring any
-    client-supplied diff to prevent stale/tampered data). Only items whose item_id
-    appears in data.accepted_item_ids are applied.
+    tenant_id may be either environment (see _resolve_promotion_pair). If no
+    live tenant exists yet for this test tenant, this call CREATES it -- live
+    is born from promotion, never created empty (M9.0.1 locked decision). On
+    first creation: every UserTenant row on the test tenant is mirrored onto
+    the new live tenant (auto-grant) and lifecycle_status is set to "live".
+    On a repeat promotion (live already existed): behaves exactly as the
+    original Phase 3a engine -- diff/apply against the existing live tenant,
+    no new row, no UserTenant changes.
 
-    Dependency order: TenantDimension → ChartOfAccount → DimensionValue (2-pass
-    for cascade_value_id) → GLDimensionRequirement → TenantAccountMapping.
+    org_config / tax / fx are always copied in full (no item-level
+    accept/reject -- flat config blobs with no FK tree, same as the
+    deprecated simple promote endpoint). CoA / Dimensions / DimensionValues /
+    GLDimensionRequirements / AccountMappings only copy items whose item_id is
+    in data.accepted_item_ids.
 
     All-or-nothing: the entire apply runs inside get_db()'s transaction;
     any failure triggers a full rollback.
@@ -836,22 +882,48 @@ async def platform_promotion_apply(
     Guard: super admin only.
     """
     _sa(current_user)
-    live, shadow = await _require_live_with_shadow(tenant_id, db)
+    test, live = await _resolve_promotion_pair(tenant_id, db)
+
+    born_live = False
+    if live is None:
+        live = await _create_live_from_test(db, test)
+        born_live = True
 
     from app.services.promotion_engine import apply_promotion
-    result = await apply_promotion(db, shadow.id, live.id, data)
+    result = await apply_promotion(db, test.id, live.id, data)
+
+    flat_copied = await _copy_flat_config(db, test.id, live.id)
+
+    if born_live:
+        # Auto-grant: mirror every UserTenant row from test -> the new live tenant.
+        test_uts_res = await db.execute(select(UserTenant).where(UserTenant.tenant_id == test.id))
+        for test_ut in test_uts_res.scalars().all():
+            db.add(UserTenant(
+                user_id=test_ut.user_id,
+                tenant_id=live.id,
+                password_hash=test_ut.password_hash,
+                is_active=test_ut.is_active,
+                role_tier=test_ut.role_tier,
+            ))
+    else:
+        # Repeat promotion -- live already existed; keep it live (no-op if already so).
+        live.lifecycle_status = "live"
+
+    await db.flush()
 
     await _log(
         "platform.promotion.config_applied",
         current_user.user_id,
-        tenant_id,
+        live.id,
         {
-            "shadow_id":      str(shadow.id),
-            "accepted_count": len(data.accepted_item_ids),
-            "created":        result.created,
-            "updated":        result.updated,
-            "deactivated":    result.deactivated,
-            "total_applied":  result.total_applied,
+            "test_tenant_id":  str(test.id),
+            "born_live":       born_live,
+            "accepted_count":  len(data.accepted_item_ids),
+            "flat_copied":     flat_copied,
+            "created":         result.created,
+            "updated":         result.updated,
+            "deactivated":     result.deactivated,
+            "total_applied":   result.total_applied,
         },
         db,
     )

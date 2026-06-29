@@ -413,9 +413,18 @@ class AccountingPeriod(Base):
     )
 
     __table_args__ = (
+        # Constrained on start_date, NOT fiscal_year — fiscal_year is a *formatted
+        # display label* (see _build_fy_label in routers/setup.py) that changes
+        # whenever fiscal_year_name_format or fiscal_year_start_month changes.
+        # A label-based constraint let format changes silently create a second,
+        # fully duplicate set of periods for the same months under a new label.
+        # start_date is the one identity a period actually has that never
+        # changes once generated, so this makes duplicate periods for the same
+        # date range impossible at the DB level regardless of future label/
+        # format changes. See migration k7l8m9n0o1p2.
         UniqueConstraint(
-            "tenant_id", "fiscal_year", "period_no",
-            name="uq_accounting_periods_tenant_year_no"
+            "tenant_id", "start_date",
+            name="uq_accounting_periods_tenant_start_date"
         ),
     )
 

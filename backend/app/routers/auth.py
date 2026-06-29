@@ -236,10 +236,18 @@ async def signup(
     if data.account_type == "business":
         assert data.company_name and data.company_country  # validated by schema
         slug = await _unique_slug(_make_slug(data.company_name), db)
+        # M9.0.1: test-first flow -- a new business tenant is provisioned as a
+        # TEST/shadow environment only. No live counterpart is created here.
+        # Live is born later, the first time this tenant's validated config is
+        # promoted (see app/services/promotion_engine.py + platform.py promotion
+        # endpoints). A live tenant with no configuration is impossible by design.
         tenant = Tenant(
             name=data.company_name.strip(),
             country=data.company_country,
             slug=slug,
+            environment="test",
+            parent_tenant_id=None,
+            lifecycle_status="in_implementation",
         )
         db.add(tenant)
         await db.flush()  # get tenant.id

@@ -271,135 +271,32 @@ async def create_test_environment(
 # (status machine), not pure config, so they are also deferred.
 _DEFERRED_SECTIONS = {"chart_of_accounts", "dimensions", "periods"}
 
-@router.post("/promote", response_model=PromoteResponse)
+@router.post("/promote", response_model=PromoteResponse, deprecated=True)
 async def promote(
     data: PromoteRequest,
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PromoteResponse:
     """
-    Copy selected config sections from the test tenant to the live parent.
+    DEPRECATED (M9.0.1) — superseded by the unified platform promotion engine.
 
-    Caller must be a consultant on a TEST tenant. Implemented sections:
-      - org_config   — TenantOrgConfig row (all config fields, no transactional data)
-      - tax          — TenantTaxConfig row (VAT/WHT/PAYE JSONB blobs)
-      - fx           — TenantFxConfig row (currencies, FX rates, revaluation rules)
+    org_config / tax / fx promotion now happens automatically as part of
+    POST /api/platform/tenants/{tenant_id}/promotion/apply, which also
+    creates the live tenant on a test tenant's first promotion and handles
+    CoA / Dimensions / DimensionValues / GLDimensionRequirements /
+    AccountMappings in the same transaction (see
+    app/routers/platform.py + app/services/promotion_engine.py).
 
-    Deferred (flagged, NOT implemented):
-      - chart_of_accounts — internal FK tree requires id remapping
-      - dimensions        — dimension_values → dimensions FK requires id remapping
-      - periods           — operational state machine, not pure config
+    Kept as a 410 stub (not removed/404) so any client still calling this
+    route gets a clear redirect message instead of a confusing not-found.
     """
-    test_tenant_id = _require_consultant(current_user)
-
-    # ── Verify caller is on a test tenant ────────────────────────────────────
-    test_res = await db.execute(select(Tenant).where(Tenant.id == test_tenant_id))
-    test_tenant: Tenant | None = test_res.scalar_one_or_none()
-    if not test_tenant or getattr(test_tenant, "environment", "live") != "test":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Promote must be called while on a TEST tenant. Switch environment first.",
-        )
-    if not test_tenant.parent_tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Test tenant has no live parent configured.",
-        )
-
-    live_tenant_id = test_tenant.parent_tenant_id
-
-    from app.models.setup import TenantFxConfig, TenantOrgConfig, TenantTaxConfig
-
-    promoted: list[str] = []
-    deferred: list[str] = []
-
-    for section in data.sections:
-        if section in _DEFERRED_SECTIONS:
-            deferred.append(section)
-            continue
-
-        if section == "org_config":
-            # Copy TenantOrgConfig test → live (upsert: update live row with test values)
-            test_cfg_res = await db.execute(
-                select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == test_tenant_id)
-            )
-            test_cfg = test_cfg_res.scalar_one_or_none()
-            if test_cfg:
-                live_cfg_res = await db.execute(
-                    select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == live_tenant_id)
-                )
-                live_cfg = live_cfg_res.scalar_one_or_none()
-                from app.services.tenant_clone import _ORG_COPY_FIELDS
-                if live_cfg:
-                    for f in _ORG_COPY_FIELDS:
-                        setattr(live_cfg, f, getattr(test_cfg, f))
-                else:
-                    new_cfg = TenantOrgConfig(tenant_id=live_tenant_id)
-                    for f in _ORG_COPY_FIELDS:
-                        setattr(new_cfg, f, getattr(test_cfg, f))
-                    db.add(new_cfg)
-            promoted.append("org_config")
-
-        elif section == "tax":
-            test_tax_res = await db.execute(
-                select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == test_tenant_id)
-            )
-            test_tax = test_tax_res.scalar_one_or_none()
-            if test_tax:
-                live_tax_res = await db.execute(
-                    select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == live_tenant_id)
-                )
-                live_tax = live_tax_res.scalar_one_or_none()
-                _TAX_COPY_FIELDS = ["vat_config", "wht_config", "paye_config", "other_statutory"]
-                if live_tax:
-                    for f in _TAX_COPY_FIELDS:
-                        setattr(live_tax, f, getattr(test_tax, f))
-                else:
-                    new_tax = TenantTaxConfig(tenant_id=live_tenant_id)
-                    for f in _TAX_COPY_FIELDS:
-                        setattr(new_tax, f, getattr(test_tax, f))
-                    db.add(new_tax)
-            promoted.append("tax")
-
-        elif section == "fx":
-            test_fx_res = await db.execute(
-                select(TenantFxConfig).where(TenantFxConfig.tenant_id == test_tenant_id)
-            )
-            test_fx = test_fx_res.scalar_one_or_none()
-            if test_fx:
-                live_fx_res = await db.execute(
-                    select(TenantFxConfig).where(TenantFxConfig.tenant_id == live_tenant_id)
-                )
-                live_fx = live_fx_res.scalar_one_or_none()
-                # functional_currency, reporting_currency, and enabled_currencies
-                # now live on tenant_org_config — they are copied via _ORG_COPY_FIELDS.
-                _FX_COPY_FIELDS = ["fx_rates", "revaluation_rules"]
-                if live_fx:
-                    for f in _FX_COPY_FIELDS:
-                        setattr(live_fx, f, getattr(test_fx, f))
-                else:
-                    new_fx = TenantFxConfig(tenant_id=live_tenant_id)
-                    for f in _FX_COPY_FIELDS:
-                        setattr(new_fx, f, getattr(test_fx, f))
-                    db.add(new_fx)
-            promoted.append("fx")
-
-    await db.flush()
-
-    # ── Write audit log entry ─────────────────────────────────────────────────
-    db.add(AuditLog(
-        event_type="test.promoted",
-        user_id=current_user.user_id,
-        tenant_id=live_tenant_id,
-        log_metadata={"promoted": promoted, "deferred": deferred, "source_tenant": str(test_tenant_id)},
-    ))
-
-    return PromoteResponse(
-        promoted=promoted,
-        deferred=deferred,
-        message=(
-            f"Promoted: {', '.join(promoted) or 'none'}. "
-            f"Deferred (require id remapping — not yet implemented): {', '.join(deferred) or 'none'}."
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "This endpoint is deprecated. Promotion (org_config/tax/fx, and "
+            "creation of the live tenant on first promotion) is now handled by "
+            "the platform promotion engine: POST /api/platform/tenants/{tenant_id}/"
+            "promotion/diff then POST .../promotion/apply (super-admin only)."
         ),
     )
 

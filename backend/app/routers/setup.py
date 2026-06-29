@@ -644,7 +644,7 @@ async def patch_org(
                 status_code=400,
                 detail="Set registration or commencement date before fiscal year end.",
             )
-        max_fy_end = date(anchor.year + 1, anchor.month, anchor.day) - timedelta(days=1)
+        max_fy_end = date(anchor.year + 2, anchor.month, anchor.day) - timedelta(days=1)
         if not (anchor <= fye <= max_fy_end):
             raise HTTPException(
                 status_code=400,
@@ -685,11 +685,15 @@ async def patch_org(
     # discovery moment — the admin just configured the FY, so generate immediately.
     # All validations (registration floor, stub year, etc.) are inside the helper.
     current_year = date.today().year
-    current_label = _build_fy_label(org.fiscal_year_name_format, current_year, org.fiscal_year_start_month or 1)
+    # Idempotency check is by date-range overlap, not by formatted label string —
+    # the label (fiscal_year) embeds start_month/format and can change between
+    # saves (e.g. start_month re-derived from a new first_fiscal_year_end), which
+    # would otherwise make this check miss the existing year and double-generate.
     existing_current = await db.execute(
         select(AccountingPeriod).where(
             AccountingPeriod.tenant_id == tenant_id,
-            AccountingPeriod.fiscal_year == current_label,
+            AccountingPeriod.start_date <= date(current_year, 12, 31),
+            AccountingPeriod.end_date >= date(current_year, 1, 1),
         ).limit(1)
     )
     if not existing_current.scalar_one_or_none():
@@ -1602,11 +1606,13 @@ async def hard_close_period(
                 )
                 org = org_result.scalar_one_or_none()
                 if org:
-                    next_label = _build_fy_label(org.fiscal_year_name_format, next_year, org.fiscal_year_start_month or 1)
+                    # Same date-range overlap check as Trigger 1 — avoids
+                    # double-generation if the label format/start_month changed.
                     next_existing = await db.execute(
                         select(AccountingPeriod).where(
                             AccountingPeriod.tenant_id == tenant_id,
-                            AccountingPeriod.fiscal_year == next_label,
+                            AccountingPeriod.start_date <= date(next_year, 12, 31),
+                            AccountingPeriod.end_date >= date(next_year, 1, 1),
                         ).limit(1)
                     )
                     if not next_existing.scalar_one_or_none():
@@ -1745,7 +1751,11 @@ async def management_close(
     """
     Stage 1 of year-end close: management close of a fiscal year.
 
-    Precondition: December (period_no 12) of the FY must be HARD_CLOSED.
+    Precondition: the FINAL period of the FY (highest period_no — December in a
+    normal 12-month year, but an earlier month for a registration-truncated stub
+    first year) must be HARD_CLOSED. Never hardcode period_no == 12 here: a stub
+    year can have fewer than 12 periods and would never satisfy that check,
+    permanently blocking management close for that year.
     Transitions FiscalYearState OPEN → AUDIT_PENDING. Sets audit_grace_expires_at.
     Sets retained_earnings_rolled=True; actual GL roll-forward journal is stubbed below.
     Writes a MANAGEMENT_CLOSE PeriodAuditLog entry.
@@ -1768,19 +1778,24 @@ async def management_close(
             detail=f"Fiscal year {fiscal_year} is already in status {fy.status}.",
         )
 
-    # December (period_no 12) must be HARD_CLOSED before management close.
-    dec_result = await db.execute(
-        select(AccountingPeriod).where(
+    # The FINAL period of the FY (highest period_no, NOT a hardcoded 12 — a
+    # stub first year clamped to the registration date can have fewer than 12
+    # periods) must be HARD_CLOSED before management close.
+    last_period_result = await db.execute(
+        select(AccountingPeriod)
+        .where(
             AccountingPeriod.tenant_id == tenant_id,
             AccountingPeriod.fiscal_year == fiscal_year,
-            AccountingPeriod.period_no == 12,
         )
+        .order_by(AccountingPeriod.period_no.desc())
+        .limit(1)
     )
-    dec = dec_result.scalar_one_or_none()
-    if not dec or dec.status != "HARD_CLOSED":
+    last_period = last_period_result.scalar_one_or_none()
+    if not last_period or last_period.status != "HARD_CLOSED":
+        period_label = last_period.period_name if last_period else "the final period"
         raise HTTPException(
             status_code=409,
-            detail="December (period 12) must be hard-closed before management close.",
+            detail=f"{period_label} must be hard-closed before management close.",
         )
 
     now = datetime.now(timezone.utc)
@@ -2514,7 +2529,12 @@ async def get_period_checklist(
     Return applicable checklist items for this period, with their current completion state.
 
     "Applicable" = active items where applies_to=='every_close' OR
-    (applies_to=='year_end_only' AND period.period_no==12).
+    (applies_to=='year_end_only' AND this is the FY's final period).
+
+    "Final period" is the period with the highest period_no for that fiscal_year,
+    NOT a hardcoded period_no==12 — a registration-truncated stub first year can
+    have fewer than 12 periods, and its real year-end period must still pick up
+    year_end_only checklist items.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
@@ -2529,7 +2549,14 @@ async def get_period_checklist(
     if not period:
         raise HTTPException(status_code=404, detail="Period not found.")
 
-    is_year_end = period.period_no == 12
+    max_period_no_result = await db.execute(
+        select(sqlfunc.max(AccountingPeriod.period_no)).where(
+            AccountingPeriod.tenant_id == tenant_id,
+            AccountingPeriod.fiscal_year == period.fiscal_year,
+        )
+    )
+    max_period_no = max_period_no_result.scalar_one_or_none()
+    is_year_end = max_period_no is not None and period.period_no == max_period_no
     items_stmt = (
         select(CloseChecklistItem)
         .where(
@@ -3306,6 +3333,26 @@ async def mark_go_live(
     tenant = result.scalar_one_or_none()
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found.")
+
+    # M9.0.1: under the test-first model, this endpoint's caller is on the
+    # current tenant from their own JWT -- pre-promotion that tenant IS the
+    # test tenant (no live counterpart exists yet). Flipping is_active /
+    # lifecycle_status on it in place would corrupt the test tenant instead of
+    # creating a separate live one. Live is now only ever born via the
+    # platform promotion engine's first apply call (app/routers/platform.py
+    # platform_promotion_apply -> _create_live_from_test). This guard makes
+    # that the only path; mark_go_live stays valid only for an
+    # already-live tenant (e.g. a manual re-flip after a lifecycle edit).
+    if tenant.environment != "live":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This tenant has no live environment yet. Live is created by "
+                "promoting validated test configuration: POST "
+                "/api/platform/tenants/{tenant_id}/promotion/diff then "
+                ".../promotion/apply (super-admin only), not by go-live directly."
+            ),
+        )
 
     old_lifecycle = tenant.lifecycle_status
 
