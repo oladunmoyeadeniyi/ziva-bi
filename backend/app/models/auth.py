@@ -477,3 +477,55 @@ class AuditLog(Base):
 
     user: Mapped["User | None"] = relationship("User", back_populates="audit_logs")
     tenant: Mapped["Tenant | None"] = relationship("Tenant", back_populates="audit_logs")
+
+
+# ── M9.3b: User-level impersonation audit log ─────────────────────────────────
+
+class ImpersonationSession(Base):
+    """
+    Append-only audit record for every user-level impersonation session.
+
+    Created when a super admin enters a specific user's identity via
+    POST /api/platform/tenants/{tenant_id}/users/{user_id}/impersonate.
+    ended_at is set when POST /api/platform/impersonation/{session_id}/end
+    is called. No deletes or updates are permitted — enforce via service layer.
+
+    impersonator_role distinguishes the platform owner ("super_admin_owner")
+    from ordinary super admins ("super_admin") so the audit log is self-
+    contained without having to re-derive the distinction from settings.
+    """
+
+    __tablename__ = "impersonation_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    impersonator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    impersonator_role: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # "super_admin_owner" | "super_admin"
+    target_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    target_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    environment: Mapped[str] = mapped_column(String(10), nullable=False)   # "live" | "test"
+    entry_point: Mapped[str] = mapped_column(String(30), nullable=False)   # "user_list" | "employee_list"
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

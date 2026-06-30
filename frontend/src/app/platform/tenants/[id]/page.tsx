@@ -89,7 +89,7 @@ const inputCls =
 
 export default function TenantDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { user, accessToken, enterTenant } = useAuth();
+  const { user, accessToken, enterTenant, startUserImpersonation } = useAuth();
   const router = useRouter();
 
   const [tenant, setTenant] = useState<TenantDetail | null>(null);
@@ -106,6 +106,9 @@ export default function TenantDetailPage() {
 
   // Enter tenant
   const [entering, setEntering] = useState(false);
+
+  // User-level impersonation (M9.3b)
+  const [impersonatingUserId, setImpersonatingUserId] = useState<string | null>(null);
 
   // Test/live environment management (M9.0.1: promotion is the single mechanism
   // for both "create live" and "update live" — see PromotionReviewDialog below).
@@ -240,6 +243,23 @@ export default function TenantDetailPage() {
 
   const isSuspended = tenant.lifecycle_status === "suspended";
   const isConfigurable = ["trial", "in_implementation"].includes(tenant.lifecycle_status);
+
+  const doImpersonateUser = async (targetUserId: string) => {
+    if (!tenant) return;
+    setImpersonatingUserId(targetUserId);
+    setActionMsg(null);
+    try {
+      await startUserImpersonation(targetUserId, "user_list", {
+        tenantId: tenant.id,
+        tenantName: tenant.name,
+        environment: tenant.environment,
+      });
+      router.push("/dashboard/business");
+    } catch (e) {
+      setActionMsg({ type: "err", text: e instanceof Error ? e.message : "Impersonation failed" });
+      setImpersonatingUserId(null);
+    }
+  };
 
   const doEnter = async (env?: "live" | "test") => {
     if (!tenant) return;
@@ -580,7 +600,7 @@ export default function TenantDetailPage() {
           <table className="w-full text-xs">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                {["Name", "Email", "Role tier", "Active"].map((h) => (
+                {["Name", "Email", "Role tier", "Active", ""].map((h) => (
                   <th key={h} className="text-left py-2.5 px-4 font-medium text-gray-500">{h}</th>
                 ))}
               </tr>
@@ -595,6 +615,18 @@ export default function TenantDetailPage() {
                     <span className={u.is_active ? "text-green-600 font-medium" : "text-red-400"}>
                       {u.is_active ? "Yes" : "No"}
                     </span>
+                  </td>
+                  <td className="py-2.5 px-4">
+                    {user?.is_super_admin && u.is_active && (
+                      <button
+                        type="button"
+                        onClick={() => doImpersonateUser(u.id)}
+                        disabled={!!impersonatingUserId || entering}
+                        className="px-2 py-0.5 text-[11px] font-medium rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+                      >
+                        {impersonatingUserId === u.id ? "Entering…" : "Impersonate"}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

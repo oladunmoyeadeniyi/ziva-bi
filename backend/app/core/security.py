@@ -14,8 +14,10 @@ JWT access token payload:
         "session_id":        str(session_id),
         "is_super_admin":    bool,
         "environment":       "live" | "test",        # M9.0: active tenant environment
-        "impersonator_id":   str(user_id) | None,    # M9.3a: super admin who entered tenant
-        "impersonation_mode": "implementation" | "support" | None,  # M9.3a
+        "impersonator_id":         str(user_id) | None,    # M9.3a: super admin who entered tenant
+        "impersonation_mode":      "implementation" | "support" | None,  # M9.3a
+        "is_user_impersonation":   bool,                # M9.3b: True when acting as a specific user
+        "impersonation_session_id": str(uuid) | None,  # M9.3b: ImpersonationSession.id
         "type":              "access",
         "iat":               issued-at timestamp,
         "exp":               expiry timestamp

@@ -71,6 +71,9 @@ class EmployeeListItem(BaseModel):
     line_manager_name: str | None
     is_active: bool
     resumption_date: date | None
+    # M9.3b: UUID of the linked users row — None if the employee has no portal account.
+    # Populated by list_employees via a batch email→user_id lookup.
+    user_id: str | None = None
 
     model_config = {"from_attributes": True}
 

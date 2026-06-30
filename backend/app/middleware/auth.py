@@ -53,6 +53,9 @@ class CurrentUser:
     # M9.3a: impersonation — set when a super admin enters a tenant via /platform/enter
     impersonator_id: uuid.UUID | None = None
     impersonation_mode: str | None = None  # "implementation" | "support" | None
+    # M9.3b: user-level impersonation — set when the SA enters a specific user's identity
+    is_user_impersonation: bool = False
+    impersonation_session_id: uuid.UUID | None = None
 
 
 def block_if_readonly_impersonation(current_user: "CurrentUser") -> None:
@@ -71,6 +74,30 @@ def block_if_readonly_impersonation(current_user: "CurrentUser") -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Read-only support session — editing/posting is disabled on the live environment.",
         )
+
+
+def is_restricted_impersonation(current_user: "CurrentUser", settings: object) -> bool:
+    """
+    Returns True when sensitive personal financial fields should be masked.
+
+    Condition: user-level impersonation session AND live environment AND
+    the impersonator is NOT the platform owner.
+
+    Usage: call in any serializer or endpoint that returns salary, bank details,
+    TIN, or payroll data. Return None (or "****") instead of the real value
+    when this returns True.
+
+    No actual masking is applied yet — payroll/HR (M15) hasn't been built.
+    This helper is the hook; wire it into response serializers when M15 ships.
+    """
+    if not current_user.is_user_impersonation:
+        return False
+    if current_user.environment != "live":
+        return False
+    owner_id = getattr(settings, "owner_user_id", None)
+    if owner_id and current_user.impersonator_id == uuid.UUID(owner_id):
+        return False
+    return True
 
 
 def require_super_admin(current_user: "CurrentUser") -> "CurrentUser":
@@ -120,4 +147,6 @@ async def require_auth(
         environment=payload.get("environment", "live"),
         impersonator_id=uuid.UUID(payload["impersonator_id"]) if payload.get("impersonator_id") else None,
         impersonation_mode=payload.get("impersonation_mode"),
+        is_user_impersonation=payload.get("is_user_impersonation", False),
+        impersonation_session_id=uuid.UUID(payload["impersonation_session_id"]) if payload.get("impersonation_session_id") else None,
     )

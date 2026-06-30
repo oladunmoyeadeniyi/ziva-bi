@@ -54,10 +54,13 @@ export interface AuthUser {
 
 export interface ImpersonationState {
   token: string;
-  mode: "implementation" | "support";
+  mode: "implementation" | "support" | "user";
   environment: "live" | "test";
   tenantId: string;
   tenantName: string;
+  // Only set when mode === "user" (M9.3b user-level impersonation)
+  sessionId?: string;
+  targetUser?: { id: string; fullName: string; role: string | null };
 }
 
 interface AuthResponse {
@@ -74,6 +77,12 @@ interface EnterTenantResponse {
   environment: string;
   tenant_id: string;
   tenant_name: string;
+}
+
+interface UserImpersonateResponse {
+  access_token: string;
+  session_id: string;
+  target_user: { id: string; full_name: string; email: string; role: string | null };
 }
 
 export interface SignupData {
@@ -100,6 +109,27 @@ interface AuthContextType {
   enterTenant: (tenantId: string, environment?: "live" | "test") => Promise<void>;
   /** Clear impersonation and restore the base super-admin session. */
   exitImpersonation: () => void;
+  /**
+   * Enter a specific user's identity (M9.3b).
+   *
+   * Two calling contexts:
+   *  - From within an existing tenant context (Entry Point 2 — employee list):
+   *    tenantContext is omitted; tenant info is read from impersonation state.
+   *  - From the platform portal (Entry Point 1 — user list on tenant detail page):
+   *    the SA has no tenant context yet, so pass tenantContext explicitly.
+   *
+   * Navigating to /dashboard/business is the caller's responsibility.
+   */
+  startUserImpersonation: (
+    targetUserId: string,
+    entryPoint: "user_list" | "employee_list",
+    tenantContext?: { tenantId: string; tenantName: string; environment: string },
+  ) => Promise<void>;
+  /**
+   * Exit user-level impersonation and restore the tenant-level context (M9.3b).
+   * Calls the backend end-session endpoint, then restores the pre-impersonation token.
+   */
+  exitUserImpersonation: () => Promise<void>;
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -118,6 +148,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [impersonation, setImpersonation] = useState<ImpersonationState | null>(null);
+  // M9.3b: original SA token saved when user-level impersonation starts, so it can
+  // be restored when the SA exits user impersonation (returns to tenant context).
+  const [_originalSAToken, _setOriginalSAToken] = useState<string | null>(null);
 
   // Effective token exposed to consumers: impersonation token takes precedence.
   const accessToken = impersonation?.token ?? _accessToken;
@@ -270,9 +303,92 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const exitImpersonation = useCallback(() => {
     setImpersonation(null);
+    _setOriginalSAToken(null);
     sessionStorage.removeItem(IMPERSONATION_KEY);
     // accessToken automatically reverts to _accessToken (base super-admin token).
   }, []);
+
+  // M9.3b — user-level impersonation ─────────────────────────────────────────
+
+  const startUserImpersonation = useCallback(async (
+    targetUserId: string,
+    entryPoint: "user_list" | "employee_list",
+    tenantContext?: { tenantId: string; tenantName: string; environment: string },
+  ): Promise<void> => {
+    // Resolve which token and tenant info to use.
+    // Entry Point 1 (platform portal, no existing tenant context): use the base SA
+    // token and explicit tenantContext. Entry Point 2 (inside tenant): use the
+    // existing impersonation token and impersonation state for tenant info.
+    const callerToken = impersonation?.token ?? _accessToken;
+    const tenantId = tenantContext?.tenantId ?? impersonation?.tenantId;
+    const tenantName = tenantContext?.tenantName ?? impersonation?.tenantName ?? "";
+    const environment = tenantContext?.environment ?? impersonation?.environment ?? "live";
+
+    if (!callerToken) throw new Error("Not authenticated.");
+    if (!tenantId) throw new Error("No tenant context — pass tenantContext explicitly when calling from the platform portal.");
+
+    const res = await apiFetch<UserImpersonateResponse>(
+      `/api/platform/tenants/${tenantId}/users/${targetUserId}/impersonate`,
+      { method: "POST", token: callerToken, body: { entry_point: entryPoint } },
+    );
+
+    // Save the current token (tenant-level or base SA) so we can restore it on exit.
+    _setOriginalSAToken(callerToken);
+
+    const newImp: ImpersonationState = {
+      token: res.access_token,
+      mode: "user",
+      environment: environment as "live" | "test",
+      tenantId,
+      tenantName,
+      sessionId: res.session_id,
+      targetUser: {
+        id: res.target_user.id,
+        fullName: res.target_user.full_name,
+        role: res.target_user.role,
+      },
+    };
+
+    setImpersonation(newImp);
+    sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify(newImp));
+  }, [impersonation, _accessToken]);
+
+  const exitUserImpersonation = useCallback(async (): Promise<void> => {
+    const sessionId = impersonation?.sessionId;
+    const restoredToken = _originalSAToken;
+
+    // Best-effort: notify backend the session ended (use the original SA token).
+    if (sessionId && restoredToken) {
+      try {
+        await apiFetch(`/api/platform/impersonation/${sessionId}/end`, {
+          method: "POST",
+          token: restoredToken,
+        });
+      } catch {
+        // non-fatal — audit trail still has started_at; ended_at will just be null
+      }
+    }
+
+    // Restore tenant-level impersonation state using the saved token.
+    if (impersonation && restoredToken) {
+      const restoredImp: ImpersonationState = {
+        token: restoredToken,
+        mode: impersonation.mode === "user"
+          ? ("implementation" as const)  // fall back to implementation; caller can override
+          : impersonation.mode,
+        environment: impersonation.environment,
+        tenantId: impersonation.tenantId,
+        tenantName: impersonation.tenantName,
+      };
+      setImpersonation(restoredImp);
+      sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify(restoredImp));
+    } else {
+      setImpersonation(null);
+      sessionStorage.removeItem(IMPERSONATION_KEY);
+    }
+
+    _setOriginalSAToken(null);
+  }, [impersonation, _originalSAToken]);
 
   return (
     <AuthContext.Provider
@@ -288,6 +404,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshUser,
         enterTenant,
         exitImpersonation,
+        startUserImpersonation,
+        exitUserImpersonation,
       }}
     >
       {children}

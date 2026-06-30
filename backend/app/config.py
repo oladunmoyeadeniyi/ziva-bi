@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     app_name: str = "ZivaBI"
     debug: bool = False
 
+    # ── Platform owner ────────────────────────────────────────────────────────
+    # UUID of the Ziva BI platform owner. When set, this user's impersonation
+    # sessions in live environments are unrestricted (no sensitive field masking).
+    # If unset, all super admins are treated as non-owner (restricted in live).
+    owner_user_id: str | None = None
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_allowed_origins(cls, v: Any) -> list[str]:

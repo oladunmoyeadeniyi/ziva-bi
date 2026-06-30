@@ -13,6 +13,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import type { ImpersonationState } from "@/contexts/AuthContext";
+import ImpersonationUserBanner from "@/components/ImpersonationUserBanner";
 import { apiFetch } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 
@@ -121,7 +122,7 @@ export default function BusinessLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, accessToken, impersonation, exitImpersonation } = useAuth();
+  const { user, accessToken, impersonation, exitImpersonation, exitUserImpersonation } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [pendingCount, setPendingCount] = useState<number>(0);
@@ -227,14 +228,29 @@ export default function BusinessLayout({
   // for any authenticated business user regardless of role composition.
   const isExclusivelyAdmin = user?.is_tenant_admin && !user?.has_non_admin_role; // kept for future RBAC use; no longer gates the sidebar
 
+  // Fix A + K (M9.3b): in tenant-context mode (SA entered a tenant) but NOT in
+  // user-level impersonation, hide WORKSPACE + ACCOUNT — the SA is doing admin/
+  // diagnostic work, not acting as a normal employee. When mode === "user", the SA
+  // is seeing exactly what the target user sees, so WORKSPACE + ACCOUNT must show.
+  const hideWorkspace = !!impersonation && impersonation.mode !== "user";
+
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
 
-      {/* Impersonation banner — visible whenever a super admin is inside a tenant */}
+      {/* Tenant-context banner — visible whenever a SA is inside a tenant (all modes) */}
       {impersonation && (
         <ImpersonationBanner
           impersonation={impersonation}
           onExit={() => { exitImpersonation(); router.push("/platform"); }}
+        />
+      )}
+
+      {/* User-level impersonation banner (M9.3b) — stacked below the tenant banner */}
+      {impersonation?.mode === "user" && impersonation.targetUser && (
+        <ImpersonationUserBanner
+          fullName={impersonation.targetUser.fullName}
+          role={impersonation.targetUser.role}
+          onExit={async () => { await exitUserImpersonation(); }}
         />
       )}
 
@@ -245,25 +261,29 @@ export default function BusinessLayout({
         {/* Sidebar — 240px, scrolls independently */}
         <nav className="w-60 shrink-0 bg-gray-50 border-r border-gray-200 py-2 flex flex-col overflow-y-auto h-full">
 
-          {/* WORKSPACE — always visible for every business user (staff and admin) */}
-          <div className="px-2">
-            <SectionLabel label="Workspace" />
-            <NavLink href="/dashboard/business" label="Home" icon="home" exact />
-            <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
-            {/* RBAC: gate Approvals to approvers once RBAC is available */}
-            <NavLink
-              href="/dashboard/business/approvals"
-              label="Approvals"
-              icon="checks"
-              badge={pendingCount}
-            />
-          </div>
+          {/* WORKSPACE — hidden when SA is in tenant-context mode (not user impersonation) */}
+          {!hideWorkspace && (
+            <div className="px-2">
+              <SectionLabel label="Workspace" />
+              <NavLink href="/dashboard/business" label="Home" icon="home" exact />
+              <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
+              {/* RBAC: gate Approvals to approvers once RBAC is available */}
+              <NavLink
+                href="/dashboard/business/approvals"
+                label="Approvals"
+                icon="checks"
+                badge={pendingCount}
+              />
+            </div>
+          )}
 
-          {/* ACCOUNT — always visible */}
-          <div className="px-2">
-            <SectionLabel label="Account" />
-            <NavLink href="/dashboard/profile" label="Profile" icon="user" />
-          </div>
+          {/* ACCOUNT — hidden when SA is in tenant-context mode (not user impersonation) */}
+          {!hideWorkspace && (
+            <div className="px-2">
+              <SectionLabel label="Account" />
+              <NavLink href="/dashboard/profile" label="Profile" icon="user" />
+            </div>
+          )}
 
           {/* Admin setup sections */}
           {isAdmin && (

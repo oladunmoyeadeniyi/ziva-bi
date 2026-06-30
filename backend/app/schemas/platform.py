@@ -6,7 +6,7 @@ tenant lifecycle management. No tenant-scoped user should ever see these.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -180,4 +180,50 @@ class PromotionApplyResult(BaseModel):
     updated: dict[str, int]
     deactivated: dict[str, int]
     total_applied: int
+    message: str
+
+
+# ── M9.3b: User-level impersonation ──────────────────────────────────────────
+
+class UserImpersonateRequest(BaseModel):
+    """
+    Optional body for POST /api/platform/tenants/{tenant_id}/users/{user_id}/impersonate.
+
+    entry_point records how the impersonation was initiated for the audit trail.
+    Defaults to "user_list" (the Super Admin portal user list).
+    """
+
+    entry_point: Literal["user_list", "employee_list"] = "user_list"
+
+
+class ImpersonatedUserSummary(BaseModel):
+    """Compact view of the user being impersonated, returned in the token response."""
+
+    id: str
+    full_name: str
+    email: str
+    role: str | None
+
+
+class UserImpersonateResponse(BaseModel):
+    """
+    Returned by POST /api/platform/tenants/{tenant_id}/users/{user_id}/impersonate.
+
+    access_token: a short-lived JWT whose sub is the TARGET user (not the SA).
+                  The frontend stores this as the active token for the duration
+                  of the impersonation session.
+    session_id: the ImpersonationSession.id — pass to POST /impersonation/{id}/end.
+    target_user: compact display info for the banner ("You are viewing as …").
+    """
+
+    access_token: str
+    token_type: str = "bearer"
+    session_id: str
+    target_user: ImpersonatedUserSummary
+
+
+class ImpersonationEndResponse(BaseModel):
+    """Returned by POST /api/platform/impersonation/{session_id}/end."""
+
+    session_id: str
     message: str

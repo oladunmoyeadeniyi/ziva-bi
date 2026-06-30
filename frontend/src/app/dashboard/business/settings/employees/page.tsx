@@ -37,6 +37,8 @@ interface Employee {
   line_manager_name: string | null;
   is_active: boolean;
   resumption_date: string | null;
+  // M9.3b: UUID of the linked users row; null if the employee has no portal account.
+  user_id?: string | null;
 }
 
 interface CostCenterOption {
@@ -132,7 +134,7 @@ const selectCls = inputCls + " bg-white";
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 function EmployeesPage() {
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, startUserImpersonation } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
@@ -192,6 +194,9 @@ function EmployeesPage() {
   const [historyEmpId, setHistoryEmpId] = useState<string | null>(null);
   const [history, setHistory] = useState<EmployeeHistory | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // M9.3b: user-level impersonation from the employee list
+  const [impersonatingEmpId, setImpersonatingEmpId] = useState<string | null>(null);
 
   // Self-onboarding invite
   const [showInvite, setShowInvite] = useState(false);
@@ -684,6 +689,25 @@ function EmployeesPage() {
                           {emp.is_active && (
                             <button type="button" onClick={() => handleDeactivate(emp.id)}
                               className="text-xs text-red-500 hover:text-red-700 font-medium">Deactivate</button>
+                          )}
+                          {user?.is_super_admin && emp.is_active && emp.user_id && (
+                            <button
+                              type="button"
+                              disabled={!!impersonatingEmpId}
+                              onClick={async () => {
+                                if (!emp.user_id) return;
+                                setImpersonatingEmpId(emp.id);
+                                try {
+                                  await startUserImpersonation(emp.user_id, "employee_list");
+                                  router.push("/dashboard/business");
+                                } catch {
+                                  setImpersonatingEmpId(null);
+                                }
+                              }}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50"
+                            >
+                              {impersonatingEmpId === emp.id ? "Entering…" : "Impersonate"}
+                            </button>
                           )}
                         </div>
                       </td>

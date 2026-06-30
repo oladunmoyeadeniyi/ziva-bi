@@ -346,8 +346,21 @@ async def list_employees(
             | Employee.employee_code.ilike(term)
         )
 
-    result = await db.execute(q)
-    return [EmployeeListItem.from_orm(e) for e in result.scalars().all()]
+    rows = result.scalars().all()
+    items = [EmployeeListItem.from_orm(e) for e in rows]
+
+    # M9.3b: batch-resolve email → user_id so impersonation entry point works.
+    if items:
+        from app.models.auth import User as UserModel
+        emails = [it.email for it in items]
+        uid_rows = await db.execute(
+            select(UserModel.id, UserModel.email).where(UserModel.email.in_(emails))
+        )
+        email_to_uid = {row.email: str(row.id) for row in uid_rows}
+        for item in items:
+            item.user_id = email_to_uid.get(item.email)
+
+    return items
 
 
 @router.post("/employees", response_model=EmployeeResponse, status_code=status.HTTP_201_CREATED)

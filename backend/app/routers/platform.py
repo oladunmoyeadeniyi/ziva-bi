@@ -31,11 +31,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import create_access_token
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, require_super_admin
-from app.models.auth import AuditLog, Tenant, User, UserTenant
+from app.config import settings
+from app.models.auth import AuditLog, ImpersonationSession, Role, Tenant, User, UserRole, UserTenant
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
     EnterTenantRequest,
     EnterTenantResponse,
+    ImpersonationEndResponse,
+    ImpersonatedUserSummary,
     LifecycleUpdateRequest,
     PromotionApplyRequest,
     PromotionApplyResult,
@@ -45,6 +48,8 @@ from app.schemas.platform import (
     TenantListItem,
     TenantUserSummary,
     TestEnvSummary,
+    UserImpersonateRequest,
+    UserImpersonateResponse,
 )
 
 router = APIRouter(prefix="/api/platform", tags=["platform"])
@@ -208,6 +213,176 @@ async def enter_tenant(
         environment=environment,
         tenant_id=str(actual_tenant.id),
         tenant_name=actual_tenant.name,
+    )
+
+
+# ── User impersonation — M9.3b ───────────────────────────────────────────────
+
+@router.post(
+    "/tenants/{tenant_id}/users/{user_id}/impersonate",
+    response_model=UserImpersonateResponse,
+)
+async def impersonate_user(
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    data: Optional[UserImpersonateRequest] = Body(default=None),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> UserImpersonateResponse:
+    """
+    Mint a user-level impersonation token for a super admin entering a specific
+    user's identity.
+
+    Unlike enter_tenant (which keeps sub=SA and routes tenant context), this token
+    sets sub=target_user so the frontend sees exactly what that user sees.
+
+    Guards:
+      - Caller must be super admin.
+      - Target user must have an active UserTenant record on tenant_id.
+      - Locked or inactive users cannot be impersonated.
+
+    Creates an ImpersonationSession audit record on success.
+    """
+    _sa(current_user)
+
+    entry_point = (data.entry_point if data else None) or "user_list"
+
+    # ── Verify target user belongs to tenant ──────────────────────────────────
+    ut_res = await db.execute(
+        select(UserTenant)
+        .where(UserTenant.user_id == user_id, UserTenant.tenant_id == tenant_id)
+    )
+    target_ut = ut_res.scalar_one_or_none()
+    if not target_ut:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found on this tenant.")
+    if not target_ut.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot impersonate a locked or inactive user.")
+
+    # ── Load target user ──────────────────────────────────────────────────────
+    user_res = await db.execute(select(User).where(User.id == user_id))
+    target_user = user_res.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User record not found.")
+
+    # ── Derive target user's role claims (same logic as login flow) ───────────
+    roles_res = await db.execute(
+        select(Role.name)
+        .join(UserRole, Role.id == UserRole.role_id)
+        .where(UserRole.user_tenant_id == target_ut.id)
+    )
+    role_names: list[str] = [row[0] for row in roles_res.all()]
+    is_tenant_admin = "tenant_admin" in role_names
+    has_non_admin_role = any(r != "tenant_admin" for r in role_names)
+    primary_role: str | None = next((r for r in role_names if r != "tenant_admin"), (role_names[0] if role_names else None))
+
+    # ── Look up the tenant for environment ───────────────────────────────────
+    tenant = await _get_tenant_or_404(tenant_id, db)
+
+    # ── Determine impersonator role ───────────────────────────────────────────
+    owner_id = settings.owner_user_id
+    impersonator_role = (
+        "super_admin_owner"
+        if owner_id and str(current_user.user_id) == owner_id
+        else "super_admin"
+    )
+
+    # ── Create audit record ───────────────────────────────────────────────────
+    session = ImpersonationSession(
+        impersonator_id=current_user.user_id,
+        impersonator_role=impersonator_role,
+        target_user_id=user_id,
+        target_tenant_id=tenant_id,
+        environment=tenant.environment,
+        entry_point=entry_point,
+    )
+    db.add(session)
+    await db.flush()  # populate session.id
+
+    # ── Mint token with target user's identity ────────────────────────────────
+    access_token = create_access_token({
+        "sub":                      str(target_user.id),
+        "user_tenant_id":           str(target_ut.id),
+        "account_type":             "business",
+        "tenant_id":                str(tenant_id),
+        "session_id":               str(current_user.session_id),
+        "is_super_admin":           False,
+        "is_tenant_admin":          is_tenant_admin,
+        "has_non_admin_role":       has_non_admin_role,
+        "role_tier":                target_ut.role_tier,
+        "environment":              tenant.environment,
+        "impersonator_id":          str(current_user.user_id),
+        "impersonation_mode":       current_user.impersonation_mode,  # carry forward
+        "is_user_impersonation":    True,
+        "impersonation_session_id": str(session.id),
+    })
+
+    await _log(
+        "platform.user.impersonation.started",
+        current_user.user_id,
+        tenant_id,
+        {
+            "target_user_id":    str(user_id),
+            "impersonator_role": impersonator_role,
+            "entry_point":       entry_point,
+            "session_id":        str(session.id),
+            "environment":       tenant.environment,
+        },
+        db,
+    )
+
+    return UserImpersonateResponse(
+        access_token=access_token,
+        session_id=str(session.id),
+        target_user=ImpersonatedUserSummary(
+            id=str(target_user.id),
+            full_name=target_user.full_name,
+            email=target_user.email,
+            role=primary_role,
+        ),
+    )
+
+
+@router.post("/impersonation/{session_id}/end", response_model=ImpersonationEndResponse)
+async def end_impersonation_session(
+    session_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ImpersonationEndResponse:
+    """
+    Close a user-level impersonation session by setting ended_at.
+
+    Must be called with the ORIGINAL super-admin token (restored by the frontend
+    before calling this endpoint). Verifies that the caller is the same SA who
+    opened the session. This endpoint is accessible via require_auth (not
+    require_super_admin) because the frontend may call it while already holding
+    the base SA token after the impersonation token is discarded.
+    """
+    session_res = await db.execute(
+        select(ImpersonationSession).where(ImpersonationSession.id == session_id)
+    )
+    session = session_res.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Impersonation session not found.")
+
+    # Allow the original SA (via their real user_id) or via impersonator_id on any token.
+    caller_id = current_user.impersonator_id or current_user.user_id
+    if session.impersonator_id != caller_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to end this session.")
+
+    if session.ended_at is None:
+        session.ended_at = datetime.now(timezone.utc)
+
+    await _log(
+        "platform.user.impersonation.ended",
+        caller_id,
+        session.target_tenant_id,
+        {"session_id": str(session_id), "target_user_id": str(session.target_user_id)},
+        db,
+    )
+
+    return ImpersonationEndResponse(
+        session_id=str(session_id),
+        message="Impersonation session ended.",
     )
 
 
