@@ -395,7 +395,7 @@ export default function BankAccountsPage() {
       ) : accounts.length === 0 ? (
         <div className="border border-dashed border-gray-200 rounded-xl p-10 text-center">
           <i className="ti ti-building-bank text-gray-300" style={{ fontSize: 32 }} />
-          <p className="mt-3 text-sm text-gray-500">No bank accounts yet. Click "Add account" to get started.</p>
+          <p className="mt-3 text-sm text-gray-500">No bank accounts yet. Click &quot;Add account&quot; to get started.</p>
         </div>
       ) : (
         <div className="space-y-6">

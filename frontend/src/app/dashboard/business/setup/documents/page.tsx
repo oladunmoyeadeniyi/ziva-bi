@@ -65,6 +65,7 @@ const OCR_TEMPLATES = ["None", "Invoice standard", "Receipt standard", "Custom"]
 export default function DocumentRulesPage() {
   const { accessToken } = useAuth();
   const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
   const [modules, setModules] = useState<ModuleState[]>([]);
   const [activeModule, setActiveModule] = useState<string>("");
   const [rules, setRules] = useState<DocumentRule[]>([]);
@@ -84,7 +85,9 @@ export default function DocumentRulesPage() {
           setActiveModule(active[0].module_key);
         }
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e.message))
+      .finally(() => setIsLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
   // Fetch rules when module tab changes
@@ -140,6 +143,18 @@ export default function DocumentRulesPage() {
 
   const inputCls =
     "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+  if (isLoading) {
+    return (
+      <PageContainer maxWidth="5xl">
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer maxWidth="5xl">

@@ -16,8 +16,8 @@
  * Route: /dashboard/business/setup/tax
  */
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
@@ -356,12 +356,19 @@ const inputCls =
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function TaxPage() {
+function TaxContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Tax-config tabs (VAT/WHT/PAYE/Other)
-  const [tab, setTab] = useState<Tab>("applicability");
+  const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "applicability");
+
+  const handleTabChange = (t: Tab) => {
+    setTab(t);
+    router.replace(`?tab=${t}`, { scroll: false });
+  };
+  const [isLoading, setIsLoading] = useState(true);
   const [config, setConfig] = useState<TaxConfig>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -383,7 +390,8 @@ export default function TaxPage() {
     if (!accessToken) return;
     apiFetch<TaxConfig>("/api/setup/tax", { token: accessToken })
       .then(setConfig)
-      .catch((e) => setError(e instanceof Error ? e.message : "Load failed"));
+      .catch((e) => setError(e instanceof Error ? e.message : "Load failed"))
+      .finally(() => setIsLoading(false));
   }, [accessToken]);
 
   // Load org config for applicability (tax_items + is_tax_haven live in org_configuration)
@@ -515,14 +523,22 @@ export default function TaxPage() {
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 mb-6 gap-1">
-        <TabBtn id="applicability" active={tab === "applicability"} onClick={setTab} label="Tax applicability" />
-        {vatVisible  && <TabBtn id="vat"   active={tab === "vat"}   onClick={setTab} label="VAT" />}
-        {whtVisible  && <TabBtn id="wht"   active={tab === "wht"}   onClick={setTab} label="WHT" />}
-        {payeVisible && <TabBtn id="paye"  active={tab === "paye"}  onClick={setTab} label="PAYE" />}
-        <TabBtn id="other" active={tab === "other"} onClick={setTab} label="Other statutory" />
+        <TabBtn id="applicability" active={tab === "applicability"} onClick={handleTabChange} label="Tax applicability" />
+        {vatVisible  && <TabBtn id="vat"   active={tab === "vat"}   onClick={handleTabChange} label="VAT" />}
+        {whtVisible  && <TabBtn id="wht"   active={tab === "wht"}   onClick={handleTabChange} label="WHT" />}
+        {payeVisible && <TabBtn id="paye"  active={tab === "paye"}  onClick={handleTabChange} label="PAYE" />}
+        <TabBtn id="other" active={tab === "other"} onClick={handleTabChange} label="Other statutory" />
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+
+      {isLoading && (
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      )}
 
       {/* ── Tax applicability tab ── */}
       {tab === "applicability" && (
@@ -1098,5 +1114,13 @@ export default function TaxPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function TaxPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <TaxContent />
+    </Suspense>
   );
 }

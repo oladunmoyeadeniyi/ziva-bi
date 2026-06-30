@@ -24,8 +24,8 @@
  * Matches Tax page visual language: same tab bar, card/section style, save button style.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
@@ -248,11 +248,18 @@ function daysUntil(isoDate: string): number {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function PeriodsPage() {
+function PeriodsContent() {
   const { accessToken, user } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [tab, setTab] = useState<Tab>("periods");
+  const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "periods");
+
+  const handleTabChange = (t: Tab) => {
+    setTab(t);
+    router.replace(`?tab=${t}`, { scroll: false });
+  };
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // ── Fiscal year & periods state ───────────────────────────────────────────
@@ -374,8 +381,7 @@ export default function PeriodsPage() {
   }, [accessToken]);
 
   useEffect(() => {
-    loadOrg();
-    loadPeriods();
+    Promise.all([loadOrg(), loadPeriods()]).finally(() => setIsLoading(false));
   }, [loadOrg, loadPeriods]);
 
   useEffect(() => {
@@ -650,15 +656,23 @@ export default function PeriodsPage() {
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 mb-6 gap-1">
-        <TabBtn id="periods" active={tab === "periods"} onClick={setTab} label="Fiscal year & periods" />
-        <TabBtn id="grace" active={tab === "grace"} onClick={setTab} label="Grace overrides" />
-        <TabBtn id="checklist" active={tab === "checklist"} onClick={setTab} label="Close checklist" />
+        <TabBtn id="periods" active={tab === "periods"} onClick={handleTabChange} label="Fiscal year & periods" />
+        <TabBtn id="grace" active={tab === "grace"} onClick={handleTabChange} label="Grace overrides" />
+        <TabBtn id="checklist" active={tab === "checklist"} onClick={handleTabChange} label="Close checklist" />
       </div>
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
           {error}
           <button type="button" onClick={() => setError(null)} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+          ))}
         </div>
       )}
 
@@ -1300,5 +1314,13 @@ export default function PeriodsPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function PeriodsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <PeriodsContent />
+    </Suspense>
   );
 }

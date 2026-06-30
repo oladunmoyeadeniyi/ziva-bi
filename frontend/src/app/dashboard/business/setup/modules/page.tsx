@@ -279,6 +279,7 @@ function ModuleCard({
 export default function ModuleActivationPage() {
   const { accessToken, user } = useAuth();
   const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
   const [modules, setModules] = useState<ModuleState[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
@@ -296,6 +297,8 @@ export default function ModuleActivationPage() {
       setModules(data.modules);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load modules");
+    } finally {
+      setIsLoading(false);
     }
   }, [accessToken]);
 
@@ -347,6 +350,18 @@ export default function ModuleActivationPage() {
   const available = modules.filter((m) => !m.is_licensed);
   const selectedMod = modules.find((m) => m.module_key === selected) ?? null;
   const detail = selected ? MODULE_DETAILS[selected] : null;
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full">

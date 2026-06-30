@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import { Banner } from "@/components/Banner";
 import { Button } from "@/components/ui/button";
 
 interface TenantUser {
@@ -309,9 +310,9 @@ export default function TeamPage() {
       </div>
 
       {inviteSuccess && (
-        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+        <Banner variant="success" className="mb-4">
           ✓ {inviteSuccess}
-        </div>
+        </Banner>
       )}
 
       {/* ── Tabs ─────────────────────────────────────────────────────────── */}
@@ -337,7 +338,7 @@ export default function TeamPage() {
             </div>
           )}
           {usersError && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{usersError}</div>
+            <Banner variant="error">{usersError}</Banner>
           )}
           {!usersLoading && !usersError && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
@@ -409,7 +410,7 @@ export default function TeamPage() {
             </div>
           )}
           {invitesError && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{invitesError}</div>
+            <Banner variant="error">{invitesError}</Banner>
           )}
           {!invitesLoading && !invitesError && invitations.length === 0 && (
             <div className="text-center py-16 bg-white rounded-xl border border-gray-200">

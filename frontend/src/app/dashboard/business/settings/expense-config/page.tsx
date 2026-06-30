@@ -16,6 +16,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import { Banner } from "@/components/Banner";
 
 interface ExpenseConfig {
   coding_level: number;
@@ -162,10 +163,10 @@ export default function ExpenseConfigPage() {
       </p>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
+        <Banner variant="error" className="mb-4 flex justify-between">
           <span>{error}</span>
           <button onClick={() => setError(null)} className="text-red-400 font-bold ml-2">×</button>
-        </div>
+        </Banner>
       )}
 
       {/* ── Section 1: Coding Level ────────────────────────────────────────── */}

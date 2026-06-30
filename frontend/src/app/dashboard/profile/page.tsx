@@ -19,6 +19,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import { Banner } from "@/components/Banner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -62,19 +63,19 @@ function SuccessBanner({ message, onDismiss }: { message: string; onDismiss: () 
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [onDismiss]);
   return (
-    <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800 flex items-center justify-between gap-3">
+    <Banner variant="success" className="flex items-center justify-between gap-3">
       <span>✓ {message}</span>
       <button type="button" onClick={onDismiss} className="text-green-600 hover:text-green-800 font-bold text-lg leading-none">×</button>
-    </div>
+    </Banner>
   );
 }
 
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
-    <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-center justify-between gap-3">
+    <Banner variant="error" className="flex items-center justify-between gap-3">
       <span>{message}</span>
       <button type="button" onClick={onDismiss} className="text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
-    </div>
+    </Banner>
   );
 }
 
@@ -95,7 +96,6 @@ function Pill({ label, color = "gray" }: { label: string; color?: "gray" | "blue
 // ── Shared input / button classes ─────────────────────────────────────────────
 const inputCls = "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 const readCls  = "px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500";
-const btnCls   = "px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors";
 const secBtnCls = "px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-60";
 
 // ── Section wrapper ───────────────────────────────────────────────────────────

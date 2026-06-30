@@ -15,6 +15,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import { Banner } from "@/components/Banner";
 
 interface AuditLogEntry {
   id: string;
@@ -172,7 +173,7 @@ export default function AuditTrailPage() {
       )}
 
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
+        <Banner variant="error">{error}</Banner>
       )}
 
       {!isLoading && !error && entries.length === 0 && (

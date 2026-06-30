@@ -21,6 +21,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import { Button } from "@/components/ui/button";
+import { Banner } from "@/components/Banner";
 
 interface ExpenseLine {
   id: string;
@@ -422,9 +423,7 @@ export default function ExpenseDetailPage() {
   if (error || !report) {
     return (
       <PageContainer maxWidth="6xl">
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {error ?? "Report not found."}
-        </div>
+        <Banner variant="error">{error ?? "Report not found."}</Banner>
       </PageContainer>
     );
   }
@@ -574,29 +573,29 @@ export default function ExpenseDetailPage() {
 
       {/* ── Full-width status banners ─────────────────────────────────────── */}
       {report.status === "APPROVED" && (
-        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800 font-medium">
+        <Banner variant="success" className="mb-4 font-medium">
           This report has been fully approved.
-        </div>
+        </Banner>
       )}
       {report.status === "REJECTED" && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+        <Banner variant="error" className="mb-4">
           <p className="font-semibold mb-1">This report was rejected:</p>
           <p>{report.rejection_comment}</p>
           <Link href={`/dashboard/business/expenses/${report.id}/edit`}
             className="inline-block mt-3 px-4 py-2 min-h-[44px] bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors">
             Edit &amp; Resubmit
           </Link>
-        </div>
+        </Banner>
       )}
       {report.status === "REFERRED_TO_REQUESTOR" && (
-        <div className="mb-4 rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800">
+        <Banner variant="warning" className="mb-4">
           <p className="font-semibold mb-1">This report was referred back to you for revision:</p>
           <p>{report.rejection_comment}</p>
           <Link href={`/dashboard/business/expenses/${report.id}/edit`}
             className="inline-block mt-3 px-4 py-2 min-h-[44px] bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 transition-colors">
             Edit &amp; Resubmit
           </Link>
-        </div>
+        </Banner>
       )}
 
       {/* FIX 1 — query banners: use approver name, not level number */}
@@ -605,13 +604,13 @@ export default function ExpenseDetailPage() {
         <div className="mb-4 space-y-2">
           {approvals.filter((a) => a.status === "REFERRED_BACK").map((a) => (
             a.visible_to_requestor ? (
-              <div key={a.id} className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800">
+              <Banner key={a.id} variant="warning">
                 {/* FIX 1: use a.approver_name instead of "Level X" */}
                 <p className="font-semibold mb-0.5">
                   Query from {a.approver_name} ({a.level_label}):
                 </p>
                 <p>{a.comment}</p>
-              </div>
+              </Banner>
             ) : (
               <div key={a.id} className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-500 italic">
                 Pending internal review at {a.level_label}

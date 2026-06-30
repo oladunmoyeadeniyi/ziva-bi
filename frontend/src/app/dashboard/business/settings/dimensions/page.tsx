@@ -1929,7 +1929,7 @@ function DimensionsPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {tree.map(node => renderNode(node as any, 0, excludedCodes))}
+                                {tree.map(node => renderNode(node as InlineValue & { children: (InlineValue & { children: InlineValue[] })[] }, 0, excludedCodes))}
                               </tbody>
                             </table>
                           </div>

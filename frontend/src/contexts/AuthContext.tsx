@@ -187,7 +187,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     restore();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Auth actions ──────────────────────────────────────────────────────────
@@ -198,7 +197,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify(data),
     });
     saveSession(res);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<AuthUser | undefined> => {
@@ -208,7 +206,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     saveSession(res);
     return res.user;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -238,7 +235,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       clearSession();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_accessToken]);
 
   // ── Impersonation actions ─────────────────────────────────────────────────

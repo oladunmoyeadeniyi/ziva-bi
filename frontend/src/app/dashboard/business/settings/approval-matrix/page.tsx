@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import { Banner } from "@/components/Banner";
 
 interface ApprovalMatrix {
   id: string;
@@ -125,16 +126,16 @@ export default function ApprovalMatrixPage() {
       </div>
 
       {success && (
-        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+        <Banner variant="success" className="mb-4">
           Approval matrix saved successfully.
-        </div>
+        </Banner>
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+        <Banner variant="error" className="mb-4 flex items-start justify-between gap-3">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
-        </div>
+        </Banner>
       )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-6">

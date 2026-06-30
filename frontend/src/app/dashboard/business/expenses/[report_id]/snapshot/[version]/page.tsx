@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import { Banner } from "@/components/Banner";
 
 interface SnapshotLine {
   line_number: number;
@@ -90,9 +91,7 @@ export default function SnapshotPage() {
   if (error || !snapshot) {
     return (
       <PageContainer maxWidth="5xl">
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {error ?? "Snapshot not found."}
-        </div>
+        <Banner variant="error">{error ?? "Snapshot not found."}</Banner>
       </PageContainer>
     );
   }

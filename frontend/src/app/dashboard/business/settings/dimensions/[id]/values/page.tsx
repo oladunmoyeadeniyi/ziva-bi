@@ -17,6 +17,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import { Banner } from "@/components/Banner";
 
 interface DimensionValue {
   id: string;
@@ -307,10 +308,10 @@ export default function DimensionValuesPage() {
       </p>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex justify-between">
+        <Banner variant="error" className="mb-4 flex justify-between">
           <span>{error}</span>
           <button onClick={() => setError(null)} className="text-red-400 font-bold">×</button>
-        </div>
+        </Banner>
       )}
 
       {uploadResult && (
@@ -359,12 +360,12 @@ export default function DimensionValuesPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Valid From</label>
-              <input type="date" value={addValidFrom} onChange={(e) => setAddValidFrom(e.target.value)}
+              <input type="date" defaultValue={addValidFrom} onBlur={(e) => setAddValidFrom(e.target.value)}
                 className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Valid To</label>
-              <input type="date" value={addValidTo} onChange={(e) => setAddValidTo(e.target.value)}
+              <input type="date" defaultValue={addValidTo} onBlur={(e) => setAddValidTo(e.target.value)}
                 className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
@@ -468,10 +469,10 @@ export default function DimensionValuesPage() {
                       </td>
                       <td className="px-4 py-2 hidden md:table-cell">
                         <div className="flex gap-1">
-                          <input type="date" value={editValidFrom} onChange={(e) => setEditValidFrom(e.target.value)}
+                          <input type="date" defaultValue={editValidFrom} onBlur={(e) => setEditValidFrom(e.target.value)}
                             className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none" />
                           <span className="text-xs text-gray-400 self-center">→</span>
-                          <input type="date" value={editValidTo} onChange={(e) => setEditValidTo(e.target.value)}
+                          <input type="date" defaultValue={editValidTo} onBlur={(e) => setEditValidTo(e.target.value)}
                             className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none" />
                         </div>
                       </td>

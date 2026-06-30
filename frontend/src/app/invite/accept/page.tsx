@@ -9,7 +9,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 
 interface InviteDetails {

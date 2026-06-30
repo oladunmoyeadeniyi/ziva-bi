@@ -35,6 +35,7 @@ import SplitLinePanel, {
   type DimensionForForm,
   type SplitLineState,
 } from "@/components/expenses/SplitLinePanel";
+import { Banner } from "@/components/Banner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -239,6 +240,7 @@ export default function NewExpensePage() {
   const [employeeFunction, setEmployeeFunction] = useState("");
   const [lines, setLines] = useState<LineState[]>([makeLine()]);
   const [formConfig, setFormConfig] = useState<FormConfig>(DEFAULT_CFG);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -289,7 +291,8 @@ export default function NewExpensePage() {
     if (!accessToken) return;
     apiFetch<FormConfig>("/api/expense-config/form-config", { token: accessToken })
       .then((cfg) => setFormConfig(cfg))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setIsLoading(false));
   }, [accessToken]);
 
   // ── GL search for Level 4 ─────────────────────────────────────────────────
@@ -810,6 +813,18 @@ export default function NewExpensePage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  if (isLoading) {
+    return (
+      <PageContainer maxWidth="5xl">
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-16 bg-gray-100 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      </PageContainer>
+    );
+  }
+
   return (
     <PageContainer maxWidth="5xl">
 
@@ -885,23 +900,23 @@ export default function NewExpensePage() {
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+        <Banner variant="error" className="mb-4 flex items-start justify-between gap-3">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
-        </div>
+        </Banner>
       )}
 
       {uploadError && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+        <Banner variant="error" className="mb-4 flex items-start justify-between gap-3">
           <span>{uploadError}</span>
           <button type="button" onClick={() => setUploadError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
-        </div>
+        </Banner>
       )}
 
       {cfg.coding_level === 0 && (
-        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
+        <Banner variant="info" className="mb-4">
           GL coding will be assigned by Finance during the approval review.
-        </div>
+        </Banner>
       )}
 
       {/* Report header */}
@@ -920,7 +935,7 @@ export default function NewExpensePage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Report Date <span className="text-red-500">*</span></label>
-            <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} onBlur={scheduleAutoSave}
+            <input type="date" defaultValue={reportDate} onBlur={(e) => { setReportDate(e.target.value); scheduleAutoSave(); }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
@@ -1090,8 +1105,8 @@ export default function NewExpensePage() {
                           <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && !line.invoice_date ? "text-red-600" : "text-gray-600"}`}>
                             Invoice Date <span className="text-red-500">*</span>
                           </label>
-                          <input type="date" value={line.invoice_date}
-                            onChange={(e) => { updateLine(line.localId, { invoice_date: e.target.value }); scheduleAutoSave(); }}
+                          <input type="date" defaultValue={line.invoice_date}
+                            onBlur={(e) => { updateLine(line.localId, { invoice_date: e.target.value }); scheduleAutoSave(); }}
                             className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${isIncomplete && !line.invoice_date ? "border-red-400" : "border-gray-300"}`} />
                         </div>
                         <div>

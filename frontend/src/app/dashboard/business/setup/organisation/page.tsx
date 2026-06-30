@@ -278,6 +278,7 @@ function OrganisationPage() {
   const returnTo = searchParams.get("returnTo");
   const initialTab = (searchParams.get("tab") as Tab) || "identity";
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [isLoading, setIsLoading] = useState(true);
   const [org, setOrg] = useState<OrgConfig>({ tenant_id: "" });
   const [nodes, setNodes] = useState<OrgNode[]>([]);
   const [saving, setSaving] = useState(false);
@@ -356,7 +357,8 @@ function OrganisationPage() {
           setConfig(data.org_configuration);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setIsLoading(false));
   }, [accessToken]);
 
   // Load org tree when Structure tab is active
@@ -513,6 +515,18 @@ function OrganisationPage() {
     return result;
   }, [nodes]);
 
+  if (isLoading) {
+    return (
+      <PageContainer maxWidth="4xl">
+        <div className="space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      </PageContainer>
+    );
+  }
+
   return (
     <PageContainer maxWidth="4xl">
       <button
@@ -557,10 +571,10 @@ function OrganisationPage() {
               <Input value={org.rc_number ?? ""} onChange={e => setOrg(o => ({ ...o, rc_number: e.target.value }))} placeholder="e.g. RC 1234567" />
             </Field>
             <Field label="Date of registration">
-              <Input type="date" value={org.date_of_registration ?? ""} onChange={e => setOrg(o => ({ ...o, date_of_registration: e.target.value }))} />
+              <Input type="date" defaultValue={org.date_of_registration ?? ""} onBlur={e => setOrg(o => ({ ...o, date_of_registration: e.target.value }))} />
             </Field>
             <Field label="Business commencement date">
-              <Input type="date" value={org.commencement_date ?? ""} onChange={e => setOrg(o => ({ ...o, commencement_date: e.target.value }))} />
+              <Input type="date" defaultValue={org.commencement_date ?? ""} onBlur={e => setOrg(o => ({ ...o, commencement_date: e.target.value }))} />
             </Field>
             <Field label="First fiscal year end" required>
               {(() => {
@@ -764,7 +778,7 @@ function OrganisationPage() {
 
           {/* Add node modal */}
           {showAddNode && (
-            <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
               <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
                 <h3 className="text-base font-semibold mb-4">Add org node</h3>
                 <div className="space-y-3">
@@ -815,7 +829,7 @@ function OrganisationPage() {
 
           {/* Edit node modal */}
           {editNode && (
-            <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
               <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
                 <h3 className="text-base font-semibold mb-4">Edit org node</h3>
                 <div className="space-y-3">

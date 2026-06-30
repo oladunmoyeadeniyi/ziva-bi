@@ -8,8 +8,8 @@
  * Route: /dashboard/business/setup/roles
  */
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
@@ -77,10 +77,16 @@ const SECTIONS = [
   "Approval workflows", "Document rules", "Module setup",
 ];
 
-export default function RolesPage() {
+function RolesContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("tiers");
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "tiers");
+
+  const handleTabChange = (t: Tab) => {
+    setTab(t);
+    router.replace(`?tab=${t}`, { scroll: false });
+  };
   const [matrix, setMatrix] = useState<PermCell[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [saving, setSaving] = useState(false);
@@ -148,9 +154,9 @@ export default function RolesPage() {
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 mb-6 gap-1">
-        <TabBtn id="tiers"       active={tab === "tiers"}       onClick={setTab} label="Role tiers" />
-        <TabBtn id="matrix"      active={tab === "matrix"}      onClick={setTab} label="Permission matrix" />
-        <TabBtn id="assignments" active={tab === "assignments"} onClick={setTab} label="User assignments" />
+        <TabBtn id="tiers"       active={tab === "tiers"}       onClick={handleTabChange} label="Role tiers" />
+        <TabBtn id="matrix"      active={tab === "matrix"}      onClick={handleTabChange} label="Permission matrix" />
+        <TabBtn id="assignments" active={tab === "assignments"} onClick={handleTabChange} label="User assignments" />
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
@@ -336,5 +342,13 @@ export default function RolesPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function RolesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <RolesContent />
+    </Suspense>
   );
 }

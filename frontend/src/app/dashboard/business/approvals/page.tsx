@@ -11,12 +11,14 @@
  * "Review" navigates to the report detail page where approve/reject actions live.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import { Banner } from "@/components/Banner";
 
 interface ApprovalQueueItem {
   approval_id: string;
@@ -42,13 +44,19 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-GB");
 }
 
-export default function ApprovalsPage() {
+function ApprovalsContent() {
   const { accessToken } = useAuth();
-  const [activeTab, setActiveTab] = useState<Tab>("pending");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState<Tab>((searchParams.get("tab") as Tab) || "pending");
   const [pendingQueue, setPendingQueue] = useState<ApprovalQueueItem[]>([]);
   const [rejectedQueue, setRejectedQueue] = useState<ApprovalQueueItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const updateUrl = (tab: string) => {
+    router.replace(`?tab=${tab}`, { scroll: false });
+  };
 
   useEffect(() => {
     if (!accessToken) return;
@@ -87,7 +95,7 @@ export default function ApprovalsPage() {
           <button
             key={key}
             type="button"
-            onClick={() => setActiveTab(key)}
+            onClick={() => { setActiveTab(key); updateUrl(key); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === key
                 ? "border-blue-600 text-blue-700"
@@ -117,9 +125,7 @@ export default function ApprovalsPage() {
       )}
 
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
+        <Banner variant="error">{error}</Banner>
       )}
 
       {!isLoading && !error && items.length === 0 && (
@@ -196,5 +202,13 @@ export default function ApprovalsPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function ApprovalsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <ApprovalsContent />
+    </Suspense>
   );
 }

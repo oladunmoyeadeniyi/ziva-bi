@@ -9,8 +9,8 @@
  * Route: /dashboard/business/setup/currencies
  */
 
-import { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
@@ -139,6 +139,7 @@ interface FxConfig {
   reporting_currency?: string;
   fx_rates?: FxRateEntry[];
   revaluation_rules?: RevalRules;
+  bdc_register?: BdcEntry[];
 }
 
 interface GLOption {
@@ -266,11 +267,16 @@ function GLSearchInput({
   );
 }
 
-export default function CurrenciesPage() {
+function CurrenciesContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [tab, setTab] = useState<Tab>("currencies");
+  const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "currencies");
+
+  const updateUrl = (t: string) => {
+    router.replace(`?tab=${t}`, { scroll: false });
+  };
   const [config, setConfig] = useState<FxConfig>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -494,7 +500,7 @@ export default function CurrenciesPage() {
   const addBdc = async () => {
     if (!newBdcName.trim()) return;
     setAddingBdc(true);
-    const existing = (config as any).bdc_register ?? [];
+    const existing = config.bdc_register ?? [];
     const newEntry: BdcEntry = {
       id: crypto.randomUUID(),
       name: newBdcName.trim(),
@@ -508,8 +514,8 @@ export default function CurrenciesPage() {
     };
     const updated = [...existing, newEntry];
     try {
-      await save({ bdc_register: updated } as any);
-      setConfig((c) => ({ ...c, bdc_register: updated } as any));
+      await save({ bdc_register: updated });
+      setConfig((c) => ({ ...c, bdc_register: updated }));
       setNewBdcName(""); setNewBdcRc(""); setNewBdcCbn("");
       setNewBdcContact(""); setNewBdcPhone(""); setNewBdcEmail("");
       setNewBdcWht("5"); setShowAddBdc(false);
@@ -548,7 +554,7 @@ export default function CurrenciesPage() {
           <button
             key={t}
             type="button"
-            onClick={() => setTab(t)}
+            onClick={() => { setTab(t); updateUrl(t); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === t
                 ? "border-blue-600 text-blue-700"
@@ -909,8 +915,8 @@ export default function CurrenciesPage() {
                   </label>
                   <input
                     type="date"
-                    value={newRateDate}
-                    onChange={(e) => setNewRateDate(e.target.value)}
+                    defaultValue={newRateDate}
+                    onBlur={(e) => setNewRateDate(e.target.value)}
                     className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -2039,7 +2045,7 @@ export default function CurrenciesPage() {
             </div>
           )}
 
-          {((config as any).bdc_register ?? []).length === 0 ? (
+          {(config.bdc_register ?? []).length === 0 ? (
             <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
               <i className="ti ti-building-bank text-gray-300" style={{ fontSize: 32 }} />
               <p className="text-sm text-gray-500 mt-2">No BDCs registered yet.</p>
@@ -2062,7 +2068,7 @@ export default function CurrenciesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {((config as any).bdc_register ?? []).map((bdc: BdcEntry) => (
+                  {(config.bdc_register ?? []).map((bdc: BdcEntry) => (
                     <tr key={bdc.id} className="hover:bg-gray-50">
                       <td className="px-3 py-2 font-medium text-gray-800">{bdc.name}</td>
                       <td className="px-3 py-2 text-xs text-gray-500">{bdc.rc_number ?? "—"}</td>
@@ -2089,12 +2095,12 @@ export default function CurrenciesPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            const updated = ((config as any).bdc_register ?? []).map(
+                            const updated = (config.bdc_register ?? []).map(
                               (b: BdcEntry) =>
                                 b.id === bdc.id ? { ...b, is_active: !b.is_active } : b
                             );
-                            save({ bdc_register: updated } as any);
-                            setConfig((c) => ({ ...c, bdc_register: updated } as any));
+                            save({ bdc_register: updated });
+                            setConfig((c) => ({ ...c, bdc_register: updated }));
                           }}
                           className="text-xs text-gray-500 hover:text-gray-800"
                         >
@@ -2130,5 +2136,13 @@ export default function CurrenciesPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function CurrenciesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <CurrenciesContent />
+    </Suspense>
   );
 }

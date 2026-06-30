@@ -28,6 +28,7 @@ import SplitLinePanel, {
   type DimensionForForm,
   type SplitLineState,
 } from "@/components/expenses/SplitLinePanel";
+import { Banner } from "@/components/Banner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -918,29 +919,29 @@ export default function EditExpensePage() {
 
       {/* Rejection banner */}
       {rejectionBanner && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+        <Banner variant="error" className="mb-4">
           <strong>Rejected:</strong> {rejectionBanner}
-        </div>
+        </Banner>
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+        <Banner variant="error" className="mb-4 flex items-start justify-between gap-3">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
-        </div>
+        </Banner>
       )}
 
       {uploadError && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-start justify-between gap-3">
+        <Banner variant="error" className="mb-4 flex items-start justify-between gap-3">
           <span>{uploadError}</span>
           <button type="button" onClick={() => setUploadError(null)} className="shrink-0 text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
-        </div>
+        </Banner>
       )}
 
       {cfg.coding_level === 0 && (
-        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
+        <Banner variant="info" className="mb-4">
           GL coding will be assigned by Finance during the approval review.
-        </div>
+        </Banner>
       )}
 
       {/* Report header */}
@@ -959,7 +960,7 @@ export default function EditExpensePage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Report Date <span className="text-red-500">*</span></label>
-            <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} onBlur={scheduleAutoSave}
+            <input type="date" defaultValue={reportDate} onBlur={(e) => { setReportDate(e.target.value); scheduleAutoSave(); }}
               disabled={!canEdit}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-600" />
           </div>
@@ -1131,8 +1132,8 @@ export default function EditExpensePage() {
                           <label className={`block text-[11px] font-medium mb-1 ${isIncomplete && !line.invoice_date ? "text-red-600" : "text-gray-600"}`}>
                             Invoice Date <span className="text-red-500">*</span>
                           </label>
-                          <input type="date" value={line.invoice_date} disabled={!canEdit}
-                            onChange={(e) => { updateLine(line.localId, { invoice_date: e.target.value }); scheduleAutoSave(); }}
+                          <input type="date" defaultValue={line.invoice_date} disabled={!canEdit}
+                            onBlur={(e) => { updateLine(line.localId, { invoice_date: e.target.value }); scheduleAutoSave(); }}
                             className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 ${isIncomplete && !line.invoice_date ? "border-red-400" : "border-gray-300"}`} />
                         </div>
                         <div>
