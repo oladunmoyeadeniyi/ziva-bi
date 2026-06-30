@@ -119,6 +119,7 @@ const SortIndicator = ({ col, sort }: { col: string; sort: SortEntry[] }) => {
 
 const PL_CLASSIFICATIONS = [
   "Revenue",
+  "Revenue — service fees",
   "Cost of sales",
   "Gross profit",
   "Operating expense",
@@ -134,9 +135,11 @@ const PL_CLASSIFICATIONS = [
 const BS_CLASSIFICATIONS = [
   "Non-current asset",
   "Current asset",
+  "Contract asset — unbilled revenue",
   "Cash & cash equivalent",
   "Non-current liability",
   "Current liability",
+  "Contract liability — deferred revenue",
   "Equity",
   "Retained earnings",
 ];
@@ -382,6 +385,17 @@ export default function ChartOfAccountsPage() {
   const [expandedSubgroups, setExpandedSubgroups] = useState<Set<string>>(new Set());
   const [expandedSubSubgroups, setExpandedSubSubgroups] = useState<Set<string>>(new Set());
 
+  // Default CoA template picker modal
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateList, setTemplateList] = useState<{
+    id: string; industry: string | null; name: string; description: string; account_count: number;
+  }[]>([]);
+  const [suggestedTemplateId, setSuggestedTemplateId] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [templateModalLoading, setTemplateModalLoading] = useState(false);
+  const [templateAdopting, setTemplateAdopting] = useState(false);
+  const [templateModalError, setTemplateModalError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!user) return;
     if (!user.is_tenant_admin && !user.is_super_admin) router.replace("/dashboard/business");
@@ -415,6 +429,45 @@ export default function ChartOfAccountsPage() {
   };
 
   useEffect(() => { load(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openTemplateModal = async () => {
+    setShowTemplateModal(true);
+    setTemplateModalError(null);
+    setSelectedTemplateId(null);
+    setTemplateModalLoading(true);
+    try {
+      const data = await apiFetch<{
+        templates: { id: string; industry: string | null; name: string; description: string; account_count: number }[];
+        suggested_template_id: string | null;
+      }>("/api/config/coa/templates", { token: accessToken! });
+      setTemplateList(data.templates);
+      setSuggestedTemplateId(data.suggested_template_id);
+      setSelectedTemplateId(data.suggested_template_id);
+    } catch (err) {
+      setTemplateModalError(err instanceof Error ? err.message : "Failed to load templates.");
+    } finally {
+      setTemplateModalLoading(false);
+    }
+  };
+
+  const handleAdoptTemplate = async () => {
+    if (!selectedTemplateId) return;
+    setTemplateAdopting(true);
+    setTemplateModalError(null);
+    try {
+      await apiFetch("/api/config/coa/adopt-template", {
+        method: "POST",
+        token: accessToken!,
+        body: JSON.stringify({ template_id: selectedTemplateId }),
+      });
+      setShowTemplateModal(false);
+      await load();
+    } catch (err) {
+      setTemplateModalError(err instanceof Error ? err.message : "Adoption failed.");
+    } finally {
+      setTemplateAdopting(false);
+    }
+  };
 
   useEffect(() => {
     if (coaTab !== "fs_mappings" || !accessToken) return;
@@ -1773,7 +1826,14 @@ export default function ChartOfAccountsPage() {
       {accounts.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
           <p className="text-sm font-medium text-gray-600 mb-1">No GL accounts yet</p>
-          <p className="text-xs text-gray-400">Download the template, fill it in, then upload to import your Chart of Accounts.</p>
+          <p className="text-xs text-gray-400 mb-4">Download the template, fill it in, then upload to import your Chart of Accounts.</p>
+          <button
+            type="button"
+            onClick={openTemplateModal}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            Use a default template
+          </button>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
@@ -2463,6 +2523,73 @@ export default function ChartOfAccountsPage() {
                 {downloadingTemplate
                   ? <><i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} /> Generating…</>
                   : <><i className="ti ti-download" style={{ fontSize: 14 }} /> Download</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTemplateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Use a default template</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Select a starter Chart of Accounts. All accounts are fully editable after adoption.
+            </p>
+
+            {templateModalLoading ? (
+              <p className="text-sm text-gray-500 text-center py-6">Loading templates…</p>
+            ) : (
+              <div className="space-y-2 mb-4">
+                {templateList.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => setSelectedTemplateId(tpl.id)}
+                    className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
+                      selectedTemplateId === tpl.id
+                        ? "border-indigo-500 bg-indigo-50"
+                        : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-gray-900">{tpl.name}</span>
+                      {tpl.id === suggestedTemplateId && (
+                        <span className="text-[10px] font-medium bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full flex-shrink-0">
+                          Suggested
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">{tpl.description}</p>
+                    <p className="text-[11px] text-gray-400 mt-1">{tpl.account_count} accounts</p>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {templateModalError && (
+              <p className="text-xs text-red-600 mb-3">{templateModalError}</p>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowTemplateModal(false)}
+                disabled={templateAdopting}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAdoptTemplate}
+                disabled={!selectedTemplateId || templateAdopting || templateModalLoading}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60 flex items-center gap-1.5"
+              >
+                {templateAdopting
+                  ? <><i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} /> Applying…</>
+                  : "Apply template"
                 }
               </button>
             </div>

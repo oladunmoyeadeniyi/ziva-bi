@@ -670,3 +670,44 @@ class GlRemapHistoryEntry(BaseModel):
     new_gl_name: str
     remapped_at: datetime
     reason: str | None = None
+
+
+# ── Default CoA Templates ──────────────────────────────────────────────────────
+
+class CoaTemplateListItem(BaseModel):
+    """
+    One row in the GET /coa/templates response.
+
+    account_count is the number of GL accounts in this template's seed data.
+    """
+    id: uuid.UUID
+    industry: Optional[str]
+    name: str
+    description: str
+    account_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class CoaTemplatesResponse(BaseModel):
+    """
+    Full response from GET /coa/templates.
+
+    suggested_template_id is the template whose industry exactly matches the
+    authenticated tenant's TenantOrgConfig.industry, or the Generic/Other
+    template's id if no exact match exists.
+    """
+    templates: list[CoaTemplateListItem]
+    suggested_template_id: Optional[uuid.UUID]
+
+
+class CoaTemplateAdoptRequest(BaseModel):
+    """Body for POST /coa/adopt-template."""
+    template_id: uuid.UUID
+
+
+class CoaTemplateAdoptResult(BaseModel):
+    """Result returned by POST /coa/adopt-template on success."""
+    template_name: str
+    accounts_created: int

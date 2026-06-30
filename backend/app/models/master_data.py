@@ -590,6 +590,89 @@ class CostCenterConfig(Base):
     )
 
 
+# ── Default CoA Templates (system-wide reference data, no tenant_id) ──────────
+
+class CoaTemplate(Base):
+    """
+    System-wide default Chart of Accounts template seeded per industry.
+
+    No tenant_id column — this is reference data shared across all tenants,
+    the same way posting_roles is not owned by any tenant. Cross-tenant leakage
+    is structurally impossible: there is no tenant column for any query to
+    accidentally filter or join against.
+
+    industry: exact match against the INDUSTRIES constant in organisation/page.tsx.
+    NULL means Generic/Other — the fallback for any industry without a dedicated
+    template.
+    """
+
+    __tablename__ = "coa_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    industry: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    accounts: Mapped[list["CoaTemplateAccount"]] = relationship(
+        "CoaTemplateAccount",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="CoaTemplateAccount.sort_order",
+    )
+
+
+class CoaTemplateAccount(Base):
+    """
+    One GL account row within a default CoA template.
+
+    No tenant_id — see CoaTemplate docstring for the leakage-safety argument.
+    account_type stores 'PL' or 'BS' (current UI labels, same as ChartOfAccount).
+    sort_order preserves the FS-bucket-then-numeric display order from the draft
+    doc so adopted CoAs are immediately in a sensible sequence.
+    """
+
+    __tablename__ = "coa_template_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("coa_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    gl_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    gl_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'PL' or 'BS'
+    gl_group: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    gl_subgroup: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    gl_sub_subgroup: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    fs_head: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    fs_note: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    tb_mapping: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    account_classification: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_foreign_currency: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    foreign_currency_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    revalue_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    template: Mapped["CoaTemplate"] = relationship(
+        "CoaTemplate", back_populates="accounts"
+    )
+
+
+# ── Finance review config ──────────────────────────────────────────────────────
+
 class FinanceReviewConfig(Base):
     """
     Finance reviewer configuration per module.

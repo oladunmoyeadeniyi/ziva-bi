@@ -69,6 +69,8 @@ from app.models.expenses import ExpenseCategory
 from app.models.master_data import (
     CategoryGLMapping,
     ChartOfAccount,
+    CoaTemplate,
+    CoaTemplateAccount,
     DimensionValue,
     Employee,
     GlCodeRemap,
@@ -89,6 +91,10 @@ from app.schemas.config import (
     CoAListItem,
     CoAResponse,
     CoAUpdate,
+    CoaTemplateAdoptRequest,
+    CoaTemplateAdoptResult,
+    CoaTemplateListItem,
+    CoaTemplatesResponse,
     DimensionCreate,
     DimensionReorder,
     DimensionResponse,
@@ -1654,6 +1660,62 @@ async def download_coa_template(
             if cell.fill.fgColor.rgb == "00000000" or not cell.fill.patternType:
                 cell.fill = ref_fill  # only apply if no existing fill
 
+    # ── Pre-fill Sheet 1 rows 4+ with existing accounts (if any) ─────────────
+    # When the tenant has GL accounts (adopted template, hand-built, or
+    # previously uploaded), we write one row per account so the tenant can use
+    # the download to bulk-edit groupings, FS mappings, and dimension
+    # requirements without starting from a blank sheet. For tenants with zero
+    # accounts the sheet stays blank — unchanged from previous behaviour.
+    #
+    # Dimension columns must be pre-filled (not left blank) because the upload
+    # side defaults a blank cell to "Optional", which would silently downgrade
+    # a previously-set "Required" on re-upload. All other optional columns
+    # follow blank-preserves-existing semantics on upload, so pre-filling them
+    # is also safe and useful but less critical.
+    existing_result = await db.execute(
+        select(ChartOfAccount)
+        .where(ChartOfAccount.tenant_id == tenant_id)
+        .order_by(ChartOfAccount.gl_number)
+    )
+    existing_accs = list(existing_result.scalars().all())
+
+    if existing_accs:
+        acc_ids = [a.id for a in existing_accs]
+        req_result = await db.execute(
+            select(GLDimensionRequirement).where(
+                GLDimensionRequirement.tenant_id == tenant_id,
+                GLDimensionRequirement.gl_id.in_(acc_ids),
+            )
+        )
+        _req_map: dict[tuple, str] = {}
+        for _r in req_result.scalars().all():
+            _req_map[(_r.gl_id, _r.dimension_id)] = _r.requirement
+
+        _req_display = {"required": "Required", "optional": "Optional", "na": "N/A"}
+
+        for _offset, acc in enumerate(existing_accs):
+            _row_num = 4 + _offset
+            vals: list = [acc.gl_number, acc.gl_name, acc.account_type]
+            if is_active:           vals.append("Yes" if acc.is_active else "No")
+            if gl_group:            vals.append(acc.gl_group or "")
+            if gl_subgroup:         vals.append(acc.gl_subgroup or "")
+            if gl_sub_subgroup:     vals.append(acc.gl_sub_subgroup or "")
+            if fs_head:             vals.append(acc.fs_head or "")
+            if fs_note:             vals.append(acc.fs_note or "")
+            if tb_mapping:          vals.append(acc.tb_mapping or "")
+            if group_account:
+                vals.append(acc.group_account_number or "")
+                vals.append(acc.group_account_name or "")
+            if account_classification:
+                vals.append(acc.account_classification or "")
+            if category:            vals.append("")  # leave blank — join not pre-filled
+            if subcategory:         vals.append("")
+            if is_default_gl:       vals.append("")
+            for dim in dimensions:
+                raw_req = _req_map.get((acc.id, dim.id), "optional")
+                vals.append(_req_display.get(raw_req, raw_req.title()))
+            _write_row(ws1, _row_num, vals, font=example_font)
+
     # ══════════════════════════════════════════════════════════════════════════
     # SHEET 2 — Instructions
     # ══════════════════════════════════════════════════════════════════════════
@@ -1820,6 +1882,164 @@ async def get_fs_mappings(
         }
         for a in result.scalars().all()
     ]
+
+
+# ── Default CoA Template endpoints ────────────────────────────────────────────
+# NOTE: these static-path routes (/coa/templates, /coa/adopt-template) MUST
+# remain declared before the parameterised @router.get("/coa/{gl_id}") route
+# further below, otherwise FastAPI would attempt to parse the literal "templates"
+# as a UUID path parameter and return 422.
+
+async def _adopt_coa_template(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    template_id: uuid.UUID,
+) -> int:
+    """
+    Copy all rows from coa_template_accounts (for template_id) into
+    chart_of_accounts as new rows owned by tenant_id.
+
+    The source table has no tenant column — there is no source-tenant input
+    possible, and no tenant data that could be accidentally referenced. The
+    destination tenant_id is always taken from the authenticated session by
+    the calling endpoint, never from the request body.
+
+    Returns the number of accounts created. Runs in a single transaction
+    (all-or-nothing): the caller must commit or let FastAPI/SQLAlchemy handle it.
+    """
+    template_result = await db.execute(
+        select(CoaTemplate).where(CoaTemplate.id == template_id)
+    )
+    template = template_result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found.")
+
+    accounts_result = await db.execute(
+        select(CoaTemplateAccount)
+        .where(CoaTemplateAccount.template_id == template_id)
+        .order_by(CoaTemplateAccount.sort_order)
+    )
+    template_accounts = list(accounts_result.scalars().all())
+
+    for ta in template_accounts:
+        gl = ChartOfAccount(
+            tenant_id=tenant_id,
+            gl_number=ta.gl_number,
+            gl_name=ta.gl_name,
+            account_type=ta.account_type,
+            account_classification=ta.account_classification,
+            gl_group=ta.gl_group,
+            gl_subgroup=ta.gl_subgroup,
+            gl_sub_subgroup=ta.gl_sub_subgroup,
+            fs_head=ta.fs_head,
+            fs_note=ta.fs_note,
+            tb_mapping=ta.tb_mapping,
+            is_foreign_currency=ta.is_foreign_currency,
+            foreign_currency_code=ta.foreign_currency_code,
+            revalue_at_period_end=ta.revalue_at_period_end,
+            is_active=True,
+            locked_by_implementation=False,
+        )
+        db.add(gl)
+
+    await db.flush()
+    return len(template_accounts)
+
+
+@router.get("/coa/templates", response_model=CoaTemplatesResponse)
+async def list_coa_templates(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CoaTemplatesResponse:
+    """
+    Return the 3 default CoA templates with account counts.
+
+    Also looks up the tenant's TenantOrgConfig.industry and returns
+    suggested_template_id: the template whose industry exactly matches, or
+    the Generic/Other template (industry=NULL) if no exact match exists.
+    Auth: _require_tenant only (same as list_coa — read-only operation).
+    """
+    tenant_id = _require_tenant(current_user)
+
+    templates_result = await db.execute(select(CoaTemplate).order_by(CoaTemplate.name))
+    templates = list(templates_result.scalars().all())
+
+    # Count accounts per template in one query
+    from sqlalchemy import func as _func
+    counts_result = await db.execute(
+        select(CoaTemplateAccount.template_id, _func.count().label("cnt"))
+        .group_by(CoaTemplateAccount.template_id)
+    )
+    counts: dict[uuid.UUID, int] = {row.template_id: row.cnt for row in counts_result}
+
+    # Determine suggested template — match by industry, fall back to Generic (industry=None)
+    org_result = await db.execute(
+        select(TenantOrgConfig.industry).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    tenant_industry: Optional[str] = org_result.scalar_one_or_none()
+
+    generic_id: Optional[uuid.UUID] = None
+    suggested_id: Optional[uuid.UUID] = None
+    for t in templates:
+        if t.industry is None:
+            generic_id = t.id
+        if tenant_industry and t.industry == tenant_industry:
+            suggested_id = t.id
+    if suggested_id is None:
+        suggested_id = generic_id
+
+    items = [
+        CoaTemplateListItem(
+            id=t.id,
+            industry=t.industry,
+            name=t.name,
+            description=t.description,
+            account_count=counts.get(t.id, 0),
+        )
+        for t in templates
+    ]
+    return CoaTemplatesResponse(templates=items, suggested_template_id=suggested_id)
+
+
+@router.post("/coa/adopt-template", response_model=CoaTemplateAdoptResult, status_code=status.HTTP_201_CREATED)
+async def adopt_coa_template(
+    data: CoaTemplateAdoptRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CoaTemplateAdoptResult:
+    """
+    Adopt a default CoA template, creating one GL account per template row
+    for this tenant. Gated to tenants with zero existing GL accounts.
+
+    On success, returns the template name and count of accounts created.
+    Auth: _require_tenant + _require_admin (same as create_coa / upload_coa).
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    # Gate: adoption only available before any GL account exists
+    existing_count_result = await db.execute(
+        select(ChartOfAccount.id).where(ChartOfAccount.tenant_id == tenant_id).limit(1)
+    )
+    if existing_count_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Chart of Accounts already has accounts — template adoption is only "
+                "available before any GL account exists."
+            ),
+        )
+
+    # Fetch template name for the response before delegating
+    tpl_result = await db.execute(
+        select(CoaTemplate.name).where(CoaTemplate.id == data.template_id)
+    )
+    template_name = tpl_result.scalar_one_or_none()
+    if not template_name:
+        raise HTTPException(status_code=404, detail="Template not found.")
+
+    accounts_created = await _adopt_coa_template(db, tenant_id, data.template_id)
+    return CoaTemplateAdoptResult(template_name=template_name, accounts_created=accounts_created)
 
 
 @router.get("/coa/dimension-matrix")
