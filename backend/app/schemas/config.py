@@ -594,7 +594,7 @@ class InlineNewAccountFields(BaseModel):
     """
     gl_number: str
     gl_name: str
-    account_type: str  # "PL" or "BS"
+    account_type: str  # stored as "SOCI" or "SOFP"; "PL"/"BS" accepted and normalised
     gl_group: str | None = None
     gl_subgroup: str | None = None
     gl_sub_subgroup: str | None = None
@@ -602,6 +602,16 @@ class InlineNewAccountFields(BaseModel):
     fs_note: str | None = None
     tb_mapping: str | None = None
     account_classification: str | None = None
+
+    @field_validator("account_type")
+    @classmethod
+    def validate_account_type(cls, v: str) -> str:
+        v = v.strip().upper()
+        mapping = {"PL": "SOCI", "BS": "SOFP"}
+        v = mapping.get(v, v)
+        if v not in ("SOCI", "SOFP"):
+            raise ValueError("Account Type must be 'SOCI' or 'SOFP'.")
+        return v
 
 
 class RemapRequest(BaseModel):

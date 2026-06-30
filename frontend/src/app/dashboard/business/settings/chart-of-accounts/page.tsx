@@ -811,7 +811,7 @@ export default function ChartOfAccountsPage() {
 
   // Dimensions tab derived state
   const dimAfterType = useMemo(() =>
-    (dimMatrix?.accounts ?? []).filter(a => !dimFilterType || a.account_type === dimFilterType)
+    (dimMatrix?.accounts ?? []).filter(a => !dimFilterType || normaliseAccountType(a.account_type) === dimFilterType)
   , [dimMatrix, dimFilterType]);
 
   const dimGroupOptions = useMemo(() =>
@@ -2170,8 +2170,8 @@ export default function ChartOfAccountsPage() {
                   onChange={e => { setDimFilterType(e.target.value); setDimFilterGroup(""); }}
                   className="text-xs border border-gray-200 rounded px-2 py-1">
                   <option value="">All types</option>
-                  <option value="SOCI">PL</option>
-                  <option value="SOFP">BS</option>
+                  <option value="PL">PL</option>
+                  <option value="BS">BS</option>
                 </select>
 
                 <select value={dimFilterGroup}

@@ -1710,6 +1710,32 @@ async def download_coa_template(
     )
 
 
+def _account_type_filter_clause(account_type: Optional[str]):
+    """Return a SQLAlchemy WHERE clause that matches all stored representations of
+    a PL/SOCI or BS/SOFP account type, or None if no filtering is requested.
+
+    Accepts the canonical stored values (SOCI/SOFP), the current UI labels
+    (PL/BS), and common historical variants. Strips punctuation and is
+    case-insensitive so callers need not normalise before calling.
+
+    Reused by list_coa and get_fs_mappings so both endpoints agree on which
+    rows match a given account_type query parameter regardless of how the value
+    was stored (the Remap inline-create path previously could store raw "PL"/"BS").
+    """
+    if not account_type or not account_type.strip():
+        return None
+    at = account_type.strip().upper().replace("/", "").replace("&", "").replace(" ", "")
+    if at in ("SOCI", "PL", "PANDL", "PROFITLOSS", "PROFITANDLOSS", "PLV"):
+        return ChartOfAccount.account_type.in_(
+            ["PL", "SOCI", "P/L", "P&L", "Profit & Loss", "Profit and Loss"]
+        )
+    if at in ("SOFP", "BS", "BALANCESHEET", "BALANCE"):
+        return ChartOfAccount.account_type.in_(
+            ["BS", "SOFP", "B/S", "Balance Sheet"]
+        )
+    return ChartOfAccount.account_type.ilike(f"%{account_type}%")
+
+
 @router.get("/coa", response_model=list[CoAListItem])
 async def list_coa(
     search: str = Query(default="", description="Search GL number or name"),
@@ -1737,24 +1763,9 @@ async def list_coa(
         q = q.where(
             ChartOfAccount.gl_number.ilike(term) | ChartOfAccount.gl_name.ilike(term)
         )
-    if account_type.strip():
-        at = account_type.strip().upper().replace("/", "").replace("&", "").replace(" ", "")
-        # Normalise to PL variants
-        if at in ("SOCI", "PL", "PANDL", "PROFITLOSS", "PROFITANDLOSS", "PLV"):
-            q = q.where(
-                ChartOfAccount.account_type.in_(
-                    ["PL", "SOCI", "P/L", "P&L", "Profit & Loss", "Profit and Loss"]
-                )
-            )
-        # Normalise to BS variants
-        elif at in ("SOFP", "BS", "BALANCESHEET", "BALANCE"):
-            q = q.where(
-                ChartOfAccount.account_type.in_(
-                    ["BS", "SOFP", "B/S", "Balance Sheet"]
-                )
-            )
-        else:
-            q = q.where(ChartOfAccount.account_type.ilike(f"%{account_type}%"))
+    at_clause = _account_type_filter_clause(account_type)
+    if at_clause is not None:
+        q = q.where(at_clause)
     if classification.strip():
         # Support comma-separated list e.g. "Finance income,Finance cost"
         from sqlalchemy import or_
@@ -1786,8 +1797,9 @@ async def get_fs_mappings(
         ChartOfAccount.tenant_id == tenant_id,
         ChartOfAccount.is_active == True,  # noqa: E712
     )
-    if account_type:
-        q = q.where(ChartOfAccount.account_type == account_type)
+    at_clause = _account_type_filter_clause(account_type)
+    if at_clause is not None:
+        q = q.where(at_clause)
     if fs_head:
         q = q.where(ChartOfAccount.fs_head == fs_head)
     q = q.order_by(
