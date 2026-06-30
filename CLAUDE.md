@@ -101,6 +101,8 @@ ruff check app/
 
 ## Milestone Status
 
+> Full detail and dates for every row below: `docs/MASTER_CONTEXT.md` §5 (completed) and §9/§10 (pending, in recommended order). Reconciled 2026-06-29 — this table previously omitted ~10 shipped milestones. Update this table (and §5 of MASTER_CONTEXT.md) every time a milestone ships — do not let it drift again.
+
 | # | Milestone | Status |
 |---|---|---|
 | M1 | Foundation deployed (Next.js + FastAPI + PostgreSQL on Render) | ✅ Done |
@@ -112,8 +114,36 @@ ruff check app/
 | M6 | Supporting Documents (file upload per expense line, Supabase Storage) | ✅ Done |
 | M7 | Expense Categories & GL Coding Mode Config | ✅ Done |
 | M8 | Intelligent Expense Form Foundation (dimensions, CoA, coding levels 0–4) | ✅ Done |
+| M8.1 | Advanced CoA, Dimensions & Employee Foundation | ✅ Done |
 | M9 | Intelligent Expense Form (GL picker, dimensions, split lines, AI suggestions) | ✅ Done |
-| M8.2 | Implementation Portal (setup dashboard, org, modules, FX, tax, roles, doc rules, go-live) | ✅ Done |
+| M8.2 | Implementation Portal (setup dashboard, org, modules, dimensions, CoA, employees) | ✅ Done |
+| — | M8.2 Post-release fixes (login/auth, currency auto-detect, signup polish, org structure edit/delete) | ✅ Done |
+| M8.3 | Accounting Periods Engine (generation, grace, close checklist, soft/hard close, year-end audit, statutory close) | ✅ Done |
+| — | Period Management Enhancements + Hardening (auto-generation, FY name formats, duplicate-FY fix, stub-year fix) | ✅ Done |
+| — | Currencies & FX (4-tab UI + backend; JSONB-based, not dedicated tables — see MASTER_CONTEXT §5) | ✅ Done |
+| M8.4 | Tax & Statutory (VAT/WHT/PAYE/other, JSONB backend) | ✅ Done |
+| — | GL Posting Engine & Reporting (journal entries, trial balance, account ledger) | ✅ Done |
+| — | Account Mapping & Bank Accounts (posting roles → GL, bank account register) | ✅ Done |
+| M9.0 | Shadow Test Environment — live-first clone model (superseded by M9.0.1, kept for on-demand use) | ✅ Done |
+| M9.1 | Super Admin Portal — tenant lifecycle slice (list/detail/lifecycle/suspend/enter/promote) | ✅ Done |
+| — | User Profile, Sessions & 2FA | ✅ Done |
+| M9.0.1 | Test-first tenant environment flow inversion + unified promotion engine | ✅ Done |
+| — | Resolve `organisation/page.tsx` working-tree diff | ⏳ Pending |
+| — | Organisation tab restructuring | ⏳ Pending |
+| — | Verify CoA PL/BS filter | ⏳ Pending |
+| — | UI Polish Milestone (global overhaul — do not fix UI piecemeal before this) | ⏳ Pending |
+| — | Confirm Currencies & FX / BDC completeness (dedicated tables vs. JSONB) | ⏳ Pending |
+| — | Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings) | ⏳ Pending |
+| M11 | Accounts Payable | ⏳ Pending |
+| M13 | Bank Reconciliation | ⏳ Pending |
+| M14 | Accounts Receivable | ⏳ Pending |
+| M16 | Budget Engine | ⏳ Pending |
+| M19 | Tax Engine | ⏳ Pending |
+| M10 | OCR & Receipt Scanning (Anthropic Vision API) | ⏳ Pending |
+| M15 | Payroll & HR | ⏳ Pending |
+| M17 | Inventory & Warehouse | ⏳ Pending |
+| M18 | Fixed Assets | ⏳ Pending |
+| M20 | AI Intelligence Layer (98%+ accuracy target) | ⏳ Pending |
 
 ## Module PRDs
 

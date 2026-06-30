@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: June 2026
+> Last updated: 2026-06-29 (full milestone reconciliation — see §5, §9, §10)
 
 ---
 
@@ -41,11 +41,11 @@ Ziva BI is an intelligent, fully automated, end-to-end business operations platf
 
 Ziva BI has **two portals**, not one:
 
-### 3.1 Super Admin Portal
+### 3.1 Super Admin Portal (Owner Portal)
 - Used exclusively by the Ziva BI internal team
-- Provisions tenants, controls module licensing, monitors usage, manages billing
+- **Partially built.** Tenant lifecycle management is live and working: list/detail, lifecycle transitions, suspend/reactivate, impersonation ("enter" tenant), and the full test↔live promotion engine (diff + apply). Routes under `/api/platform/*`, frontend at `/platform/tenants*`.
+- **Not built:** Billing, Trials (self-service provisioning), Team, Audit, Support, Settings. These have frontend page shells at `/platform/billing`, `/platform/trials`, `/platform/team`, `/platform/audit`, `/platform/support`, `/platform/settings` but **no backend at all** — no routes, no models, no Stripe/payment integration. See §10 (Super Admin Portal backend completion).
 - Completely separate from tenant portal
-- **Not yet built**
 
 ### 3.2 Tenant Portal (one portal, three role tiers)
 
@@ -74,6 +74,8 @@ This is the main portal. It serves both implementation consultants and the compa
 
 **Key rule:** Consultant > Power Admin > Functional Admin. Consultants can always override anything.
 
+> **Note:** `role_tier` enforcement is still partial — see §11.
+
 ---
 
 ## 4. IMPLEMENTATION SETUP SEQUENCE
@@ -93,9 +95,13 @@ When a new tenant is onboarded, the consultant follows this exact sequence. Sect
 11. Module Setup — one section per activated module
 12. Readiness & Go-live — checklist, mark tenant live
 
+All 12 sections above are implemented and working (see PROJECT_STATE.md §4.11, §6).
+
 ---
 
 ## 5. COMPLETED MILESTONES
+
+> Ordered chronologically. This section was reconciled on 2026-06-29 against the actual alembic migration chain, router registrations (`main.py`), and `docs/PROJECT_STATE.md` — several milestones below were previously undocumented or mislabeled here. See the bottom of this section for what changed.
 
 ### M1 — Foundation
 Database setup, project structure, base models, multi-tenant architecture.
@@ -108,6 +114,9 @@ Multi-line expense form, draft/submit flow, auto-save with PATCH (not duplicate 
 
 ### M4 — Approval Workflow
 LM to Finance approval chain, approve/reject/refer actions, approval matrix config.
+
+### M4+ — Approval Enhancements
+Refer-back, audit trail, immutable submission snapshots, separation-of-duties.
 
 ### M5 — Tenant User Management
 Invite users, assign roles, deactivate users, team management page.
@@ -163,15 +172,92 @@ Three GL coding modes. All M7 bugs fixed:
 - Drag-and-drop upload zones on line cards and report documents section
 - Collapsed line shows compact summary: GL chip, amount, dimension pills, doc indicator
 
-### M9 Bug Fixes (Rounds 1-3) — complete
-- Dimension values bulk upload fixed
-- Compact line cards
-- Split button in line header beside amount
-- Split logic corrected (subdivides parent total)
-- Upload state fixed
-- GL selector slim outlined style
-- Collapsed line summary
-- Drag-drop upload zones
+**M9 Bug Fixes (Rounds 1-3)** — dimension values bulk upload, compact line cards, split button placement, split logic correction, upload state fix, GL selector style, collapsed line summary, drag-drop zones.
+
+### M8.2 — Implementation Portal Redesign
+- Sidebar: 6-group structure (COMMON DATA | FINANCIALS | PEOPLE | WORKFLOW & ACCESS | MODULE SETUP | GO-LIVE), Tabler outline icons throughout
+- Implementation Mode banner for consultant role_tier (amber, 36px, non-dismissable)
+- Setup dashboard: progress bar, checklist cards with Tabler icons, correct locked/unlocked sequence per brief, green/amber/grey states
+- Organisation page: all identity fields (Legal & registration, Contact & address, Group & currency), Structure tree CRUD + template download + upload, Fiscal year with period generation
+- Module activation: split-panel (40/60), subscribed vs available groups, full MODULE_DETAILS per module, is_licensed enforcement (403 on unlicensed activate)
+- Dimensions: 3-tab layout (Dimension setup, Master data/values, Not using dimensions?), sequence alert, not-applicable endpoint (POST /api/setup/dimensions/not-applicable)
+- Dimension values: Download template button added beside Upload
+- CoA: expanded Add/Edit modals (all fields: hierarchy, FS mappings, group reporting), sequence note alert
+- Employees: 4-tab layout (Add employees, Employee list, Transfers & changes, Code config), 3 onboarding method cards (bulk upload, HR manual, self-onboarding invite)
+- Self-onboarding: public /onboard/[token] page, invite modal, backend token flow
+- api.ts: Omit<RequestInit, 'body'> fix for proper object body passing
+- Alembic migration l2m3n4o5p6q7: org_structure, fiscal_periods, employee_onboarding_tokens + new columns on tenants + tenant_org_config + tenant_modules
+
+**M8.2 Post-release Fixes:**
+- **Login & Auth fix** (migration `m3n4o5p6q7r8`): `first_name` column added to users table, auto-populated/backfilled; login redirects to `/dashboard/business/setup`; `api.ts` body serialization fixed
+- **Functional currency auto-detection** (no migration): `COUNTRY_CURRENCY_MAP` in `auth.py`/`setup.py`; org config seeded at signup; `functional_currency` protected via `PROTECTED_ORG_FIELDS`; signup page shows IAS 21 lock preview
+- **Signup page polish**: country auto-detect via `ipapi.co/json/`, full name label/helper text
+- **Org structure — edit/delete + entity_code** (migration `n4o5p6q7r8s9`): `entity_code` column for ERP profit centre codes, edit/delete buttons per node, rebuilt 2-sheet template, 7-column upload
+
+### M8.3 — Accounting Periods Engine
+> **Correction (2026-06-29):** this milestone was previously mislabeled in this document as "Currencies & FX." The alembic migration chain (`m8_3_accounting_periods` → `brief2_grace_journalblock_futureexception` → `brief3_close_checklist` → `brief4_yearend_auditlog`) confirms M8.3 is the **Accounting Periods Engine**. Currencies & FX is a separate, also-completed milestone documented below.
+
+- Period generation (monthly periods per fiscal year), grace windows, journal-block on closed periods, future-posting exceptions
+- Close checklist (configurable items, prepared/approved with separation-of-duties)
+- Soft close, hard close (sequential), reopen (super-admin only, audited)
+- Year-end audit log, two-stage statutory close (management close → audit grace → statutory close, permanent lock)
+- Tables: `accounting_periods`, `period_grace_overrides`, `future_posting_exceptions`, `close_checklist_items`, `period_checklist_completions`, `fiscal_year_states`, `period_audit_logs`
+
+**Period Management Enhancements** (committed, June 2026 → `17491da`):
+- `tenant_org_config.first_fiscal_year_end` — derives `fiscal_year_start_month`/`day` automatically for a company's first FY
+- Auto-generation triggers replace manual "Generate": on org settings save, and on last-period hard-close (next FY auto-created)
+- `DELETE /api/setup/periods/fiscal-year/{fiscal_year}` — delete all periods for a label, blocked if any period is closed
+- Fiscal year name format: 5 structured codes with live preview (was free-text)
+
+**Period Management Hardening** (committed `b3e70e3`, 2026-06-29):
+- Fixed duplicate-fiscal-year bug: changing format/start-month after periods existed could silently create a second duplicate period set. Fixed with an app-level overlap check plus DB-level `UQ(tenant_id, start_date)` (migration `k7l8m9n0o1p2`, replacing the old `UQ(tenant_id, fiscal_year, period_no)`). `backend/scripts/cleanup_duplicate_periods.py` cleaned existing duplicates pre-migration.
+- Fixed stub first-year (registration-truncated, e.g. Aug–Dec) gaps: three places hardcoded `period_no == 12` as "last period of the year" instead of `MAX(period_no)` — fixed in `management_close`, `get_period_checklist` (`backend/app/routers/setup.py`) and `decPeriod`/`formatFY` (periods page).
+
+### Currencies & FX
+Full implementation portal section, 4 tabs: Currencies (ISO 4217, functional currency locked per IAS 21, reporting currency dropdown), FX Rates (rate entry + history per pair, spot/average/closing/budget types), Revaluation Rules (per balance-type collapsible cards, directional netting default, live CoA GL search, NGN settlement note), BDC Register (bureau de change log for NGN compliance).
+
+**Backend:** working end-to-end via `GET/PATCH /api/setup/currencies`. **Architecture note:** storage is JSONB (`tenant_org_config.enabled_currencies`, `tenant_fx_config.fx_rates`/`revaluation_rules`) rather than the originally-scoped dedicated relational tables (`tenant_currencies`/`tenant_fx_rates`/`tenant_revaluation_rules`/`tenant_bdc_entries`). This is a deliberate implementation shortcut, not a gap — see §10 for the open question of whether to migrate to dedicated tables (e.g. for BDC register volume) or keep JSONB.
+
+### M8.4 — Tax & Statutory
+Implementation portal section for VAT, WHT, PAYE, and non-resident withholding — one card per tax type, configurable per tenant. Backend: `GET/PATCH /api/setup/tax`, JSONB storage on `tenant_tax_config` (`vat_config`, `wht_config`, `paye_config`, `other_statutory`).
+
+### GL Posting Engine & Reporting
+Synchronous expense→GL posting at final approval (same transaction — a GL failure rolls back the approval). `journal_entries`/`journal_lines` tables, immutable once posted (corrections via reversing entries). Trial balance and account ledger query builders. Endpoints: `/api/gl/trial-balance`, `/api/gl/accounts/{id}/ledger`.
+
+### Account Mapping & Bank Accounts
+Posting-role catalogue (`posting_roles`) with per-tenant GL mapping (`tenant_account_mappings`), control-account overrides (super-admin only), and a bank account register (`bank_accounts`, GL must be BS/SOFP, one default per currency). Endpoints: `/api/setup/account-mapping/*`, `/api/setup/bank-accounts/*`.
+
+### M9.0 — Shadow Test Environment (live-first clone model)
+13-step clone engine (`services/tenant_clone.py`) that, under the original design, created a test shadow tenant from a live tenant at signup. Superseded by M9.0.1's direction flip (below) — no longer invoked at signup, but still used on demand by a super admin to create a test shadow for a live tenant that doesn't already have one (e.g. a legacy/retrofitted tenant). Migration: `x4y5z6a7b8c9_m9_0_environment_architecture`.
+
+### M9.1 — Super Admin Portal (Owner Portal) — Tenant Lifecycle Slice
+Migration: `y5z6a7b8c9d0_m9_1_owner_portal`. Tenant list/detail, lifecycle transitions, suspend/reactivate, impersonation ("enter" tenant in implementation or support mode), and the unified test↔live promotion engine (diff + apply). See §3.1 for what's still missing (Billing/Trials/Team/Audit/Support/Settings).
+
+### User Profile, Sessions & 2FA
+Migration: `z6a7b8c9d0e1_profile_sessions_2fa`. Own-profile view/edit, password change, active session list with per-session revoke and "sign out everywhere else," TOTP 2FA enroll/verify/disable.
+
+### M9.0.1 — Test-first environment flow inversion (committed `b3e70e3`, 2026-06-29)
+Reconciled the tenant environment architecture per `docs/BRIEF_M9_0_1_test_first_environment_flow.md`, flipping from "live-first" (M9.0 shadow-tenant model — clone live → test at signup) to "test-first": signup creates *only* a test tenant; live is born second, only via explicit super-admin promotion.
+
+**What changed:**
+- Signup (`auth.py`) creates one tenant: `environment="test"`, `parent_tenant_id=NULL`, `lifecycle_status="in_implementation"`. No clone at signup.
+- Direction flip: `live.parent_tenant_id = test.id` (inverse of the old model).
+- The promotion engine (`platform.py`) was unified into one bidirectional resolver (`_resolve_promotion_pair`) handling both first promotion (creates live, mirrors `UserTenant` rows, copies org/tax/fx config) and repeat promotion (existing CoA/dimension/account-mapping diff behavior, unchanged).
+- Test environment stays active permanently after go-live — never archived.
+- Three redundant promote-style endpoints deprecated to `410 Gone`: `/api/tenant/promote` and a previously-undocumented duplicate `/api/platform/tenants/{id}/promote`. `mark_go_live` kept but guarded (400 if `tenant.environment != "live"`).
+- **Explicitly NOT done** (locked decision): no `environment` column added to any tenant-scoped table; no transaction/audit/approval history copied in any promotion path.
+
+**Outstanding from this milestone:** the pre-existing Red Bull live+test pair (created under the old direction) has not yet been retrofitted to the new `parent_tenant_id` direction. The retrofit script (`backend/scripts/retrofit_red_bull_test_first.py`, dry-run by default, `--apply` to commit, automatic `pg_dump` backup) is written and logic-checked but has not been run against the real local Postgres — it must be run locally (by Adeniyi or Claude Code), since this sandbox cannot reach `localhost:5432`. See `docs/PROJECT_STATE.md` §7/§8 for current status.
+
+---
+
+### What changed in this reconciliation (2026-06-29)
+
+This section was significantly out of date relative to shipped code. Fixed:
+- M8.3 was mislabeled as "Currencies & FX" — corrected to Accounting Periods Engine (the migration chain proves this).
+- Currencies & FX, M8.4 Tax & Statutory, GL Posting Engine, Account Mapping & Bank Accounts, the Super Admin Portal tenant-lifecycle slice, and Profile/Sessions/2FA were fully built but had no entry anywhere in this document.
+- Period Management Enhancements/Hardening and M9.0.1 were marked "uncommitted" — both are now committed and pushed (`b3e70e3`, confirmed against `origin/main`).
+- §9/§10 (below) were rewritten to reflect the real next milestone instead of the now-completed M8.3 Backend / M8.4 Tax items.
 
 ---
 
@@ -202,7 +288,7 @@ Architectural invariants that are durable decisions (the WHY):
 - **Cost center source of truth:** cost centers live in `org_structure`, NOT in `dimension_values`. Both `employees.cost_center_id` and `cost_center_config.cost_center_id` FK to `org_structure.id`.
 - **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusively in `tenant_org_config`. `tenant_fx_config` holds ONLY FX mechanics (rates, revaluation rules).
 - **Environment isolation:** test tenants are shadow tenants with distinct `tenant_id` values — NOT an environment column on shared tables. This was the explicit architectural choice (Option 3 in the M9 design session) over environment columns (Option 1) and schema-per-env (Option 2).
-- **Tenant lifecycle direction (M9.0.1, 2026-06-29):** signup creates ONLY a test tenant; live is born second, only via explicit super-admin promotion. `parent_tenant_id` runs test→live (live points back at the test it came from) — the inverse of the original live-first/clone design. Test stays active permanently after go-live; it's never archived. See the M9.0.1 entry below (§8) for the full change.
+- **Tenant lifecycle direction (M9.0.1, 2026-06-29):** signup creates ONLY a test tenant; live is born second, only via explicit super-admin promotion. `parent_tenant_id` runs test→live (live points back at the test it came from) — the inverse of the original live-first/clone design. Test stays active permanently after go-live; it's never archived.
 - **Expense→GL posting is synchronous, same-transaction** at final approval. This is intentional so a GL failure rolls back the approval — no partial state.
 
 ---
@@ -234,159 +320,40 @@ Architectural invariants that are durable decisions (the WHY):
 
 ---
 
-### M8.2 — Implementation Portal Redesign ✅ COMPLETE
-- Sidebar: 6-group structure (COMMON DATA | FINANCIALS | PEOPLE | WORKFLOW & ACCESS | MODULE SETUP | GO-LIVE), Tabler outline icons throughout
-- Implementation Mode banner for consultant role_tier (amber, 36px, non-dismissable)
-- Setup dashboard: progress bar, checklist cards with Tabler icons, correct locked/unlocked sequence per brief, green/amber/grey states
-- Organisation page: all identity fields (Legal & registration, Contact & address, Group & currency), Structure tree CRUD + template download + upload, Fiscal year with period generation
-- Module activation: split-panel (40/60), subscribed vs available groups, full MODULE_DETAILS per module, is_licensed enforcement (403 on unlicensed activate)
-- Dimensions: 3-tab layout (Dimension setup, Master data/values, Not using dimensions?), sequence alert, not-applicable endpoint (POST /api/setup/dimensions/not-applicable)
-- Dimension values: Download template button added beside Upload
-- CoA: expanded Add/Edit modals (all fields: hierarchy, FS mappings, group reporting), sequence note alert
-- Employees: 4-tab layout (Add employees, Employee list, Transfers & changes, Code config), 3 onboarding method cards (bulk upload, HR manual, self-onboarding invite)
-- Self-onboarding: public /onboard/[token] page, invite modal, backend token flow
-- api.ts: Omit<RequestInit, 'body'> fix for proper object body passing
-- Alembic migration l2m3n4o5p6q7: org_structure, fiscal_periods, employee_onboarding_tokens + new columns on tenants + tenant_org_config + tenant_modules
+## 9. NEXT MILESTONE
 
-### M8.3 — Currencies & FX ✅ COMPLETE (UI built; backend DB tables pending)
+> M8.3 Backend and M8.4 Tax & Statutory (the previous contents of this section) are both **done** — see §5. This section is rewritten to reflect the real current priority queue, in recommended build order.
 
-Full rebuild of the Currencies & FX implementation portal section. Four tabs:
+### Immediate (cleanup / consolidation, before new features)
+1. **Resolve `organisation/page.tsx` working-tree diff** — investigate and reconcile the large pending diff on this file before building on top of it.
+2. **Organisation tab restructuring** — per the latest brief/feedback on how the Organisation page should be laid out.
+3. **Verify CoA PL/BS filter** — confirm the account-type filter behaves correctly across both classification schemes.
+4. **UI Polish Milestone** — global UI overhaul (per §11, never done piecemeal). Do this before more feature surface area is added.
 
-1. **Currencies** — ISO 4217 dropdown to add active currencies per tenant; functional currency locked (IAS 21); reporting currency editable via dropdown
-2. **FX Rates** — rate entry form with date, currency pair, rate type (spot / average / closing / budget); rate history table per pair
-3. **Revaluation Rules** — one collapsible card per balance type (trade receivables, trade payables, cash & bank, intercompany, other). Each card: revaluation method selector, GL accounts for realized/unrealized gain/loss (CoA GL search), reversal GL preference, NGN settlement note for NGN-denominated FX. **Directional netting is the default revaluation method.** Complete/incomplete badge per card.
-4. **BDC Register** — bureau de change transaction log for NGN FX compliance
-
-Key decisions captured:
-- Directional netting is the default revaluation method (not gross)
-- All revaluation cards are independently collapsible
-- GL selection uses live CoA search (not hardcoded lists)
-- NGN-denominated FX balances show a settlement note (CBN compliance)
-
-**Backend status:** No new DB tables yet. Currencies, FX rates, revaluation rules, and BDC entries will require a new migration (tenant_currencies, tenant_fx_rates, tenant_revaluation_rules, tenant_bdc_entries) before the backend router is wired.
+### Next feature work
+5. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
+6. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
+7. **M11 — Accounts Payable**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable**, **M16 — Budget Engine**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory & Warehouse**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
 
 ---
 
-### M8.2 Post-release Fixes ✅ COMPLETE
-All committed and pushed in May 2026 session.
+## 10. FUTURE MILESTONES (recommended order)
 
-**Login & Auth fix** (migration `m3n4o5p6q7r8`):
-- `first_name` column added to users table; auto-populated from full_name on signup and backfilled for existing rows
-- Login redirects to `/dashboard/business/setup`; welcome greeting uses `first_name`
-- `api.ts` body serialization fixed (pre-stringified strings no longer double-encoded)
-
-**Functional currency auto-detection** (no migration needed):
-- `COUNTRY_CURRENCY_MAP` added to `auth.py` and `setup.py`
-- At business signup, a `TenantOrgConfig` row is seeded with `functional_currency` derived from `company_country`
-- `_get_or_create_org` falls back to tenant's country for legacy tenants with no org config row
-- `functional_currency` is protected in PATCH `/api/setup/org` via `PROTECTED_ORG_FIELDS` — can never be overwritten by user input
-- Signup page shows amber functional currency preview after country selection (IAS 21 lock note)
-- Organisation page reporting currency field replaced with Select dropdown (15 currencies)
-
-**Signup page polish**:
-- Country defaults to blank, auto-detected via `ipapi.co/json/` on mount with silent fallback
-- "Detecting your location…" placeholder shown during geolocation; swaps to select once resolved
-- Full name label: "Your full name" with helper text; placeholder changed to generic example
-
-**Org structure — edit/delete + entity_code** (migration `n4o5p6q7r8s9`):
-- `entity_code VARCHAR(100)` added to `org_structure` table — stores ERP profit centre / entity code for Legal entity nodes (e.g. Sage X3 profit centre N22341)
-- Edit button on each tree node row (hover to reveal): opens Edit modal with name, node_type, cost_center_code, entity_code fields; code is read-only
-- Delete button on each tree node row: soft-delete with confirmation prompt
-- `entity_code` badge (blue) shown on Legal entity nodes in tree view
-- `entity_code` field in Add node modal (shown only for Legal entity)
-- Template generator rebuilt: 2-sheet xlsx (Instructions + Org Structure), Node Type dropdown validation, conditional formatting (amber row + red cell for Cost center nodes missing Cost Center Code, green cell when present), Entity Code column added
-- Upload handler reads 7 columns (was 5); `VALID_TYPES` updated to include "Division / Business unit"
-
-### Period Management Enhancements ✅ COMPLETE (June 2026 — commits 384fd0e → 17491da)
-
-Full overhaul of period generation to be automatic and config-driven. No more manual FY label input.
-
-**New DB column (migration `j6k7l8m9n0o1`):**
-- `tenant_org_config.first_fiscal_year_end DATE NULL` — last day of the company's very first accounting year. When set, backend derives `fiscal_year_start_month`/`fiscal_year_start_day` automatically (next month, day 1). Validated to fall within one year of `date_of_registration`/`commencement_date`.
-
-**Auto-generation triggers (replaces manual "Generate" section in UI):**
-1. **On org settings save** (`PATCH /api/setup/org`): if current FY periods don't exist yet, silently generate them.
-2. **On last period hard-close**: when every period in a FY is `HARD_CLOSED`, automatically generate the next FY (capped at current year + 1).
-
-**New endpoint:**
-- `DELETE /api/setup/periods/fiscal-year/{fiscal_year}` — delete all periods + FiscalYearState for a label. Blocked (409) if any period is `SOFT_CLOSED`, `OVERDUE`, or `HARD_CLOSED`. Intended for pre-close corrections.
-
-**`POST /api/setup/periods/generate` changes:**
-- Now delegates to shared `_generate_periods_for_year()` helper (same logic used by both triggers).
-- Idempotent guard strengthened: 409 if *any* period exists for the label (was: only if HARD_CLOSED periods exist).
-- Bounds enforced: year ≥ `date_of_registration.year` AND year ≤ current calendar year.
-- Marked deprecated in docstring — manual use is now a fallback/override only.
-
-**Fiscal year name format:**
-- Frontend dropdown with 5 structured codes (was free-text input): `YYYY`, `FYYYYY`, `YYYY/YYYY`, `YYYY-YYYY`, `MMM YYYY - MMM YYYY`
-- Live preview label shown beneath dropdown (e.g. "Preview: FY2026")
-- All FY labels in the periods page (grid selector, year-end close heading, statutory close confirm) are now formatted via `formatFY()` using the tenant's stored format — not the raw stored value.
-
-**Stub first-year logic:**
-- `first_fiscal_year_end` takes precedence over the start_month/day clamp for the company's first FY.
-- Subsequent FYs always use configured `fiscal_year_start_month`/`fiscal_year_start_day`.
-- FY end date derived from config (day before next FY start) — never from fy_start + 12 months.
-
-**`_build_fy_label()` helper (backend, `routers/setup.py`):**
-- Handles all 5 new format codes plus legacy `{year}`/`{nextyear}`/`MMM` codes for backward compatibility.
-- Used by both auto-generation triggers and `parse_fy_start_year()`.
-
-### Period Management Hardening — duplicate-FY + stub-year fixes (2026-06-28, uncommitted)
-
-Two bugs found after the Period Management Enhancements above shipped, both root-caused to the same pattern: deriving behavior from *configuration* instead of *actual stored data*.
-
-1. **Duplicate fiscal years.** Changing `fiscal_year_name_format` or `fiscal_year_start_month` after periods already existed produced a new formatted FY label that didn't collide with the old one under the then-current `UQ(tenant_id, fiscal_year, period_no)` constraint — so the auto-generation triggers silently created a second, fully duplicate period set for the same calendar months. Fixed with an app-level date-range-overlap check plus a DB-level constraint change to `UQ(tenant_id, start_date)` (migration `k7l8m9n0o1p2`) — `start_date` is the one identity a period has that never changes regardless of label/format. `backend/scripts/cleanup_duplicate_periods.py` cleans existing duplicates before the migration can apply.
-2. **Stub first-year (registration-truncated) gaps.** A first FY clamped to the registration date (e.g. Aug–Dec, 5 periods) had no "Year-end close" section at all, and its dropdown showed an incorrect "Jan YYYY – Dec YYYY" label. Root cause: three places hardcoded the literal `period_no == 12` (or "December") as "the final period of the year" instead of computing `MAX(period_no)` for that fiscal year — `management_close` and `get_period_checklist` in `backend/app/routers/setup.py`, and `decPeriod` in the periods page. The FY label issue was a separate root cause in the same area: `formatFY()`'s `"MMM YYYY - MMM YYYY"` format derived the range purely from configured `fiscal_year_start_month`, ignoring the period's real dates — fixed by deriving the displayed range from the earliest/latest period `start_date`/`end_date` when periods are available.
-
-**Status:** code changes complete and verified (`ast.parse`/`py_compile` backend, `npx tsc --noEmit` frontend — zero errors). Migration applied to local DB. **Not yet committed/pushed** — see `docs/PROJECT_STATE.md` §8 for the exact file list pending commit.
-
-### M9.0.1 — Test-first environment flow inversion (2026-06-29, uncommitted)
-
-Reconciled the tenant environment architecture per `docs/BRIEF_M9_0_1_test_first_environment_flow.md`, flipping it from "live-first" (the original M9.0 shadow-tenant model — clone live → test at signup) to "test-first": signup now creates *only* a test tenant, and live is born second, only via an explicit super-admin promotion.
-
-**What changed:**
-- Signup (`auth.py`) creates a single tenant: `environment="test"`, `parent_tenant_id=NULL`, `lifecycle_status="in_implementation"`. No clone runs at signup.
-- Direction flip: live is created second, with `live.parent_tenant_id = test.id` — the inverse of the old model, where test pointed at live.
-- The Phase 3a promotion engine (`platform.py`, `/promotion/diff` + `/promotion/apply`) was unified into one bidirectional resolver (`_resolve_promotion_pair`) that handles both a tenant's first promotion (creates live, mirrors every `UserTenant` row test→live to auto-grant access, copies org/tax/fx config) and repeat promotion (existing Phase 3a CoA/dimension/account-mapping diff behavior, unchanged). Trigger remains super-admin only.
-- Test environment stays active permanently after go-live — it is never archived.
-- Three now-redundant promote-style endpoints were deprecated to `410 Gone` (not removed, so old clients get a clear signal): `/api/tenant/promote`, and a previously-undocumented duplicate `/api/platform/tenants/{id}/promote` found mid-implementation. `mark_go_live` (`/api/setup/go-live`) was kept but guarded — 400 if `tenant.environment != "live"`.
-- Frontend: the live/test environment toggle on the platform tenant detail page only renders once a live counterpart exists; `PromotionReviewDialog` branches its copy (title, warning banner, empty-diff state, success message, footer button) between "create live" (first promotion) and "promote" (repeat) framing; the business-side go-live page now routes to the platform promotion review instead of calling the old endpoint directly.
-- **Explicitly NOT done** (per the brief, locked decisions): no `environment` column added to any of the ~30 tenant-scoped tables; no transaction/audit/approval history copied in any promotion path.
-- **Not yet done:** retrofit of the existing Red Bull live+test pair (created under the old direction) to the new `parent_tenant_id` direction — script written (`backend/scripts/retrofit_red_bull_test_first.py`), dry-run by default with `--apply` to commit and an automatic `pg_dump` backup first. Logic-checked against fabricated tenant shapes (no live Postgres in this sandbox to test against for real). Must run against the user's real local Postgres, unreachable from this sandbox. Until that runs, Red Bull's pair keeps the old direction (test→live) — see `docs/PROJECT_STATE.md` §7.
-
-**Status:** code changes complete and verified (`py_compile` backend on all 5 touched files, `npx tsc --noEmit` frontend — zero errors across the whole project). Two unrelated pre-existing file-corruption issues (NUL-byte padding, stale bash-mount cache) were found and fixed in passing during verification, with no content lost. **Not yet committed/pushed.** Red Bull retrofit (task tracked separately) not started.
-
----
-
-## 9. NEXT MILESTONE — M8.3 Backend + M8.4 Tax & Statutory
-
-### M8.3 Backend (immediate — unblock the Currencies & FX UI)
-The Currencies & FX UI is fully built but has no backend storage. This milestone creates the DB layer:
-
-1. Alembic migration: `tenant_currencies`, `tenant_fx_rates`, `tenant_revaluation_rules`, `tenant_bdc_entries` tables
-2. FastAPI router: `/api/setup/currencies/*` — CRUD for all four entities
-3. Wire frontend API calls (currently returning mock/empty state)
-4. Validation: functional currency cannot be deleted; rate pair uniqueness per date
-
-### M8.4 Tax & Statutory
-Implementation portal section for VAT, WHT, PAYE, and non-resident withholding rules. One card per tax type, configurable per tenant.
-
----
-
-## 10. FUTURE MILESTONES
-
-- M10 — OCR & Receipt Scanning (Anthropic Vision API)
-- M11 — Accounts Payable
-- M12 — Super Admin Portal
-- M13 — Bank Reconciliation
-- M14 — Accounts Receivable
-- M15 — Payroll & HR
-- M16 — Budget Engine
-- M17 — Inventory & Warehouse
-- M18 — Fixed Assets
-- M19 — Tax Engine
-- M20 — AI Intelligence Layer (98%+ accuracy target)
-- UI Polish Milestone — global UI overhaul (do not fix UI piecemeal before this)
+1. Organisation page diff resolution + Organisation tab restructuring (cleanup)
+2. CoA PL/BS filter verification (cleanup)
+3. UI Polish Milestone — global UI overhaul (do not fix UI piecemeal before this)
+4. Currencies & FX / BDC completeness decision
+5. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
+6. M11 — Accounts Payable
+7. M13 — Bank Reconciliation
+8. M14 — Accounts Receivable
+9. M16 — Budget Engine
+10. M19 — Tax Engine
+11. M10 — OCR & Receipt Scanning (Anthropic Vision API)
+12. M15 — Payroll & HR
+13. M17 — Inventory & Warehouse
+14. M18 — Fixed Assets
+15. M20 — AI Intelligence Layer (98%+ accuracy target)
 
 ---
 
@@ -395,8 +362,9 @@ Implementation portal section for VAT, WHT, PAYE, and non-resident withholding r
 > Current issues register (with severity, evidence, and fix guidance) is maintained in **`docs/PROJECT_STATE.md §8 Known Issues Register`**. Only durable, architectural-level notes belong here.
 
 - **UI polish deferred to dedicated milestone** — do not fix UI piecemeal across feature milestones. One dedicated UI polish milestone will do a global overhaul.
-- **role_tier enforcement is incomplete** — `role_tier` column exists on `user_tenants` and is included in the JWT, but full gate enforcement (blocking power_admin from overriding consultant-locked sections) is not wired end to end. Addressed in the ZIVA_BI_ROADMAP.md Phase 1 work.
+- **role_tier enforcement is incomplete** — `role_tier` column exists on `user_tenants` and is included in the JWT, but full gate enforcement (blocking power_admin from overriding consultant-locked sections) is not wired end to end.
 - **"Invalid or expired token" errors** on some admin pages after extended sessions — restart backend + re-login resolves it. Root cause is token expiry without smooth refresh; will be addressed in a dedicated session management improvement.
+- **Documentation maintenance lapsed** — the rule in `CLAUDE.md` ("update MASTER_CONTEXT.md after every completed milestone") was not followed for roughly 10 consecutive milestones, which is why this document required the 2026-06-29 reconciliation in §5. Going forward, every completed milestone gets an entry here in the same session it ships, not retroactively.
 
 ---
 
@@ -420,4 +388,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-06-29 (M9.0.1 test-first environment flow inversion added, pending commit; last pushed commit 17491da). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-06-29 (full milestone reconciliation — M8.3 mislabel corrected, ~7 undocumented completed milestones added to §5, §9/§10 rewritten; last pushed commit `b3e70e3`, confirmed against `origin/main`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
