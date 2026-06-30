@@ -227,6 +227,13 @@ Synchronous expense→GL posting at final approval (same transaction — a GL fa
 ### Account Mapping & Bank Accounts
 Posting-role catalogue (`posting_roles`) with per-tenant GL mapping (`tenant_account_mappings`), control-account overrides (super-admin only), and a bank account register (`bank_accounts`, GL must be BS/SOFP, one default per currency). Endpoints: `/api/setup/account-mapping/*`, `/api/setup/bank-accounts/*`.
 
+### Organisation Page / Tax Restructuring (BRIEF-0, status corrected 2026-06-30)
+> **Doc lapse, same pattern as the M9.0.1 retrofit:** this was scoped as "Organisation tab restructuring," carried as a pending item in §9/§10 and Cowork task #36, with no record it had shipped. Reading the actual current code (2026-06-30) confirms `docs/BRIEF-0-org-tax-restructure.md` is **fully implemented**, almost certainly landed silently alongside the M8.3/M8.4 work. No further build needed — this entry just closes the loop.
+
+- Organisation page's Configuration tab is flattened exactly as specified: no sub-tabs, just **Financial features** then a divider then **Governance**, each with its own save button (`organisation/page.tsx`, `tab === "config"` block). No fiscal-year or tax-applicability content remains on this page.
+- Fiscal year settings (`fiscal_year_start_month`/`_day`, `period_closing_frequency`, `generatePeriods`) live on the dedicated Period Management page (`frontend/src/app/dashboard/business/setup/periods/page.tsx`), confirmed by direct grep — this is the M8.3 Accounting Periods Engine page above.
+- Tax applicability is the first, gating tab on the Tax & Statutory page (`frontend/src/app/dashboard/business/setup/tax/page.tsx`): `type Tab = "applicability" | "vat" | "wht" | "paye" | "other"` — matching BRIEF-0's spec exactly.
+
 ### M9.0 — Shadow Test Environment (live-first clone model)
 13-step clone engine (`services/tenant_clone.py`) that, under the original design, created a test shadow tenant from a live tenant at signup. Superseded by M9.0.1's direction flip (below) — no longer invoked at signup, but still used on demand by a super admin to create a test shadow for a live tenant that doesn't already have one (e.g. a legacy/retrofitted tenant). Migration: `x4y5z6a7b8c9_m9_0_environment_architecture`.
 
@@ -326,7 +333,7 @@ Architectural invariants that are durable decisions (the WHY):
 
 ### Immediate (cleanup / consolidation, before new features)
 1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
-2. **Organisation tab restructuring** — per the latest brief/feedback on how the Organisation page should be laid out.
+2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
 3. **Verify CoA PL/BS filter** — confirm the account-type filter behaves correctly across both classification schemes.
 4. **UI Polish Milestone** — global UI overhaul (per §11, never done piecemeal). Do this before more feature surface area is added.
 
@@ -339,21 +346,20 @@ Architectural invariants that are durable decisions (the WHY):
 
 ## 10. FUTURE MILESTONES (recommended order)
 
-1. Organisation page diff resolution + Organisation tab restructuring (cleanup)
-2. CoA PL/BS filter verification (cleanup)
-3. UI Polish Milestone — global UI overhaul (do not fix UI piecemeal before this)
-4. Currencies & FX / BDC completeness decision
-5. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
-6. M11 — Accounts Payable
-7. M13 — Bank Reconciliation
-8. M14 — Accounts Receivable
-9. M16 — Budget Engine
-10. M19 — Tax Engine
-11. M10 — OCR & Receipt Scanning (Anthropic Vision API)
-12. M15 — Payroll & HR
-13. M17 — Inventory & Warehouse
-14. M18 — Fixed Assets
-15. M20 — AI Intelligence Layer (98%+ accuracy target)
+1. CoA PL/BS filter verification (cleanup)
+2. UI Polish Milestone — global UI overhaul (do not fix UI piecemeal before this)
+3. Currencies & FX / BDC completeness decision
+4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
+5. M11 — Accounts Payable
+6. M13 — Bank Reconciliation
+7. M14 — Accounts Receivable
+8. M16 — Budget Engine
+9. M19 — Tax Engine
+10. M10 — OCR & Receipt Scanning (Anthropic Vision API)
+11. M15 — Payroll & HR
+12. M17 — Inventory & Warehouse
+13. M18 — Fixed Assets
+14. M20 — AI Intelligence Layer (98%+ accuracy target)
 
 ---
 

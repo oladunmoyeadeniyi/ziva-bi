@@ -129,7 +129,7 @@ ruff check app/
 | — | User Profile, Sessions & 2FA | ✅ Done |
 | M9.0.1 | Test-first tenant environment flow inversion + unified promotion engine | ✅ Done |
 | — | Resolve `organisation/page.tsx` working-tree diff (was CRLF noise + 1 legit small fix — see MASTER_CONTEXT §9) | ✅ Done |
-| — | Organisation tab restructuring | ⏳ Pending |
+| — | Organisation tab restructuring (BRIEF-0 — confirmed already shipped 2026-06-30, was a doc lapse, not a build) | ✅ Done |
 | — | Verify CoA PL/BS filter | ⏳ Pending |
 | — | UI Polish Milestone (global overhaul — do not fix UI piecemeal before this) | ⏳ Pending |
 | — | Confirm Currencies & FX / BDC completeness (dedicated tables vs. JSONB) | ⏳ Pending |
