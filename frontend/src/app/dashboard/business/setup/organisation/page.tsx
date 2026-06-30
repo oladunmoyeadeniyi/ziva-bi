@@ -567,7 +567,7 @@ function OrganisationPage() {
                 const maxFyEndDate = (() => {
                   if (!anchorDate) return "";
                   const d = new Date(anchorDate + "T00:00:00");
-                  d.setFullYear(d.getFullYear() + 1);
+                  d.setFullYear(d.getFullYear() + 2);
                   d.setDate(d.getDate() - 1);
                   return d.toISOString().slice(0, 10);
                 })();
@@ -576,8 +576,9 @@ function OrganisationPage() {
                 return (
                   <>
                     <Input
+                      key={`fye-${org.tenant_id}`}
                       type="date"
-                      value={org.first_fiscal_year_end ?? ""}
+                      defaultValue={org.first_fiscal_year_end ?? ""}
                       min={anchorDate || undefined}
                       max={maxFyEndDate || undefined}
                       onBlur={e => {
@@ -586,7 +587,7 @@ function OrganisationPage() {
                     />
                     {anchorDate && (
                       <p className="text-xs text-gray-500 mt-1">
-                        The last day of your first accounting year. Must be within one year of your {earlierLabel} date ({anchorFmt}).
+                        The last day of your first accounting year. Must be within two years of your {earlierLabel} date ({anchorFmt}).
                       </p>
                     )}
                   </>

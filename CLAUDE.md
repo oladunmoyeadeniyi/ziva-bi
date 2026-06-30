@@ -128,7 +128,7 @@ ruff check app/
 | M9.1 | Super Admin Portal — tenant lifecycle slice (list/detail/lifecycle/suspend/enter/promote) | ✅ Done |
 | — | User Profile, Sessions & 2FA | ✅ Done |
 | M9.0.1 | Test-first tenant environment flow inversion + unified promotion engine | ✅ Done |
-| — | Resolve `organisation/page.tsx` working-tree diff | ⏳ Pending |
+| — | Resolve `organisation/page.tsx` working-tree diff (was CRLF noise + 1 legit small fix — see MASTER_CONTEXT §9) | ✅ Done |
 | — | Organisation tab restructuring | ⏳ Pending |
 | — | Verify CoA PL/BS filter | ⏳ Pending |
 | — | UI Polish Milestone (global overhaul — do not fix UI piecemeal before this) | ⏳ Pending |

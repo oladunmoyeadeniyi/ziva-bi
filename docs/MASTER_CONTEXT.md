@@ -325,7 +325,7 @@ Architectural invariants that are durable decisions (the WHY):
 > M8.3 Backend and M8.4 Tax & Statutory (the previous contents of this section) are both **done** — see §5. This section is rewritten to reflect the real current priority queue, in recommended build order.
 
 ### Immediate (cleanup / consolidation, before new features)
-1. **Resolve `organisation/page.tsx` working-tree diff** — investigate and reconcile the large pending diff on this file before building on top of it.
+1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
 2. **Organisation tab restructuring** — per the latest brief/feedback on how the Organisation page should be laid out.
 3. **Verify CoA PL/BS filter** — confirm the account-type filter behaves correctly across both classification schemes.
 4. **UI Polish Milestone** — global UI overhaul (per §11, never done piecemeal). Do this before more feature surface area is added.
