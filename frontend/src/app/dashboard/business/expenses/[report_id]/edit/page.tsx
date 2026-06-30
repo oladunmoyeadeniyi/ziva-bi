@@ -16,6 +16,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 import ExpenseItemPicker, {
   type CategoryForForm,
   type GLSearchResult,
@@ -835,7 +838,7 @@ export default function EditExpensePage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="px-6 py-8 max-w-5xl mx-auto">
+    <PageContainer maxWidth="5xl">
 
       {/* GL Picker */}
       {pickerFor && cfg.coding_level > 0 && (
@@ -886,14 +889,10 @@ export default function EditExpensePage() {
             </div>
             {approverError && <p className="mt-3 text-xs text-red-600">{approverError}</p>}
             <div className="flex gap-3 justify-end mt-6">
-              <button type="button" onClick={() => { setShowApproverModal(false); setApproverError(null); }}
-                disabled={isSubmitting} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
-                Cancel
-              </button>
-              <button type="button" onClick={handleSubmitWithApprovers} disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setShowApproverModal(false); setApproverError(null); }} disabled={isSubmitting}>Cancel</Button>
+              <Button variant="primary" onClick={handleSubmitWithApprovers} disabled={isSubmitting} loading={isSubmitting}>
                 {isSubmitting ? "Submitting…" : "Confirm & Submit"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -903,9 +902,7 @@ export default function EditExpensePage() {
       <div className="mb-6 flex items-start justify-between">
         <div>
           <button type="button" onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700 mb-2">← Back</button>
-          <h1 className="text-xl font-bold text-gray-900">
-            {reportNumber ? `Edit ${reportNumber}` : "Edit Expense Report"}
-          </h1>
+          <PageHeading title={reportNumber ? `Edit ${reportNumber}` : "Edit Expense Report"} />
           {!canEdit && (
             <p className="mt-1 text-xs font-medium text-amber-600">
               This report is in {originalStatus.replace(/_/g, " ")} status and cannot be edited.
@@ -1398,20 +1395,15 @@ export default function EditExpensePage() {
       {/* Action buttons */}
       {canEdit && (
         <div className="flex items-center gap-3 justify-end">
-          <button type="button" onClick={() => router.back()}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-            Cancel
-          </button>
-          <button type="button" onClick={handleSaveDraft} disabled={isSubmitting}
-            className="px-4 py-2 text-sm font-medium text-gray-800 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+          <Button variant="secondary" onClick={() => router.back()}>Cancel</Button>
+          <Button variant="secondary" onClick={handleSaveDraft} disabled={isSubmitting} loading={isSubmitting}>
             {isSubmitting ? "Saving…" : "Save Draft"}
-          </button>
-          <button type="button" onClick={handleOpenApproverModal} disabled={isSubmitting}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+          </Button>
+          <Button variant="primary" onClick={handleOpenApproverModal} disabled={isSubmitting} loading={isSubmitting}>
             {isSubmitting ? "Preparing…" : incompleteCount > 0 ? `Submit (${incompleteCount} incomplete)` : "Submit for Approval"}
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

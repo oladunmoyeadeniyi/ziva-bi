@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface FinanceReviewer {
   id: string;
@@ -158,18 +160,10 @@ export default function FinanceReviewPage() {
   return (
     <div className="p-6">
       <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Finance Review</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Configure finance reviewers for each module
-          </p>
-        </div>
-        <button
-          onClick={() => { setAddError(null); setAddOpen(true); }}
-          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
+        <PageHeading title="Finance Review" subtitle="Configure finance reviewers for each module" />
+        <Button variant="primary" onClick={() => { setAddError(null); setAddOpen(true); }}>
           + Add Reviewer
-        </button>
+        </Button>
       </div>
 
       {/* Module tabs */}
@@ -339,19 +333,12 @@ export default function FinanceReviewPage() {
             </div>
 
             <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setAddOpen(false)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
+              <Button variant="secondary" onClick={() => setAddOpen(false)}>
                 Cancel
-              </button>
-              <button
-                onClick={handleAdd}
-                disabled={addSaving || !addForm.user_id}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="primary" onClick={handleAdd} disabled={addSaving || !addForm.user_id} loading={addSaving}>
                 {addSaving ? "Adding…" : "Add Reviewer"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -404,19 +391,12 @@ export default function FinanceReviewPage() {
             </div>
 
             <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setEditOpen(false)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
+              <Button variant="secondary" onClick={() => setEditOpen(false)}>
                 Cancel
-              </button>
-              <button
-                onClick={handleEdit}
-                disabled={editSaving}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="primary" onClick={handleEdit} disabled={editSaving} loading={editSaving}>
                 {editSaving ? "Saving…" : "Save Changes"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -431,18 +411,12 @@ export default function FinanceReviewPage() {
               This reviewer will be removed from the {moduleLabel} finance review chain.
             </p>
             <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setDeleteId(null)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
+              <Button variant="secondary" onClick={() => setDeleteId(null)}>
                 Cancel
-              </button>
-              <button
-                onClick={() => handleDelete(deleteId)}
-                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
-              >
+              </Button>
+              <Button variant="danger" onClick={() => handleDelete(deleteId)}>
                 Remove
-              </button>
+              </Button>
             </div>
           </div>
         </div>

@@ -12,6 +12,8 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 const MODULE_INFO: Record<string, {
   label: string;
@@ -207,12 +209,12 @@ export default function ModuleStubPage() {
   }
 
   return (
-    <div className="p-8 max-w-2xl">
+    <PageContainer maxWidth="2xl">
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
         <span className="text-3xl leading-none">{info.icon}</span>
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">{info.label}</h1>
+          <PageHeading title={info.label} />
           <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 bg-amber-100 text-amber-700 border border-amber-300 rounded-full mt-1">
             Configuration coming soon
           </span>
@@ -256,6 +258,6 @@ export default function ModuleStubPage() {
           ← Back to setup dashboard
         </Link>
       </div>
-    </div>
+    </PageContainer>
   );
 }

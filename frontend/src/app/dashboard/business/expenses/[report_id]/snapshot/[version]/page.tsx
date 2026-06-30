@@ -11,6 +11,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 interface SnapshotLine {
   line_number: number;
@@ -79,19 +81,19 @@ export default function SnapshotPage() {
 
   if (isLoading) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto space-y-4">
+      <PageContainer maxWidth="5xl" className="space-y-4">
         <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
         <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
-      </div>
+      </PageContainer>
     );
   }
   if (error || !snapshot) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
+      <PageContainer maxWidth="5xl">
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Snapshot not found."}
         </div>
-      </div>
+      </PageContainer>
     );
   }
 
@@ -99,11 +101,11 @@ export default function SnapshotPage() {
   const grandTotal = data.lines.reduce((sum, l) => sum + parseFloat(l.amount), 0);
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
+    <PageContainer maxWidth="5xl">
       <div className="mb-6">
         <button onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700 mb-2">← Back</button>
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-gray-900">Submission Snapshot</h1>
+          <PageHeading title="Submission Snapshot" />
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
             Version {snapshot.version}
           </span>
@@ -173,6 +175,6 @@ export default function SnapshotPage() {
           </table>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }

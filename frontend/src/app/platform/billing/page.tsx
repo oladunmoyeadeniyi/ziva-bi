@@ -5,10 +5,13 @@
  * Real content: post-v1 (subscription plans, MRR tracking, invoicing).
  */
 
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+
 export default function PlatformBillingPage() {
   return (
-    <div className="p-8 max-w-4xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Billing</h1>
+    <PageContainer maxWidth="4xl">
+      <PageHeading title="Billing" />
       <p className="text-sm text-gray-500 mb-8">
         Subscription plans, MRR tracking, and invoicing per tenant.
       </p>
@@ -52,6 +55,6 @@ export default function PlatformBillingPage() {
           ))}
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }

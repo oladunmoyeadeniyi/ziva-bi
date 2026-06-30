@@ -16,6 +16,9 @@ import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -421,7 +424,7 @@ function EmployeesPage() {
   );
 
   return (
-    <div className="px-6 py-8 max-w-6xl">
+    <PageContainer maxWidth="6xl">
       <button type="button" onClick={() => router.push("/dashboard/business/setup")}
         className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
@@ -434,7 +437,7 @@ function EmployeesPage() {
           Back to Dimensions
         </button>
       )}
-      <h1 className="text-xl font-bold text-gray-900 mb-1">Employees</h1>
+      <PageHeading title="Employees" />
       <p className="text-sm text-gray-500 mb-5">Manage your employee master data. Employees can be mapped to cost centers and used as dimension values.</p>
 
       {/* Tabs */}
@@ -470,10 +473,9 @@ function EmployeesPage() {
                   className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
                   {downloadingTemplate ? "…" : "Download template"}
                 </button>
-                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
-                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                <Button variant="primary" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading} loading={uploading}>
                   {uploading ? "Uploading…" : "Upload file"}
-                </button>
+                </Button>
                 <input type="file" ref={fileInputRef} accept=".xlsx,.csv"
                   onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0])} className="hidden" />
               </div>
@@ -502,10 +504,9 @@ function EmployeesPage() {
                 <p className="text-sm font-semibold text-gray-800">HR manual entry</p>
                 <p className="text-xs text-gray-500 mt-1">HR fills in all details directly in the portal. Good for single new hires.</p>
               </div>
-              <button type="button" onClick={() => setShowAdd(true)}
-                className="mt-auto px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+              <Button variant="primary" size="sm" className="mt-auto" onClick={() => setShowAdd(true)}>
                 Add employee
-              </button>
+              </Button>
             </div>
 
             {/* Self-onboarding */}
@@ -515,10 +516,9 @@ function EmployeesPage() {
                 <p className="text-sm font-semibold text-gray-800">Self-onboarding link</p>
                 <p className="text-xs text-gray-500 mt-1">System sends a secure link to the new hire. They fill their own details. HR reviews and approves.</p>
               </div>
-              <button type="button" onClick={() => setShowInvite(true)}
-                className="mt-auto px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+              <Button variant="primary" size="sm" className="mt-auto" onClick={() => setShowInvite(true)}>
                 Send invite
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -541,7 +541,7 @@ function EmployeesPage() {
       {activeTab === "transfers" && (
         <div>
           <p className="text-sm text-gray-500 mb-4">Initiate cost center transfers per employee. Use the Employee list tab to click Transfer on a row.</p>
-          <button type="button" onClick={() => setActiveTab("list")} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Go to Employee list →</button>
+          <Button variant="primary" onClick={() => setActiveTab("list")}>Go to Employee list →</Button>
         </div>
       )}
 
@@ -549,7 +549,7 @@ function EmployeesPage() {
       {activeTab === "config" && (
         <div>
           <p className="text-sm text-gray-500 mb-4">Update employee codes. Use the Employee list tab to click Code on a row.</p>
-          <button type="button" onClick={() => setActiveTab("list")} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Go to Employee list →</button>
+          <Button variant="primary" onClick={() => setActiveTab("list")}>Go to Employee list →</Button>
         </div>
       )}
 
@@ -610,13 +610,12 @@ function EmployeesPage() {
                   </div>
                 )}
                 <div className="flex gap-3 justify-end">
-                  <button type="button" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}
-                    className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-                  <button type="button" onClick={handleBulkAction}
+                  <Button variant="secondary" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}>Cancel</Button>
+                  <Button variant="primary" onClick={handleBulkAction}
                     disabled={bulkProcessing || (bulkAction === "delete" && bulkConfirmText !== "DELETE")}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                    loading={bulkProcessing}>
                     {bulkProcessing ? "Processing…" : "Confirm"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -725,13 +724,12 @@ function EmployeesPage() {
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
-              <button type="button" onClick={() => { setShowAdd(false); setAddError(null); }} disabled={adding}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-              <button type="button" onClick={handleAdd}
+              <Button variant="secondary" onClick={() => { setShowAdd(false); setAddError(null); }} disabled={adding}>Cancel</Button>
+              <Button variant="primary" onClick={handleAdd}
                 disabled={adding || !addForm.first_name.trim() || !addForm.last_name.trim() || !addForm.email.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                loading={adding}>
                 {adding ? "Adding…" : "Add Employee"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -765,12 +763,10 @@ function EmployeesPage() {
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
-              <button type="button" onClick={() => { setEditEmpId(null); setEditError(null); }} disabled={editing}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-              <button type="button" onClick={handleEdit} disabled={editing}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setEditEmpId(null); setEditError(null); }} disabled={editing}>Cancel</Button>
+              <Button variant="primary" onClick={handleEdit} disabled={editing} loading={editing}>
                 {editing ? "Saving…" : "Save Changes"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -796,12 +792,10 @@ function EmployeesPage() {
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-4">
-              <button type="button" onClick={() => setTransferEmpId(null)} disabled={transferring}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-              <button type="button" onClick={handleTransfer} disabled={transferring || !transferCC || !transferDate}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => setTransferEmpId(null)} disabled={transferring}>Cancel</Button>
+              <Button variant="primary" onClick={handleTransfer} disabled={transferring || !transferCC || !transferDate} loading={transferring}>
                 {transferring ? "Transferring…" : "Transfer"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -834,12 +828,10 @@ function EmployeesPage() {
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-4">
-              <button type="button" onClick={() => setCodeUpdateEmpId(null)} disabled={updatingCode}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-              <button type="button" onClick={handleCodeUpdate} disabled={updatingCode || !newCode || !codeEffectiveDate}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => setCodeUpdateEmpId(null)} disabled={updatingCode}>Cancel</Button>
+              <Button variant="primary" onClick={handleCodeUpdate} disabled={updatingCode || !newCode || !codeEffectiveDate} loading={updatingCode}>
                 {updatingCode ? "Updating…" : "Update Code"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -925,18 +917,17 @@ function EmployeesPage() {
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
-              <button type="button" onClick={() => { setShowInvite(false); setInviteError(null); }} disabled={inviting}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">Cancel</button>
-              <button type="button" onClick={handleInvite}
+              <Button variant="secondary" onClick={() => { setShowInvite(false); setInviteError(null); }} disabled={inviting}>Cancel</Button>
+              <Button variant="primary" onClick={handleInvite}
                 disabled={inviting || !inviteForm.first_name.trim() || !inviteForm.last_name.trim() || !inviteForm.email.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+                loading={inviting}>
                 {inviting ? "Sending…" : "Send invite"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

@@ -17,6 +17,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PromotionReviewDialog from "@/components/PromotionReviewDialog";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -219,7 +222,7 @@ export default function TenantDetailPage() {
 
   if (error || !tenant) {
     return (
-      <div className="p-8 max-w-3xl">
+      <PageContainer maxWidth="3xl">
         <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {error ?? "Tenant not found."}
         </div>
@@ -231,7 +234,7 @@ export default function TenantDetailPage() {
           <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
           Back
         </button>
-      </div>
+      </PageContainer>
     );
   }
 
@@ -257,7 +260,7 @@ export default function TenantDetailPage() {
   };
 
   return (
-    <div className="p-8 max-w-4xl space-y-5">
+    <PageContainer maxWidth="4xl" className="space-y-5">
 
       {/* Back */}
       <Link
@@ -271,7 +274,7 @@ export default function TenantDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">{tenant.name}</h1>
+          <PageHeading title={tenant.name} />
           <p className="text-sm text-gray-400 font-mono mt-0.5">{tenant.slug}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0 mt-1">
@@ -313,14 +316,9 @@ export default function TenantDetailPage() {
             <p className="text-sm text-gray-600">
               Lifecycle: <strong>{tenant.lifecycle_status.replace(/_/g, " ")}</strong> — full configuration access.
             </p>
-            <button
-              type="button"
-              onClick={() => doEnter()}
-              disabled={entering}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
+            <Button variant="primary" onClick={() => doEnter()} loading={entering}>
               {entering ? "Entering…" : "Enter tenant (configure)"}
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -341,14 +339,9 @@ export default function TenantDetailPage() {
               </div>
               {tenant.test_environment && (
                 <div className="space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => doEnter("test")}
-                    disabled={entering}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                  >
+                  <Button variant="primary" onClick={() => doEnter("test")} loading={entering}>
                     {entering ? "Entering…" : "Enter test (edit)"}
-                  </button>
+                  </Button>
                   <p className="text-xs text-gray-400">Full edit on the test shadow.</p>
                 </div>
               )}
@@ -376,14 +369,14 @@ export default function TenantDetailPage() {
               <option value="in_implementation">In implementation</option>
               <option value="live">Live</option>
             </select>
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={setLifecycle}
               disabled={settingLifecycle || actioning || newLifecycle === tenant.lifecycle_status}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              loading={settingLifecycle}
             >
               {settingLifecycle ? "Saving…" : "Set lifecycle"}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -391,14 +384,14 @@ export default function TenantDetailPage() {
 
         {!isSuspended ? (
           <div className="space-y-1">
-            <button
-              type="button"
+            <Button
+              variant="danger"
               onClick={suspendTenant}
               disabled={actioning || settingLifecycle}
-              className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50"
+              loading={actioning}
             >
               {actioning ? "Processing…" : "Suspend tenant"}
-            </button>
+            </Button>
             <p className="text-xs text-gray-400">Blocks all user logins. Prior status saved for reactivation.</p>
           </div>
         ) : (
@@ -472,13 +465,9 @@ export default function TenantDetailPage() {
                 </div>
 
                 <div className="pt-1 border-t border-amber-200">
-                  <button
-                    type="button"
-                    onClick={() => setShowReviewDialog(true)}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                  >
+                  <Button variant="primary" onClick={() => setShowReviewDialog(true)}>
                     Review &amp; promote to live
-                  </button>
+                  </Button>
                   <p className="text-xs text-amber-600 mt-1">
                     Diff and selectively promote Chart of Accounts, Dimensions, GL requirements.
                     Organisation, tax &amp; FX config are always carried over in full.
@@ -553,13 +542,9 @@ export default function TenantDetailPage() {
                 <li>Organisation, tax &amp; FX config are carried over in full automatically.</li>
                 <li>All current users are mirrored onto the new live tenant.</li>
               </ul>
-              <button
-                type="button"
-                onClick={() => setShowReviewDialog(true)}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-              >
+              <Button variant="primary" onClick={() => setShowReviewDialog(true)}>
                 Review &amp; create live environment
-              </button>
+              </Button>
             </>
           )}
         </section>
@@ -618,6 +603,6 @@ export default function TenantDetailPage() {
         )}
       </section>
 
-    </div>
+    </PageContainer>
   );
 }

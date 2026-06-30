@@ -8,10 +8,13 @@
  * transitions) but no read endpoint has been built. Audit viewer is future.
  */
 
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+
 export default function PlatformAuditPage() {
   return (
-    <div className="p-8 max-w-4xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Audit log</h1>
+    <PageContainer maxWidth="4xl">
+      <PageHeading title="Audit log" />
       <p className="text-sm text-gray-500 mb-8">
         Immutable record of all platform actions — tenant entries, lifecycle changes, suspensions.
       </p>
@@ -65,6 +68,6 @@ export default function PlatformAuditPage() {
           </table>
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }

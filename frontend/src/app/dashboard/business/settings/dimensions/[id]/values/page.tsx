@@ -14,6 +14,9 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface DimensionValue {
   id: string;
@@ -253,7 +256,7 @@ export default function DimensionValuesPage() {
   }
 
   return (
-    <div className="px-6 py-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
         <Link href="/dashboard/business/settings/dimensions" className="hover:text-blue-600">
@@ -264,9 +267,7 @@ export default function DimensionValuesPage() {
       </div>
 
       <div className="flex items-center justify-between mb-1">
-        <h1 className="text-xl font-bold text-gray-900">
-          {dimension?.name ?? "Dimension"} Values
-        </h1>
+        <PageHeading title={`${dimension?.name ?? "Dimension"} Values`} />
         <div className="flex gap-2">
           <a
             href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/config/dimensions/${dimensionId}/values/template`}
@@ -291,13 +292,9 @@ export default function DimensionValuesPage() {
             onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
             className="hidden"
           />
-          <button
-            type="button"
-            onClick={() => { setShowAdd(true); setEditId(null); }}
-            className="px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-          >
+          <Button variant="primary" onClick={() => { setShowAdd(true); setEditId(null); }}>
             + Add Value
-          </button>
+          </Button>
         </div>
       </div>
       <p className="text-sm text-gray-500 mb-6">
@@ -372,14 +369,12 @@ export default function DimensionValuesPage() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button type="button" onClick={handleAdd} disabled={addingVal || !addCode.trim() || !addName.trim()}
-              className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60">
+            <Button variant="primary" size="sm" onClick={handleAdd} disabled={addingVal || !addCode.trim() || !addName.trim()} loading={addingVal}>
               {addingVal ? "Adding…" : "Add"}
-            </button>
-            <button type="button" onClick={() => { setShowAdd(false); setAddCode(""); setAddName(""); setAddError(null); }}
-              className="px-4 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200">
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => { setShowAdd(false); setAddCode(""); setAddName(""); setAddError(null); }}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -419,15 +414,14 @@ export default function DimensionValuesPage() {
               </>
             )}
             <div className="flex gap-3 justify-end">
-              <button type="button" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}>
                 Cancel
-              </button>
-              <button type="button" onClick={handleBulkAction}
+              </Button>
+              <Button variant="danger" onClick={handleBulkAction}
                 disabled={bulkProcessing || (bulkAction === "delete" && bulkConfirmText !== "DELETE")}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                loading={bulkProcessing}>
                 {bulkProcessing ? "Processing…" : "Confirm"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -542,6 +536,6 @@ export default function DimensionValuesPage() {
           </table>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

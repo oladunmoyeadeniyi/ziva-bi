@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface DimensionSource {
   source_type: string;
@@ -987,7 +990,7 @@ function DimensionsPage() {
   );
 
   return (
-    <div className="px-6 py-6 max-w-3xl">
+    <PageContainer maxWidth="3xl">
 
       {/* Back button */}
       <button type="button" onClick={() => router.push("/dashboard/business/setup")}
@@ -996,7 +999,7 @@ function DimensionsPage() {
         Setup dashboard
       </button>
 
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Financial Dimensions</h1>
+      <PageHeading title="Financial Dimensions" />
       <p className="text-sm text-gray-500 mb-5">
         Define dimensions your organisation uses for analytical coding (e.g. Cost Center, Material, Brand).
       </p>
@@ -1103,11 +1106,10 @@ function DimensionsPage() {
                   <div className="flex gap-2">
                     <button type="button" onClick={() => { setShowAdd(false); setAddStdValue(""); setAddStep("name"); }}
                       className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
-                    <button type="button" onClick={() => setAddStep("sources")}
-                      disabled={!addStdValue || (addStdValue === "__custom__" && !addCustomName.trim())}
-                      className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
+                    <Button variant="primary" size="sm" onClick={() => setAddStep("sources")}
+                      disabled={!addStdValue || (addStdValue === "__custom__" && !addCustomName.trim())}>
                       Next — configure sources →
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -1191,12 +1193,10 @@ function DimensionsPage() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setAddStep("name")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={() => setAddStep("review")}
-                      className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                    <Button variant="secondary" size="sm" onClick={() => setAddStep("name")}>← Back</Button>
+                    <Button variant="primary" size="sm" onClick={() => setAddStep("review")}>
                       Next — review →
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -1239,12 +1239,10 @@ function DimensionsPage() {
                   </div>
                   {addError && <p className="text-xs text-red-600 mb-2">{addError}</p>}
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setAddStep("sources")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-50">← Back</button>
-                    <button type="button" onClick={handleAdd} disabled={addingDim}
-                      className="text-xs px-4 py-1.5 font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50">
+                    <Button variant="secondary" size="sm" onClick={() => setAddStep("sources")}>← Back</Button>
+                    <Button variant="primary" size="sm" onClick={handleAdd} disabled={addingDim} loading={addingDim}>
                       {addingDim ? "Saving…" : "Save dimension"}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -1393,16 +1391,14 @@ function DimensionsPage() {
                                   className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
                                 {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
                                 <div className="flex gap-2">
-                                  <button type="button" onClick={() => handleAddValue(dim.id)}
-                                    disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
-                                    className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
+                                  <Button variant="primary" size="sm" onClick={() => handleAddValue(dim.id)}
+                                    disabled={addingValue || !addValueCode.trim() || !addValueName.trim()} loading={addingValue}>
                                     {addingValue ? "Adding…" : "Add"}
-                                  </button>
-                                  <button type="button"
-                                    onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
-                                    className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                                  </Button>
+                                  <Button variant="secondary" size="sm"
+                                    onClick={() => { setAddValueDimId(null); setAddValueError(null); }}>
                                     Cancel
-                                  </button>
+                                  </Button>
                                 </div>
                               </div>
                             ) : (
@@ -1471,14 +1467,12 @@ function DimensionsPage() {
                               Required by default
                             </label>
                             <div className="flex gap-2">
-                              <button type="button" onClick={() => handleEdit(dim.id)} disabled={savingEdit}
-                                className="text-xs text-white bg-blue-600 px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-60">
+                              <Button variant="primary" size="sm" onClick={() => handleEdit(dim.id)} disabled={savingEdit} loading={savingEdit}>
                                 {savingEdit ? "Saving…" : "Save"}
-                              </button>
-                              <button type="button" onClick={() => setEditId(null)}
-                                className="text-xs text-gray-700 bg-gray-100 px-3 py-1 rounded hover:bg-gray-200">
+                              </Button>
+                              <Button variant="secondary" size="sm" onClick={() => setEditId(null)}>
                                 Cancel
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         ) : (
@@ -2067,16 +2061,14 @@ function DimensionsPage() {
                         </div>
                         {addValueError && <p className="text-xs text-red-600 mb-1">{addValueError}</p>}
                         <div className="flex gap-2">
-                          <button type="button" onClick={() => handleAddValue(dim.id)}
-                            disabled={addingValue || !addValueCode.trim() || !addValueName.trim()}
-                            className="text-xs px-3 py-1 font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50">
+                          <Button variant="primary" size="sm" onClick={() => handleAddValue(dim.id)}
+                            disabled={addingValue || !addValueCode.trim() || !addValueName.trim()} loading={addingValue}>
                             {addingValue ? "Adding…" : "Add"}
-                          </button>
-                          <button type="button"
-                            onClick={() => { setAddValueDimId(null); setAddValueError(null); }}
-                            className="text-xs px-3 py-1 text-gray-600 border border-gray-300 rounded hover:bg-gray-50">
+                          </Button>
+                          <Button variant="secondary" size="sm"
+                            onClick={() => { setAddValueDimId(null); setAddValueError(null); }}>
                             Cancel
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     )}
@@ -2437,22 +2429,12 @@ function DimensionsPage() {
             </div>
 
             <div className="flex gap-2 justify-end mt-5">
-              <button
-                type="button"
-                onClick={() => setEditValueModal(null)}
-                disabled={editValueSaving}
-                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" onClick={() => setEditValueModal(null)} disabled={editValueSaving}>
                 Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleEditValueSave}
-                disabled={editValueSaving || !editValueModal.name.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="primary" onClick={handleEditValueSave} disabled={editValueSaving || !editValueModal.name.trim()} loading={editValueSaving}>
                 {editValueSaving ? "Saving…" : "Save changes"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2601,7 +2583,7 @@ function DimensionsPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

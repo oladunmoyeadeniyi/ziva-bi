@@ -5,10 +5,13 @@
  * Real content: M9.4 (self-serve trial provisioning + conversion tracking).
  */
 
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+
 export default function PlatformTrialsPage() {
   return (
-    <div className="p-8 max-w-4xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Trials &amp; signups</h1>
+    <PageContainer maxWidth="4xl">
+      <PageHeading title="Trials & signups" />
       <p className="text-sm text-gray-500 mb-8">
         Track and manage inbound trial accounts and conversion to paid subscriptions.
       </p>
@@ -57,6 +60,6 @@ export default function PlatformTrialsPage() {
           </table>
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }

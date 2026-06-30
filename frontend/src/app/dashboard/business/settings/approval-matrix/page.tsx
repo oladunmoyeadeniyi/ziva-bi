@@ -12,6 +12,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface ApprovalMatrix {
   id: string;
@@ -97,15 +100,15 @@ export default function ApprovalMatrixPage() {
 
   if (isLoading) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-2xl mx-auto space-y-4">
+      <PageContainer maxWidth="2xl" className="space-y-4">
         <div className="h-8 w-64 bg-gray-100 rounded animate-pulse" />
         <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
-      </div>
+      </PageContainer>
     );
   }
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-2xl mx-auto">
+    <PageContainer maxWidth="2xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -115,7 +118,7 @@ export default function ApprovalMatrixPage() {
         Setup dashboard
       </button>
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900">Approval Matrix</h1>
+        <PageHeading title="Approval Matrix" />
         <p className="mt-0.5 text-sm text-gray-500">
           Configure how many approval levels expense reports require and who is responsible at each level.
         </p>
@@ -267,16 +270,11 @@ export default function ApprovalMatrixPage() {
         )}
 
         <div className="pt-2">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving}
-            className="px-6 py-2 min-h-[44px] text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors"
-          >
+          <Button variant="primary" onClick={handleSave} disabled={isSaving} loading={isSaving}>
             {isSaving ? "Saving…" : "Save Approval Matrix"}
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }

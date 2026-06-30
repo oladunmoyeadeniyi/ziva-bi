@@ -14,6 +14,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface GLAccount {
   id: string;
@@ -993,7 +996,7 @@ export default function ChartOfAccountsPage() {
   })();
 
   return (
-    <div className="px-6 py-8 max-w-5xl">
+    <PageContainer maxWidth="5xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -1003,7 +1006,7 @@ export default function ChartOfAccountsPage() {
         Setup dashboard
       </button>
       <div className="flex items-center justify-between mb-1">
-        <h1 className="text-xl font-bold text-gray-900">Chart of Accounts</h1>
+        <PageHeading title="Chart of Accounts" />
         <div className="flex gap-2 flex-wrap justify-end">
           <button
             type="button"
@@ -1056,13 +1059,9 @@ export default function ChartOfAccountsPage() {
               Remap codes
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setShowAdd(true)}
-            className="px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-          >
+          <Button variant="primary" onClick={() => setShowAdd(true)}>
             + Add GL Account
-          </button>
+          </Button>
         </div>
       </div>
       <p className="text-sm text-gray-500 mb-4">
@@ -1228,18 +1227,14 @@ export default function ChartOfAccountsPage() {
               </>
             )}
             <div className="flex gap-3 justify-end">
-              <button type="button" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setBulkAction(null); setBulkConfirmText(""); }} disabled={bulkProcessing}>
                 Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleBulkAction}
+              </Button>
+              <Button variant="danger" onClick={handleBulkAction}
                 disabled={bulkProcessing || (bulkAction === "delete" && bulkConfirmText !== "DELETE")}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60"
-              >
+                loading={bulkProcessing}>
                 {bulkProcessing ? "Processing…" : "Confirm"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1606,14 +1601,12 @@ export default function ChartOfAccountsPage() {
             </div>
 
             <div className="flex gap-3 justify-end mt-2">
-              <button type="button" onClick={() => { setShowAdd(false); setAddError(null); }}
-                disabled={addingGL} className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setShowAdd(false); setAddError(null); }} disabled={addingGL}>
                 Cancel
-              </button>
-              <button type="button" onClick={handleAdd} disabled={addingGL || !addGL.trim() || !addName.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              </Button>
+              <Button variant="primary" onClick={handleAdd} disabled={addingGL || !addGL.trim() || !addName.trim()} loading={addingGL}>
                 {addingGL ? "Adding…" : "Add"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1767,14 +1760,12 @@ export default function ChartOfAccountsPage() {
             </div>
 
             <div className="flex gap-3 justify-end mt-2">
-              <button type="button" onClick={() => setEditId(null)} disabled={savingEdit}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => setEditId(null)} disabled={savingEdit}>
                 Cancel
-              </button>
-              <button type="button" onClick={handleEdit} disabled={savingEdit}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              </Button>
+              <Button variant="primary" onClick={handleEdit} disabled={savingEdit} loading={savingEdit}>
                 {savingEdit ? "Saving…" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1809,14 +1800,12 @@ export default function ChartOfAccountsPage() {
               </div>
             )}
             <div className="flex gap-3 justify-end mt-5">
-              <button type="button" onClick={() => setDimGlId(null)} disabled={savingDims}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => setDimGlId(null)} disabled={savingDims}>
                 Cancel
-              </button>
-              <button type="button" onClick={handleSaveDims} disabled={savingDims}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              </Button>
+              <Button variant="primary" onClick={handleSaveDims} disabled={savingDims} loading={savingDims}>
                 {savingDims ? "Saving…" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2292,10 +2281,9 @@ export default function ChartOfAccountsPage() {
                     <option value="optional">Optional</option>
                     <option value="na">N/A</option>
                   </select>
-                  <button onClick={handleBulkUpdate} disabled={!bulkDimId || bulkSaving}
-                    className="px-3 py-1 bg-blue-600 text-white rounded text-xs disabled:opacity-50">
+                  <Button variant="primary" size="sm" onClick={handleBulkUpdate} disabled={!bulkDimId || bulkSaving} loading={bulkSaving}>
                     {bulkSaving ? "Saving..." : "Apply to selected"}
-                  </button>
+                  </Button>
                   <button onClick={() => setDimSelected(new Set())}
                     className="text-blue-600 underline text-xs">
                     Clear selection
@@ -2513,18 +2501,15 @@ export default function ChartOfAccountsPage() {
             </p>
 
             <div className="flex gap-2 justify-end">
-              <button type="button" onClick={() => setShowTemplateOptions(false)}
-                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">
+              <Button variant="secondary" onClick={() => setShowTemplateOptions(false)}>
                 Cancel
-              </button>
-              <button type="button" onClick={handleDownloadTemplate}
-                disabled={downloadingTemplate}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
+              </Button>
+              <Button variant="primary" onClick={handleDownloadTemplate} disabled={downloadingTemplate} loading={downloadingTemplate}>
                 {downloadingTemplate
                   ? <><i className="ti ti-loader-2 animate-spin" style={{ fontSize: 14 }} /> Generating…</>
                   : <><i className="ti ti-download" style={{ fontSize: 14 }} /> Download</>
                 }
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2633,6 +2618,6 @@ export default function ChartOfAccountsPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

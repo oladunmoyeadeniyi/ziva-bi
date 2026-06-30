@@ -28,6 +28,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -631,7 +634,7 @@ export default function PeriodsPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -640,7 +643,7 @@ export default function PeriodsPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Period management</h1>
+      <PageHeading title="Period management" />
       <p className="text-sm text-gray-500 mb-6">
         Fiscal year, periods, grace controls, and close.
       </p>
@@ -728,14 +731,14 @@ export default function PeriodsPage() {
               </div>
             </div>
             <div className="flex items-center gap-3 pt-1">
-              <button
-                type="button"
+              <Button
+                variant="primary"
                 onClick={saveOrg}
                 disabled={savingOrg}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                loading={savingOrg}
               >
                 {savingOrg ? "Saving…" : "Save settings"}
-              </button>
+              </Button>
               {orgSaved && <span className="text-sm text-green-600">Saved</span>}
             </div>
             <p className="text-xs text-gray-400">
@@ -876,15 +879,15 @@ export default function PeriodsPage() {
                         <strong>Stage 1 — Management close:</strong> hard-close {decPeriod?.period_name ?? "the final period"} first, then click to roll the year.
                         The new fiscal year remains open and runs normally while audit proceeds.
                       </p>
-                      <button
-                        type="button"
+                      <Button
+                        variant="primary"
                         onClick={doManagementClose}
                         disabled={!canManagementClose || closingMgmt}
+                        loading={closingMgmt}
                         title={!canManagementClose ? "December must be hard-closed first" : undefined}
-                        className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
                       >
                         {closingMgmt ? "Processing…" : "Management close"}
-                      </button>
+                      </Button>
                       {!canManagementClose && (
                         <p className="text-xs text-amber-600">{decPeriod?.period_name ?? "The final period"} must be hard-closed before management close.</p>
                       )}
@@ -929,14 +932,14 @@ export default function PeriodsPage() {
                           All periods in {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)} will be locked for posting and reopen. This cannot be undone.
                         </p>
                         <div className="flex items-center gap-3">
-                          <button
-                            type="button"
+                          <Button
+                            variant="danger"
                             onClick={doStatutoryClose}
                             disabled={!canStatutoryClose || closingStat}
-                            className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            loading={closingStat}
                           >
                             {closingStat ? "Locking…" : "Statutory close (permanent)"}
-                          </button>
+                          </Button>
                           <span className="text-xs text-gray-400 italic">
                             Audit artifacts &amp; CFO sign-off — coming in M8.4
                           </span>
@@ -1296,6 +1299,6 @@ export default function PeriodsPage() {
           </section>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

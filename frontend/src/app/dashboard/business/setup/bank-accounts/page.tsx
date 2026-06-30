@@ -17,6 +17,9 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import { getCurrencyLabel } from "@/lib/currencies";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -288,7 +291,7 @@ export default function BankAccountsPage() {
   const sortedCurrencies = Object.keys(byCurrency).sort();
 
   return (
-    <div className="p-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       {/* Back */}
       <button type="button" onClick={() => router.push("/dashboard/business/setup")}
         className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
@@ -299,16 +302,15 @@ export default function BankAccountsPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-1">Bank accounts</h1>
+          <PageHeading title="Bank accounts" />
           <p className="text-sm text-gray-500">
             Register your bank and cash accounts. Each links to a GL account for posting.
             Multiple accounts may share a GL (e.g. all NGN accounts post to one bank GL).
           </p>
         </div>
-        <button type="button" onClick={openCreate}
-          className="shrink-0 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
+        <Button variant="primary" onClick={openCreate}>
           + Add account
-        </button>
+        </Button>
       </div>
 
       {pageError && (
@@ -378,14 +380,12 @@ export default function BankAccountsPage() {
           </div>
 
           <div className="flex items-center gap-3 pt-1">
-            <button type="button" onClick={saveForm} disabled={formSaving}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+            <Button variant="primary" onClick={saveForm} disabled={formSaving} loading={formSaving}>
               {formSaving ? "Saving…" : editId ? "Update account" : "Create account"}
-            </button>
-            <button type="button" onClick={() => setShowForm(false)}
-              className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
+            </Button>
+            <Button variant="secondary" onClick={() => setShowForm(false)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -455,6 +455,6 @@ export default function BankAccountsPage() {
           })}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

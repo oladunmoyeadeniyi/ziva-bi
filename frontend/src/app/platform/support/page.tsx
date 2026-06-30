@@ -5,10 +5,13 @@
  * Real content: future milestone (tenant support tickets + impersonation for troubleshooting).
  */
 
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+
 export default function PlatformSupportPage() {
   return (
-    <div className="p-8 max-w-4xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Support</h1>
+    <PageContainer maxWidth="4xl">
+      <PageHeading title="Support" />
       <p className="text-sm text-gray-500 mb-8">
         Tenant support tickets, troubleshooting access, and escalation management.
       </p>
@@ -60,6 +63,6 @@ export default function PlatformSupportPage() {
           </table>
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }

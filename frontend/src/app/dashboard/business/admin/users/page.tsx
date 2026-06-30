@@ -11,6 +11,9 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface TenantUser {
   id: string;
@@ -214,7 +217,7 @@ export default function TeamPage() {
   };
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
+    <PageContainer maxWidth="6xl">
       {/* ── Edit Roles modal ─────────────────────────────────────────────── */}
       {editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -233,14 +236,10 @@ export default function TeamPage() {
             </div>
             {rolesError && <p className="text-xs text-red-600 mb-3">{rolesError}</p>}
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setEditingUser(null)} disabled={rolesSaving}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
-                Cancel
-              </button>
-              <button onClick={saveRoles} disabled={rolesSaving}
-                className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => setEditingUser(null)} disabled={rolesSaving}>Cancel</Button>
+              <Button variant="primary" onClick={saveRoles} disabled={rolesSaving} loading={rolesSaving}>
                 {rolesSaving ? "Saving…" : "Save Roles"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -255,14 +254,10 @@ export default function TeamPage() {
               <strong>{deactivateTarget.full_name}</strong> will no longer be able to log in.
             </p>
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setDeactivateTarget(null)} disabled={deactivating}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
-                Cancel
-              </button>
-              <button onClick={handleDeactivate} disabled={deactivating}
-                className="px-4 py-2 text-sm text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => setDeactivateTarget(null)} disabled={deactivating}>Cancel</Button>
+              <Button variant="danger" onClick={handleDeactivate} disabled={deactivating} loading={deactivating}>
                 {deactivating ? "Deactivating…" : "Deactivate"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -292,15 +287,10 @@ export default function TeamPage() {
             </div>
             {inviteError && <p className="mt-2 text-xs text-red-600">{inviteError}</p>}
             <div className="flex gap-3 justify-end mt-5">
-              <button onClick={() => { setShowInviteModal(false); setInviteError(null); setInviteEmail(""); }}
-                disabled={inviting}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
-                Cancel
-              </button>
-              <button onClick={handleInvite} disabled={inviting}
-                className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setShowInviteModal(false); setInviteError(null); setInviteEmail(""); }} disabled={inviting}>Cancel</Button>
+              <Button variant="primary" onClick={handleInvite} disabled={inviting} loading={inviting}>
                 {inviting ? "Sending…" : "Send Invite"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -309,14 +299,12 @@ export default function TeamPage() {
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Team</h1>
-          <p className="mt-0.5 text-sm text-gray-500">Manage members and invitations</p>
+          <PageHeading title="Team" subtitle="Manage members and invitations" />
         </div>
         {activeTab === "invitations" && (
-          <button type="button" onClick={() => setShowInviteModal(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 min-h-[44px] bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
+          <Button variant="primary" onClick={() => setShowInviteModal(true)}>
             + Invite Member
-          </button>
+          </Button>
         )}
       </div>
 
@@ -426,10 +414,9 @@ export default function TeamPage() {
           {!invitesLoading && !invitesError && invitations.length === 0 && (
             <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
               <p className="text-sm text-gray-500">No invitations sent yet.</p>
-              <button type="button" onClick={() => setShowInviteModal(true)}
-                className="mt-3 inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
+              <Button variant="primary" onClick={() => setShowInviteModal(true)} className="mt-3">
                 Send First Invite
-              </button>
+              </Button>
             </div>
           )}
           {!invitesLoading && !invitesError && invitations.length > 0 && (
@@ -478,6 +465,6 @@ export default function TeamPage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

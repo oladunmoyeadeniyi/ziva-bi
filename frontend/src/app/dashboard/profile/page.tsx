@@ -16,6 +16,9 @@ import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -336,7 +339,7 @@ export default function ProfilePage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-5xl mx-auto">
+    <PageContainer maxWidth="5xl">
       <button
         type="button"
         onClick={handleBack}
@@ -345,7 +348,7 @@ export default function ProfilePage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Back
       </button>
-      <h1 className="text-xl font-bold text-gray-900 mb-6">My Profile</h1>
+      <PageHeading title="My Profile" />
 
       {/* Outer card */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -409,9 +412,9 @@ export default function ProfilePage() {
               </div>
 
               <div className="flex justify-end">
-                <button type="button" onClick={savePersonal} disabled={personalSaving} className={btnCls}>
+                <Button variant="primary" onClick={savePersonal} disabled={personalSaving} loading={personalSaving}>
                   {personalSaving ? "Saving…" : "Save personal info"}
-                </button>
+                </Button>
               </div>
             </Section>
 
@@ -440,9 +443,9 @@ export default function ProfilePage() {
                 </div>
 
                 <div className="flex justify-end">
-                  <button type="button" onClick={saveWork} disabled={workSaving} className={btnCls}>
+                  <Button variant="primary" onClick={saveWork} disabled={workSaving} loading={workSaving}>
                     {workSaving ? "Saving…" : "Save work info"}
-                  </button>
+                  </Button>
                 </div>
               </Section>
             )}
@@ -488,9 +491,9 @@ export default function ProfilePage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button type="button" onClick={savePassword} disabled={pwSaving} className={btnCls}>
+                      <Button variant="primary" onClick={savePassword} disabled={pwSaving} loading={pwSaving}>
                         {pwSaving ? "Changing…" : "Change password"}
-                      </button>
+                      </Button>
                       <button type="button" onClick={() => { setShowPwForm(false); setPwError(""); }}
                         className={`${secBtnCls} border-gray-300 text-gray-500 hover:bg-gray-100`}>
                         Cancel
@@ -561,10 +564,9 @@ export default function ProfilePage() {
                         placeholder="000000"
                         autoComplete="one-time-code"
                       />
-                      <button type="button" onClick={verify2fa} disabled={totpBusy || totpCode.length !== 6}
-                        className={btnCls}>
+                      <Button variant="primary" onClick={verify2fa} disabled={totpBusy || totpCode.length !== 6} loading={totpBusy}>
                         {totpBusy ? "Verifying…" : "Verify"}
-                      </button>
+                      </Button>
                     </div>
                     <button type="button" onClick={() => { setTotpStep("idle"); setTotpError(""); }}
                       className="text-xs text-gray-400 hover:text-gray-600">
@@ -588,10 +590,9 @@ export default function ProfilePage() {
                         placeholder="000000"
                         autoComplete="one-time-code"
                       />
-                      <button type="button" onClick={disable2fa} disabled={totpBusy || totpCode.length !== 6}
-                        className={`px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors`}>
+                      <Button variant="danger" onClick={disable2fa} disabled={totpBusy || totpCode.length !== 6} loading={totpBusy}>
                         {totpBusy ? "Disabling…" : "Disable 2FA"}
-                      </button>
+                      </Button>
                     </div>
                     <button type="button" onClick={() => { setTotpStep("idle"); setTotpError(""); }}
                       className="text-xs text-gray-400 hover:text-gray-600">
@@ -664,6 +665,6 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
-    </div>
+    </PageContainer>
   );
 }

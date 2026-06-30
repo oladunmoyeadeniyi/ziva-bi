@@ -11,6 +11,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -93,8 +95,8 @@ export default function PlatformTenantsPage() {
   }, [load]);
 
   return (
-    <div className="p-8 max-w-5xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Tenants</h1>
+    <PageContainer maxWidth="5xl">
+      <PageHeading title="Tenants" />
       <p className="text-sm text-gray-500 mb-6">
         All tenants on the Ziva BI platform. Default view shows live tenants.
       </p>
@@ -202,6 +204,6 @@ export default function PlatformTenantsPage() {
       <p className="mt-1 text-xs text-gray-400">
         {!loading && `${tenants.length} tenant${tenants.length !== 1 ? "s" : ""} shown`}
       </p>
-    </div>
+    </PageContainer>
   );
 }

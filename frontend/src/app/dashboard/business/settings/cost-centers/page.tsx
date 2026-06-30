@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import PageHeading from "@/components/PageHeading";
 
 interface CostCenterConfig {
   id: string;
@@ -126,10 +127,7 @@ export default function CostCentersPage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-gray-900">Cost Centers</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Assign department heads to cost centers
-        </p>
+        <PageHeading title="Cost Centers" subtitle="Assign department heads to cost centers" />
       </div>
 
       {loading && (

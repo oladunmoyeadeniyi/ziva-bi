@@ -19,6 +19,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 interface SectionStatus {
   key: string;
@@ -97,7 +99,7 @@ export default function GoLivePage() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
+    <PageContainer maxWidth="3xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -106,7 +108,7 @@ export default function GoLivePage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Readiness checklist</h1>
+      <PageHeading title="Readiness checklist" />
       <p className="text-sm text-gray-500 mb-6">
         Complete all blocking items before marking this tenant as live.
       </p>
@@ -214,6 +216,6 @@ export default function GoLivePage() {
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

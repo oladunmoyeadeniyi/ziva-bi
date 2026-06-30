@@ -15,6 +15,9 @@ import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 type Tab = "identity" | "structure" | "branding" | "config";
 
@@ -511,7 +514,7 @@ function OrganisationPage() {
   }, [nodes]);
 
   return (
-    <div className="p-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -529,7 +532,7 @@ function OrganisationPage() {
           Back to Dimensions
         </button>
       )}
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Organisation</h1>
+      <PageHeading title="Organisation" />
       <p className="text-sm text-gray-500 mb-6">
         Configure your company identity, org structure, branding, and fiscal year.
       </p>
@@ -678,8 +681,8 @@ function OrganisationPage() {
           </div>
 
           <div className="pt-2">
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={() => save({
                 legal_name: org.legal_name,
                 rc_number: org.rc_number,
@@ -702,10 +705,10 @@ function OrganisationPage() {
                 authorised_share_capital: org.authorised_share_capital,
               })}
               disabled={saving}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50"
+              loading={saving}
             >
               {saving ? "Saving…" : saved ? "✓ Saved" : "Save identity"}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -799,14 +802,12 @@ function OrganisationPage() {
                   )}
                 </div>
                 <div className="flex gap-2 mt-5">
-                  <button type="button" onClick={() => setShowAddNode(false)}
-                    className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">
+                  <Button variant="secondary" className="flex-1" onClick={() => setShowAddNode(false)}>
                     Cancel
-                  </button>
-                  <button type="button" onClick={addNode} disabled={addingNode || !newNode.name || !newNode.code || !newNode.node_type}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  </Button>
+                  <Button variant="primary" className="flex-1" onClick={addNode} disabled={addingNode || !newNode.name || !newNode.code || !newNode.node_type} loading={addingNode}>
                     {addingNode ? "Adding…" : "Add node"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -859,14 +860,12 @@ function OrganisationPage() {
                   )}
                 </div>
                 <div className="flex gap-2 mt-5">
-                  <button type="button" onClick={() => setEditNode(null)}
-                    className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">
+                  <Button variant="secondary" className="flex-1" onClick={() => setEditNode(null)}>
                     Cancel
-                  </button>
-                  <button type="button" onClick={saveEdit} disabled={savingEdit || !editForm.name || !editForm.node_type}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  </Button>
+                  <Button variant="primary" className="flex-1" onClick={saveEdit} disabled={savingEdit || !editForm.name || !editForm.node_type} loading={savingEdit}>
                     {savingEdit ? "Saving…" : "Save changes"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -1186,11 +1185,10 @@ function OrganisationPage() {
                   Preview
                 </button>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setBrandingTab("themes")}
-                    className="text-sm px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+                  <Button variant="secondary" onClick={() => setBrandingTab("themes")}>
                     Cancel
-                  </button>
-                  <button type="button" onClick={async () => {
+                  </Button>
+                  <Button variant="primary" onClick={async () => {
                     if ((org.branding?.themes ?? []).length >= 10 &&
                         !org.branding?.themes?.find(t => t.id === editTheme.id)) {
                       alert("Maximum 10 themes reached. Delete one first.");
@@ -1208,10 +1206,9 @@ function OrganisationPage() {
                     setOrg(o => ({ ...o, branding: newBranding }));
                     await save({ branding: newBranding });
                     setBrandingTab("themes");
-                  }} disabled={saving}
-                    className="text-sm px-4 py-2 font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                  }} disabled={saving} loading={saving}>
                     {saving ? "Saving…" : "Save theme"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -1314,11 +1311,10 @@ function OrganisationPage() {
               </div>
 
               <div className="flex justify-between">
-                <button type="button" onClick={() => setBrandingTab("controls")}
-                  className="text-sm px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+                <Button variant="secondary" onClick={() => setBrandingTab("controls")}>
                   Back to edit
-                </button>
-                <button type="button" onClick={async () => {
+                </Button>
+                <Button variant="primary" onClick={async () => {
                   const existing = org.branding?.themes ?? [];
                   const idx = existing.findIndex(t => t.id === editTheme.id);
                   const updated = idx >= 0
@@ -1331,10 +1327,9 @@ function OrganisationPage() {
                   setOrg(o => ({ ...o, branding: newBranding }));
                   await save({ branding: newBranding });
                   setBrandingTab("themes");
-                }} disabled={saving}
-                  className="text-sm px-4 py-2 font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+                }} disabled={saving} loading={saving}>
                   {saving ? "Saving…" : "Save & apply"}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -1465,10 +1460,9 @@ function OrganisationPage() {
             </div>
 
             <div className="pt-4 flex justify-end">
-              <button type="button" onClick={() => save({ org_configuration: config })} disabled={saving}
-                className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
                 {saving ? "Saving…" : saved ? "✓ Saved" : "Save features"}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -1516,16 +1510,15 @@ function OrganisationPage() {
             </div>
 
             <div className="pt-4 flex justify-end border-t border-gray-100">
-              <button type="button" onClick={() => save({ org_configuration: config })} disabled={saving}
-                className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
                 {saving ? "Saving…" : saved ? "✓ Saved" : "Save governance settings"}
-              </button>
+              </Button>
             </div>
           </div>
 
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
 

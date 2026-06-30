@@ -14,6 +14,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -105,15 +107,12 @@ function StaffHome({
     tasks.push({ text: `${pendingApprovals} report${pendingApprovals > 1 ? "s" : ""} awaiting your approval`, href: "/dashboard/business/approvals" });
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
+    <PageContainer maxWidth="4xl">
 
       {/* Greeting row — left: name + subline; right: role pill + notification bell */}
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">
-            Welcome, {firstName}
-          </h1>
-          <p className="mt-1 text-sm text-gray-500">{subLine}</p>
+          <PageHeading title={`Welcome, ${firstName}`} subtitle={subLine} />
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0 mt-0.5">
@@ -232,7 +231,7 @@ function StaffHome({
         </div>
       </div>
 
-    </div>
+    </PageContainer>
   );
 }
 
@@ -311,12 +310,9 @@ export default function BusinessDashboard() {
 
   // ── Admin with setup complete — operational overview ──────────────────────
   return (
-    <div className="max-w-5xl mx-auto px-6 py-10">
+    <PageContainer maxWidth="5xl">
       <div className="mb-8">
-        <h1 className="text-xl font-semibold text-gray-900">
-          Welcome, {user?.first_name || user?.full_name?.split(" ")[0] || ""}
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">Business finance platform</p>
+        <PageHeading title={`Welcome, ${user?.first_name || user?.full_name?.split(" ")[0] || ""}`} subtitle="Business finance platform" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -339,6 +335,6 @@ export default function BusinessDashboard() {
           <p className="mt-1 text-xs text-blue-600">Configure and manage settings</p>
         </Link>
       </div>
-    </div>
+    </PageContainer>
   );
 }

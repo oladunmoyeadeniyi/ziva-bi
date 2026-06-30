@@ -17,6 +17,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -372,7 +374,7 @@ export default function AccountMappingPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="p-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       {/* Back */}
       <button
         type="button"
@@ -384,7 +386,7 @@ export default function AccountMappingPage() {
       </button>
 
       {/* Header */}
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Account mapping</h1>
+      <PageHeading title="Account mapping" />
       <p className="text-sm text-gray-500 mb-6">
         Map each posting role to a GL account so transactions post to the correct ledger.
       </p>
@@ -603,6 +605,6 @@ export default function AccountMappingPage() {
           })}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

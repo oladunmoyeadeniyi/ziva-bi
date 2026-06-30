@@ -13,6 +13,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 interface AuditLogEntry {
   id: string;
@@ -147,15 +149,12 @@ export default function AuditTrailPage() {
   }, [accessToken, report_id]);
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-3xl mx-auto">
+    <PageContainer maxWidth="3xl">
       <div className="mb-6">
         <button onClick={() => router.back()} className="text-sm text-gray-500 hover:text-gray-700 mb-2">
           ← Back
         </button>
-        <h1 className="text-xl font-bold text-gray-900">Audit Trail</h1>
-        {reportNumber && (
-          <p className="mt-0.5 text-sm text-gray-500">{reportNumber}</p>
-        )}
+        <PageHeading title="Audit Trail" subtitle={reportNumber ?? undefined} />
       </div>
 
       {isLoading && (
@@ -214,6 +213,6 @@ export default function AuditTrailPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

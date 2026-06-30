@@ -5,10 +5,13 @@
  * Platform-wide configuration (feature flags, limits, defaults) — future milestone.
  */
 
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+
 export default function PlatformSettingsPage() {
   return (
-    <div className="p-8 max-w-4xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Platform settings</h1>
+    <PageContainer maxWidth="4xl">
+      <PageHeading title="Platform settings" />
       <p className="text-sm text-gray-500 mb-8">
         Platform-wide configuration — feature flags, global defaults, and system limits.
       </p>
@@ -29,6 +32,6 @@ export default function PlatformSettingsPage() {
           </div>
         </div>
       </section>
-    </div>
+    </PageContainer>
   );
 }

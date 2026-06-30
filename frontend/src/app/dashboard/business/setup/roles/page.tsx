@@ -12,6 +12,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 type Tab = "tiers" | "matrix" | "assignments";
 
@@ -130,7 +132,7 @@ export default function RolesPage() {
   }
 
   return (
-    <div className="p-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -139,7 +141,7 @@ export default function RolesPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Roles & permissions</h1>
+      <PageHeading title="Roles & permissions" />
       <p className="text-sm text-gray-500 mb-6">
         Manage the three role tiers, configure the permission matrix, and assign tiers to users.
       </p>
@@ -333,6 +335,6 @@ export default function RolesPage() {
           )}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

@@ -12,6 +12,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface ExpenseReport {
   id: string;
@@ -139,7 +142,7 @@ export default function ExpensesListPage() {
   ];
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
+    <PageContainer maxWidth="6xl">
       {/* Delete confirm dialog */}
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -150,22 +153,10 @@ export default function ExpensesListPage() {
             </p>
             {deleteError && <p className="text-xs text-red-600 mt-2 mb-1">{deleteError}</p>}
             <div className="flex gap-3 justify-end mt-5">
-              <button
-                type="button"
-                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}
-                disabled={isDeleting}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={isDeleting}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60"
-              >
+              <Button variant="secondary" onClick={() => { setDeleteTarget(null); setDeleteError(null); }} disabled={isDeleting}>Cancel</Button>
+              <Button variant="danger" onClick={handleDelete} disabled={isDeleting} loading={isDeleting}>
                 {isDeleting ? "Deleting…" : "Delete"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -174,8 +165,7 @@ export default function ExpensesListPage() {
       {/* Page header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Expense Reports</h1>
-          <p className="mt-0.5 text-sm text-gray-500">Manage and submit business expense retirements</p>
+          <PageHeading title="Expense Reports" subtitle="Manage and submit business expense retirements" />
         </div>
         {!isExclusivelyAdmin && (
           <Link
@@ -333,6 +323,6 @@ export default function ExpensesListPage() {
           </table>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

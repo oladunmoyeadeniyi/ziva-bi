@@ -13,6 +13,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface ExpenseConfig {
   coding_level: number;
@@ -152,8 +155,8 @@ export default function ExpenseConfigPage() {
   }
 
   return (
-    <div className="px-6 py-8 max-w-3xl">
-      <h1 className="text-xl font-bold text-gray-900 mb-1">Expense Form Config</h1>
+    <PageContainer maxWidth="3xl">
+      <PageHeading title="Expense Form Config" />
       <p className="text-sm text-gray-500 mb-8">
         Control how much GL responsibility employees carry when submitting expenses.
       </p>
@@ -264,18 +267,13 @@ export default function ExpenseConfigPage() {
 
       {/* Save button */}
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={isSaving}
-          className="px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-        >
+        <Button variant="primary" onClick={handleSave} disabled={isSaving} loading={isSaving}>
           {isSaving ? "Saving…" : "Save Configuration"}
-        </button>
+        </Button>
         {saveSuccess && (
           <span className="text-sm text-green-600 font-medium">Saved successfully</span>
         )}
       </div>
-    </div>
+    </PageContainer>
   );
 }

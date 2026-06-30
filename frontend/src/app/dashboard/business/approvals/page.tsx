@@ -15,6 +15,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 interface ApprovalQueueItem {
   approval_id: string;
@@ -69,12 +71,9 @@ export default function ApprovalsPage() {
   const items = activeTab === "pending" ? pendingQueue : rejectedQueue;
 
   return (
-    <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
+    <PageContainer maxWidth="6xl">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900">Approvals</h1>
-        <p className="mt-0.5 text-sm text-gray-500">
-          Review expense reports assigned to you for approval.
-        </p>
+        <PageHeading title="Approvals" subtitle="Review expense reports assigned to you for approval." />
       </div>
 
       {/* Tabs */}
@@ -196,6 +195,6 @@ export default function ApprovalsPage() {
           </table>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

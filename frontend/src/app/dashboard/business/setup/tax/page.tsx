@@ -20,6 +20,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -481,14 +484,14 @@ export default function TaxPage() {
 
   const SaveBtn = ({ patch }: { patch: Partial<TaxConfig> }) => (
     <div className="mt-6 flex items-center gap-3">
-      <button
-        type="button"
+      <Button
+        variant="primary"
         onClick={() => save(patch)}
         disabled={saving}
-        className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+        loading={saving}
       >
         {saving ? "Saving…" : "Save"}
-      </button>
+      </Button>
       {saved && <span className="text-sm text-green-600">Saved</span>}
     </div>
   );
@@ -496,7 +499,7 @@ export default function TaxPage() {
   const countryCode = (orgRaw?.country && TAX_PROFILES[orgRaw.country]) ? orgRaw.country : "XX";
 
   return (
-    <div className="p-8 max-w-3xl">
+    <PageContainer maxWidth="3xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -505,7 +508,7 @@ export default function TaxPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Tax & statutory</h1>
+      <PageHeading title="Tax & statutory" />
       <p className="text-sm text-gray-500 mb-6">
         Select applicable taxes, then configure rates and GL accounts for each.
       </p>
@@ -751,8 +754,9 @@ export default function TaxPage() {
                   <option value="__new__">+ Create new category</option>
                 </select>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={() => {
                   if (!customTaxInput.trim()) return;
                   const category = customTaxCategory === "__new__"
@@ -772,10 +776,9 @@ export default function TaxPage() {
                   setCustomTaxNewCategory("");
                   setCustomTaxCategory("Indirect taxes");
                 }}
-                className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
               >
                 + Add
-              </button>
+              </Button>
             </div>
             {customTaxCategory === "__new__" && (
               <input
@@ -795,10 +798,9 @@ export default function TaxPage() {
           </p>
 
           <div className="flex justify-end pt-1">
-            <button type="button" onClick={saveApplicability} disabled={savingApp}
-              className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50">
+            <Button variant="primary" onClick={saveApplicability} disabled={savingApp} loading={savingApp}>
               {savingApp ? "Saving…" : appSaved ? "✓ Saved" : "Save tax applicability"}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -1095,6 +1097,6 @@ export default function TaxPage() {
           <SaveBtn patch={{ other_statutory: config.other_statutory }} />
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

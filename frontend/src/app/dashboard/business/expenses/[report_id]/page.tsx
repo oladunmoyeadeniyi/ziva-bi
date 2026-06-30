@@ -19,6 +19,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import { Button } from "@/components/ui/button";
 
 interface ExpenseLine {
   id: string;
@@ -410,27 +412,27 @@ export default function ExpenseDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto space-y-4">
+      <PageContainer maxWidth="6xl" className="space-y-4">
         <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
         <div className="h-40 bg-gray-100 rounded-xl animate-pulse" />
         <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
-      </div>
+      </PageContainer>
     );
   }
   if (error || !report) {
     return (
-      <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto">
+      <PageContainer maxWidth="6xl">
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Report not found."}
         </div>
-      </div>
+      </PageContainer>
     );
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     // pb-24 on mobile to clear the fixed bottom action bar (FIX 6)
-    <div className="px-4 sm:px-6 py-8 max-w-6xl mx-auto pb-24 md:pb-8">
+    <PageContainer maxWidth="6xl" className="pb-24 md:pb-8">
 
       {/* ── Refer Back modal ─────────────────────────────────────────────── */}
       {showReferBackModal && myPendingApproval && (
@@ -546,18 +548,12 @@ export default function ExpenseDetailPage() {
             />
             {actionError && <p className="text-xs text-red-600">{actionError}</p>}
             <div className="flex gap-3">
-              <button type="button"
-                onClick={() => { setShowMobileRejectModal(false); setMobileRejectComment(""); setActionError(null); }}
-                disabled={isActioning}
-                className="flex-1 py-3 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg disabled:opacity-60">
+              <Button variant="secondary" onClick={() => { setShowMobileRejectModal(false); setMobileRejectComment(""); setActionError(null); }} disabled={isActioning} className="flex-1">
                 Cancel
-              </button>
-              <button type="button"
-                onClick={() => handleReject(mobileRejectComment)}
-                disabled={isActioning}
-                className="flex-1 py-3 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+              </Button>
+              <Button variant="danger" onClick={() => handleReject(mobileRejectComment)} disabled={isActioning} loading={isActioning} className="flex-1">
                 {isActioning ? "Processing…" : "Confirm Rejection"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1070,16 +1066,12 @@ export default function ExpenseDetailPage() {
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => handleReject()} disabled={isActioning}
-                    className="flex-1 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60">
+                  <Button variant="danger" onClick={() => handleReject()} disabled={isActioning} loading={isActioning} className="flex-1">
                     {isActioning ? "Processing…" : "Confirm Rejection"}
-                  </button>
-                  <button type="button"
-                    onClick={() => { setShowRejectInput(false); setRejectComment(""); setActionError(null); }}
-                    disabled={isActioning}
-                    className="flex-1 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-60">
+                  </Button>
+                  <Button variant="secondary" onClick={() => { setShowRejectInput(false); setRejectComment(""); setActionError(null); }} disabled={isActioning} className="flex-1">
                     Cancel
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -1110,6 +1102,6 @@ export default function ExpenseDetailPage() {
           </button>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

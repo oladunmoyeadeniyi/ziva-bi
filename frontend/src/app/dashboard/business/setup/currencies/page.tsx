@@ -13,6 +13,9 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 const ISO_CURRENCIES = [
   { code: "USD", name: "US Dollar",              symbol: "$"   },
@@ -525,7 +528,7 @@ export default function CurrenciesPage() {
     .sort((a, b) => b.effective_date.localeCompare(a.effective_date));
 
   return (
-    <div className="p-8 max-w-4xl">
+    <PageContainer maxWidth="4xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -534,9 +537,7 @@ export default function CurrenciesPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">
-        Currencies &amp; FX
-      </h1>
+      <PageHeading title="Currencies & FX" />
       <p className="text-sm text-gray-500 mb-6">
         Configure functional currency, additional currencies, FX rates, and
         revaluation rules.
@@ -700,24 +701,17 @@ export default function CurrenciesPage() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={addCurrency}
-                    disabled={
-                      !newCurrCode ||
-                      (newCurrCode === "OTHER" && !newCurrCustomCode)
-                    }
-                    className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    disabled={!newCurrCode || (newCurrCode === "OTHER" && !newCurrCustomCode)}
                   >
                     Add
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddCurrency(false)}
-                    className="px-4 py-1.5 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
-                  >
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setShowAddCurrency(false)}>
                     Cancel
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -800,19 +794,14 @@ export default function CurrenciesPage() {
           </div>
 
           <div className="flex items-center gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() =>
-                save({
-                  reporting_currency: config.reporting_currency,
-                  enabled_currencies: config.enabled_currencies,
-                })
-              }
+            <Button
+              variant="primary"
+              onClick={() => save({ reporting_currency: config.reporting_currency, enabled_currencies: config.enabled_currencies })}
               disabled={saving}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              loading={saving}
             >
               {saving ? "Saving…" : "Save currencies"}
-            </button>
+            </Button>
             {saved && <span className="text-sm text-green-600">✓ Saved</span>}
           </div>
         </div>
@@ -976,21 +965,12 @@ export default function CurrenciesPage() {
                 </div>
               )}
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={addFxRate}
-                  disabled={addingRate || !newRateCurrency || !newRateValue}
-                  className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
+                <Button variant="primary" size="sm" onClick={addFxRate} disabled={addingRate || !newRateCurrency || !newRateValue} loading={addingRate}>
                   {addingRate ? "Saving…" : "Save rate"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAddRate(false)}
-                  className="px-4 py-1.5 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
-                >
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setShowAddRate(false)}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -1687,14 +1667,9 @@ export default function CurrenciesPage() {
                         />
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={applySharedGL}
-                      disabled={!sharedGainGL || !sharedLossGL}
-                      className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
+                    <Button variant="primary" size="sm" onClick={applySharedGL} disabled={!sharedGainGL || !sharedLossGL}>
                       Apply to all balance types
-                    </button>
+                    </Button>
                   </div>
                 )}
 
@@ -1857,37 +1832,21 @@ export default function CurrenciesPage() {
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button
-                          type="button"
+                        <Button variant="primary" size="sm"
                           disabled={!newBTKey.trim() || !newBTLabel.trim()}
                           onClick={() => {
-                            const existing =
-                              config.revaluation_rules?.custom_balance_types ?? [];
-                            const newCustom = [
-                              ...existing,
-                              {
-                                key: newBTKey.trim(),
-                                label: newBTLabel.trim(),
-                                desc: newBTDesc.trim(),
-                              },
-                            ];
+                            const existing = config.revaluation_rules?.custom_balance_types ?? [];
+                            const newCustom = [...existing, { key: newBTKey.trim(), label: newBTLabel.trim(), desc: newBTDesc.trim() }];
                             setRevalField("custom_balance_types", newCustom);
-                            setNewBTKey("");
-                            setNewBTLabel("");
-                            setNewBTDesc("");
+                            setNewBTKey(""); setNewBTLabel(""); setNewBTDesc("");
                             setShowAddBalanceType(false);
                           }}
-                          className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                         >
                           Add
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowAddBalanceType(false)}
-                          className="text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
-                        >
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => setShowAddBalanceType(false)}>
                           Cancel
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   )}
@@ -1960,14 +1919,9 @@ export default function CurrenciesPage() {
           </div>
 
           <div className="flex items-center gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => save({ revaluation_rules: config.revaluation_rules })}
-              disabled={saving}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
+            <Button variant="primary" onClick={() => save({ revaluation_rules: config.revaluation_rules })} disabled={saving} loading={saving}>
               {saving ? "Saving…" : "Save revaluation rules"}
-            </button>
+            </Button>
             {saved && <span className="text-sm text-green-600">✓ Saved</span>}
           </div>
         </div>
@@ -1988,13 +1942,9 @@ export default function CurrenciesPage() {
                 separate from regular vendors.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowAddBdc(true)}
-              className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-700 flex-shrink-0"
-            >
+            <Button variant="primary" size="sm" onClick={() => setShowAddBdc(true)} className="flex-shrink-0">
               <i className="ti ti-plus" style={{ fontSize: 13 }} /> Add BDC
-            </button>
+            </Button>
           </div>
 
           {showAddBdc && (
@@ -2079,21 +2029,12 @@ export default function CurrenciesPage() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={addBdc}
-                  disabled={addingBdc || !newBdcName.trim()}
-                  className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
+                <Button variant="primary" size="sm" onClick={addBdc} disabled={addingBdc || !newBdcName.trim()} loading={addingBdc}>
                   {addingBdc ? "Saving…" : "Add BDC"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAddBdc(false)}
-                  className="px-4 py-1.5 border border-gray-300 text-sm rounded-lg hover:bg-gray-50"
-                >
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setShowAddBdc(false)}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -2188,6 +2129,6 @@ export default function CurrenciesPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

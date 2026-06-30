@@ -13,6 +13,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
 
 interface SectionStatus {
   key: string;
@@ -74,8 +76,8 @@ export default function SetupDashboardPage() {
   }
 
   return (
-    <div className="p-8 max-w-5xl">
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Setup dashboard</h1>
+    <PageContainer maxWidth="5xl">
+      <PageHeading title="Setup dashboard" />
       <p className="text-sm text-gray-500 mb-6">
         Complete all sections to go live. Required sections must be done before go-live.
       </p>
@@ -163,6 +165,6 @@ export default function SetupDashboardPage() {
       <p className="mt-6 text-xs text-gray-400">
         Click any section to configure it. Locked sections unlock automatically when prerequisites are complete.
       </p>
-    </div>
+    </PageContainer>
   );
 }

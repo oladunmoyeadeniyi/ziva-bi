@@ -13,6 +13,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import PageContainer from "@/components/PageContainer";
+import PageHeading from "@/components/PageHeading";
+import { Button } from "@/components/ui/button";
 
 interface ModuleState {
   module_key: string;
@@ -139,7 +142,7 @@ export default function DocumentRulesPage() {
     "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
-    <div className="p-8 max-w-5xl">
+    <PageContainer maxWidth="5xl">
       <button
         type="button"
         onClick={() => router.push("/dashboard/business/setup")}
@@ -148,7 +151,7 @@ export default function DocumentRulesPage() {
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
         Setup dashboard
       </button>
-      <h1 className="text-xl font-semibold text-gray-900 mb-1">Document rules</h1>
+      <PageHeading title="Document rules" />
       <p className="text-sm text-gray-500 mb-6">
         Configure required documents per module and transaction type.
       </p>
@@ -187,13 +190,9 @@ export default function DocumentRulesPage() {
             <p className="text-sm font-medium text-gray-700">
               {rules.length} rule{rules.length !== 1 ? "s" : ""} configured
             </p>
-            <button
-              type="button"
-              onClick={() => setShowAdd(true)}
-              className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-            >
+            <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
               + Add document rule
-            </button>
+            </Button>
           </div>
 
           {rules.length === 0 ? (
@@ -338,20 +337,20 @@ export default function DocumentRulesPage() {
                   >
                     Cancel
                   </button>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
                     onClick={addRule}
                     disabled={saving || !newRule.transaction_type || !newRule.document_name}
-                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    loading={saving}
                   >
                     {saving ? "Adding…" : "Add rule"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }
