@@ -334,32 +334,34 @@ Architectural invariants that are durable decisions (the WHY):
 ### Immediate (cleanup / consolidation, before new features)
 1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
 2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
-3. **Verify CoA PL/BS filter** — confirm the account-type filter behaves correctly across both classification schemes.
+3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
 4. **UI Polish Milestone** — global UI overhaul (per §11, never done piecemeal). Do this before more feature surface area is added.
 
 ### Next feature work
-5. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
-6. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
-7. **M11 — Accounts Payable**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable**, **M16 — Budget Engine**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory & Warehouse**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
+5. **Default-CoA feature** — added to queue 2026-06-30. Logged in `ZIVA_BI_HANDOVER.md`/`ZIVA_BI_SESSION_BOOTSTRAP.md` prior to this chat as "build after GL" — GL now exists, so it's ready to brief. System-default Chart of Accounts template, platform-managed by Ziva Super Admin, with 3 adoption paths at tenant setup: (1) adopt Ziva's default, (2) upload own CoA Excel/CSV (only path that exists today), (3) build from scratch (also exists today). Slotted here, right after UI Polish and ahead of the Currencies/FX decision and Super Admin Portal backend completion, because: (a) it's CoA-adjacent — sequencing it while CoA context is fresh from the account_type fix above; (b) it's a contained build (template + setup-wizard step), not a deep transactional module like M11-M20; (c) it has outsized leverage on new-tenant onboarding/trial conversion — every signup hits this, vs. Super Admin backend (Billing/Trials/Team/Audit/Support/Settings) which is Ziva's internal tooling, not tenant-facing. Needs a brief before build (no PRD exists yet).
+6. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
+7. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
+8. **M11 — Accounts Payable**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable**, **M16 — Budget Engine**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory & Warehouse**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
 
 ---
 
 ## 10. FUTURE MILESTONES (recommended order)
 
-1. CoA PL/BS filter verification (cleanup)
+1. CoA account_type normalisation fix (in progress — see §9 item 3)
 2. UI Polish Milestone — global UI overhaul (do not fix UI piecemeal before this)
-3. Currencies & FX / BDC completeness decision
-4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
-5. M11 — Accounts Payable
-6. M13 — Bank Reconciliation
-7. M14 — Accounts Receivable
-8. M16 — Budget Engine
-9. M19 — Tax Engine
-10. M10 — OCR & Receipt Scanning (Anthropic Vision API)
-11. M15 — Payroll & HR
-12. M17 — Inventory & Warehouse
-13. M18 — Fixed Assets
-14. M20 — AI Intelligence Layer (98%+ accuracy target)
+3. Default-CoA feature — system-default CoA template + 3 adoption paths at tenant setup (see §9 item 5 for rationale on slotting)
+4. Currencies & FX / BDC completeness decision
+5. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
+6. M11 — Accounts Payable
+7. M13 — Bank Reconciliation
+8. M14 — Accounts Receivable
+9. M16 — Budget Engine
+10. M19 — Tax Engine
+11. M10 — OCR & Receipt Scanning (Anthropic Vision API)
+12. M15 — Payroll & HR
+13. M17 — Inventory & Warehouse
+14. M18 — Fixed Assets
+15. M20 — AI Intelligence Layer (98%+ accuracy target)
 
 ---
 
