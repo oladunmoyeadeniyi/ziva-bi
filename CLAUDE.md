@@ -132,7 +132,8 @@ ruff check app/
 | — | Organisation tab restructuring (BRIEF-0 — confirmed already shipped 2026-06-30, was a doc lapse, not a build) | ✅ Done |
 | — | Fix CoA account_type normalisation gap (Remap inline-create) — commit `2eda43f`, verified: zero affected rows | ✅ Done |
 | — | Default-CoA feature (3 starter CoA templates + adoption + smart re-download) — commit `7965f33`; DB-level facts verified, live endpoint/UI smoke test outstanding — see MASTER_CONTEXT §5 | ✅ Done* |
-| — | UI Polish Milestone (global overhaul — do not fix UI piecemeal before this) | ⏳ Pending |
+| — | UI Polish Milestone — Phase 1 (shared Button/PageContainer/PageHeading, findings A/B/C) — commit `0d55ea8`; independently re-verified against shipped code — see MASTER_CONTEXT §5 | ✅ Done |
+| — | UI Polish Milestone — Phase 2 (findings D–H: date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states) | ⏳ Pending |
 | — | Confirm Currencies & FX / BDC completeness (dedicated tables vs. JSONB) | ⏳ Pending |
 | — | Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings) | ⏳ Pending |
 | M11 | Accounts Payable | ⏳ Pending |

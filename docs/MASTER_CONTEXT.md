@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-06-29 (full milestone reconciliation — see §5, §9, §10)
+> Last updated: 2026-06-30 (UI Polish Phase 1 close-out — see §5, §9, §10)
 
 ---
 
@@ -262,6 +262,18 @@ Lets a tenant with zero GL accounts adopt one of 3 system-managed starter Chart 
 
 > **Verification status — partial.** Migration up/down, seed row counts (94/76/57, independently cross-checked against the draft doc), and the FX/revalue parsing were confirmed by direct DB query. The two new endpoints' live HTTP behavior (`GET /coa/templates` response shape, the `POST /adopt-template` 409 gate, post-adoption PATCH/POST) and the frontend CTA/modal were verified by **code review only** — no working test-tenant JWT was available to exercise them end-to-end, and the frontend wasn't clicked through in a browser. Treat acceptance steps 2, 4, 5, 7, 8 in `docs/BRIEF_default_coa_templates.md` as unconfirmed until someone (Adeniyi, in-browser, or CC with a real test login) actually exercises the adopt-template flow on a zero-CoA tenant.
 
+### UI Polish Milestone — Phase 1 (committed `0d55ea8`, 2026-06-30)
+
+Code-level audit (`docs/UI_POLISH_AUDIT.md`) found 46 pages with no shared component library — 44 distinct button className variants, 2 competing page-container conventions, 11 page-title styles, plus drift in date-input handling, tab-state persistence, modal backdrops, and banner colors (findings A–H). Adeniyi signed off on tackling the highest-leverage trio first (`docs/BRIEF_ui_polish_phase1.md`). Phase 1 ships findings **A, B, C only**:
+
+- **`Button`** (`frontend/src/components/ui/button.tsx`) — CVA-based, scaffolded against the project's already-configured-but-unused shadcn/ui setup (`components.json` existed, `src/components/ui/` didn't). Variants `primary`/`secondary`/`danger` (colors = the single most common existing string for each, not an average), sizes `default` (`min-h-[44px]`, closing the touch-target gap finding A flagged) / `sm`, built-in `loading` prop with spinner. Zero new npm dependencies — `class-variance-authority`/`clsx`/`tailwind-merge`/`lucide-react`/`radix-ui` were all already in `package.json`.
+- **`PageContainer`** (`frontend/src/components/PageContainer.tsx`) — replaces both the old fixed `p-8 max-w-Nxl` convention and the old unshared-but-correct `px-4 sm:px-6 py-8 max-w-Nxl mx-auto` convention with one component, `maxWidth` prop (default `5xl`), each page's existing width preserved rather than forced uniform.
+- **`PageHeading`** (`frontend/src/components/PageHeading.tsx`) — standardizes on the single most common existing `<h1>` style (`text-xl font-semibold text-gray-900`, optional subtitle). Applied across `dashboard/` pages only; pages outside `dashboard/` (auth, onboarding, landing) deliberately excluded per the brief — different visual context, audit explicitly called this a reasonable difference.
+
+Scope boundary respected: small inline/per-row icon-only action buttons inside tables (a different use case from page-level CTAs) were deliberately left untouched, not swept into the Button rollout.
+
+**Verification — independently re-checked 2026-06-30, holds up.** 41 files changed (matches the claim): 3 new component files + 38 pages. `package.json`/`package-lock.json` diff is empty — no new dependencies, confirmed `radix-ui` (used by the new `Button` via `Slot`) was already present pre-existing. Re-ran the audit's own greps against current code post-commit: old button/container/h1 patterns are gone from in-scope pages; the only remaining matches were (a) a stray untracked `frontend/.../setup/go-live/page.tsx.bak` backup file (not committed, harmless cruft worth deleting) and (b) `app/onboard/[token]/page.tsx`'s `<h1>`, which is correctly excluded (outside `dashboard/`). Out-of-scope small icon-action buttons confirmed still present/unchanged. `tsc --noEmit` claimed 0 errors — not independently re-run (no working node toolchain in this verification pass), code-level checks otherwise all confirm. **Findings D–H (date inputs, tab-state-on-refresh, modal backdrops, banner colors, loading states) are explicitly not part of this phase** — still open, tracked as Phase 2.
+
 ---
 
 ### What changed in this reconciliation (2026-06-29)
@@ -341,7 +353,7 @@ Architectural invariants that are durable decisions (the WHY):
 1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
 2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
 3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
-4. **UI Polish Milestone** — global UI overhaul (per §11, never done piecemeal). Do this before more feature surface area is added.
+4. **UI Polish Milestone — Phase 1 shipped 2026-06-30, commit `0d55ea8`** — see §5 "UI Polish Milestone — Phase 1." Findings A/B/C (shared Button/PageContainer/PageHeading) done, independently verified. **Phase 2 still open:** findings D–H (date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states) — needs its own brief before this milestone is fully closed.
 5. ~~Default-CoA feature~~ — **Shipped 2026-06-30, commit `7965f33`** — see §5 "Default-CoA Templates." Core DB-level facts verified; live endpoint/UI smoke test still outstanding (not blocking, but do it before treating this as fully closed).
 
 ### Next feature work
@@ -353,20 +365,19 @@ Architectural invariants that are durable decisions (the WHY):
 
 ## 10. FUTURE MILESTONES (recommended order)
 
-1. CoA account_type normalisation fix (in progress — see §9 item 3)
-2. UI Polish Milestone — global UI overhaul (do not fix UI piecemeal before this)
-3. Currencies & FX / BDC completeness decision
-4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
-5. M11 — Accounts Payable
-6. M13 — Bank Reconciliation
-7. M14 — Accounts Receivable
-8. M16 — Budget Engine
-9. M19 — Tax Engine
-10. M10 — OCR & Receipt Scanning (Anthropic Vision API)
-11. M15 — Payroll & HR
-12. M17 — Inventory & Warehouse
-13. M18 — Fixed Assets
-14. M20 — AI Intelligence Layer (98%+ accuracy target)
+1. UI Polish Milestone — Phase 2 (findings D–H: date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states; Phase 1/A-B-C shipped `0d55ea8` — see §5)
+2. Currencies & FX / BDC completeness decision
+3. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
+4. M11 — Accounts Payable
+5. M13 — Bank Reconciliation
+6. M14 — Accounts Receivable
+7. M16 — Budget Engine
+8. M19 — Tax Engine
+9. M10 — OCR & Receipt Scanning (Anthropic Vision API)
+10. M15 — Payroll & HR
+11. M17 — Inventory & Warehouse
+12. M18 — Fixed Assets
+13. M20 — AI Intelligence Layer (98%+ accuracy target)
 
 ---
 
@@ -401,4 +412,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-06-29 (full milestone reconciliation — M8.3 mislabel corrected, ~7 undocumented completed milestones added to §5, §9/§10 rewritten; last pushed commit `b3e70e3`, confirmed against `origin/main`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-06-30 (UI Polish Phase 1 close-out — §5 entry added, §9 item 4 updated, §10 item 1 removed (CoA fix shipped `2eda43f`), §10 renumbered; last pushed commit `0d55ea8`, confirmed against `origin/main`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
