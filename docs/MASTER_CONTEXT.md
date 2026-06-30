@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-06-30 (UI Polish Phase 1 close-out — see §5, §9, §10)
+> Last updated: 2026-06-30 (UI Polish Phase 2 close-out — see §5, §9, §10)
 
 ---
 
@@ -276,6 +276,23 @@ Scope boundary respected: small inline/per-row icon-only action buttons inside t
 
 ---
 
+### UI Polish Milestone — Phase 2 (committed `300b22d`, 2026-06-30)
+
+Brief: `docs/BRIEF_ui_polish_phase2.md`. Closes the remaining five audit findings:
+
+- **Build D** — All `type="date"` inputs in `dashboard/` now use the locked `defaultValue` + `onBlur`-only pattern (was: 3 coexisting patterns — hybrid controlled+onChange+onBlur autosave, controlled+onChange-only, and a few bare inputs). 5 files converted: `expenses/new`, `expenses/[report_id]/edit`, `settings/employees`, `settings/dimensions/[id]/values`, `setup/organisation` (registration/commencement fields only — the already-correct fiscal-year-end field left untouched) + `setup/currencies`. Acceptance grep (`type="date"` with `value=`) returns 0 matches.
+- **Build E** — Tab state now URL-synced via `useSearchParams` + `Suspense` wrapper on all 6 previously-broken tabbed pages: `approvals`, `expenses`, `setup/currencies`, `setup/periods`, `setup/roles`, `setup/tax`. Reference pattern copied from already-correct pages (`dimensions`, `organisation`, `chart-of-accounts`).
+- **Build F** — Modal backdrop standardised to `bg-black/40` across `dashboard/`. `setup/organisation`'s two modals converted from `bg-black/30`. The remaining `fixed inset-0` entries without `bg-black/40` on the *outer* div were confirmed as intentional architectural exceptions: 6 use a two-element pattern (outer `fixed inset-0 z-50` for positioning + inner `absolute inset-0 bg-black/40` sibling for the dim — independently code-verified against `dimensions/page.tsx:2289` and `chart-of-accounts/page.tsx:2407`), 1 is a click-outside-to-close catcher (`dimensions:2175`, z-20), 1 is a bottom drawer (`employees:843`).
+- **Build G** — New `Banner` component (`frontend/src/components/Banner.tsx`), 4 variants (`success`/`error`/`warning`/`info`) using `bg-green-50`/`bg-red-50`/`bg-orange-50`/`bg-blue-50` + matching border/text classes, optional `onDismiss` prop. Rolled out to 12 dashboard pages replacing inline banner divs.
+- **Build H** — Animate-pulse skeleton loading states added to 6 previously-uncovered pages that fetch data on mount: `expenses/new`, `setup/organisation`, `setup/modules`, `setup/documents`, `setup/periods`, `setup/tax`. `modules/[module]/page.tsx` confirmed no direct data fetch (Step 0 judgment call — correctly excluded). `tsc --noEmit` → 0 errors, `npm run lint` → 0 errors (warnings only, pre-existing). Also added `eslint.config.mjs` (`next/core-web-vitals + next/typescript`) since `npm run lint` had never been wired — now it is.
+
+**Side effects / housekeeping notes (independently verified):**
+- `radix-ui ^1.6.0` added to `package.json` as a formal direct dependency — it was already in use transitively (Phase 1's `Button` imports `Slot` from it); this formalises the import, not a true new package.
+- `invite/accept/page.tsx` had 1 unused import removed — minor out-of-scope touch, harmless.
+- **`setup/go-live/page.tsx.bak` was accidentally committed** (256 lines, stale backup) — needs a follow-up clean-up commit (`git rm --cached` + push). Not blocking anything but messy.
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -353,7 +370,7 @@ Architectural invariants that are durable decisions (the WHY):
 1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
 2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
 3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
-4. **UI Polish Milestone — Phase 1 shipped 2026-06-30, commit `0d55ea8`** — see §5 "UI Polish Milestone — Phase 1." Findings A/B/C (shared Button/PageContainer/PageHeading) done, independently verified. **Phase 2 still open:** findings D–H (date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states) — needs its own brief before this milestone is fully closed.
+4. ~~UI Polish Milestone~~ — **Fully shipped 2026-06-30.** Phase 1 (commit `0d55ea8`, findings A/B/C) and Phase 2 (commit `300b22d`, findings D–H) both done and independently verified — see §5 for both entries.
 5. ~~Default-CoA feature~~ — **Shipped 2026-06-30, commit `7965f33`** — see §5 "Default-CoA Templates." Core DB-level facts verified; live endpoint/UI smoke test still outstanding (not blocking, but do it before treating this as fully closed).
 
 ### Next feature work
@@ -365,8 +382,7 @@ Architectural invariants that are durable decisions (the WHY):
 
 ## 10. FUTURE MILESTONES (recommended order)
 
-1. UI Polish Milestone — Phase 2 (findings D–H: date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states; Phase 1/A-B-C shipped `0d55ea8` — see §5)
-2. Currencies & FX / BDC completeness decision
+1. Currencies & FX / BDC completeness decision
 3. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
 4. M11 — Accounts Payable
 5. M13 — Bank Reconciliation
