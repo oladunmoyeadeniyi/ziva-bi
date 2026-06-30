@@ -247,7 +247,7 @@ Reconciled the tenant environment architecture per `docs/BRIEF_M9_0_1_test_first
 - Three redundant promote-style endpoints deprecated to `410 Gone`: `/api/tenant/promote` and a previously-undocumented duplicate `/api/platform/tenants/{id}/promote`. `mark_go_live` kept but guarded (400 if `tenant.environment != "live"`).
 - **Explicitly NOT done** (locked decision): no `environment` column added to any tenant-scoped table; no transaction/audit/approval history copied in any promotion path.
 
-**Outstanding from this milestone:** the pre-existing Red Bull live+test pair (created under the old direction) has not yet been retrofitted to the new `parent_tenant_id` direction. The retrofit script (`backend/scripts/retrofit_red_bull_test_first.py`, dry-run by default, `--apply` to commit, automatic `pg_dump` backup) is written and logic-checked but has not been run against the real local Postgres — it must be run locally (by Adeniyi or Claude Code), since this sandbox cannot reach `localhost:5432`. See `docs/PROJECT_STATE.md` §7/§8 for current status.
+**Retrofit confirmed applied (2026-06-30):** the pre-existing Red Bull live+test pair has been re-pointed to the new `parent_tenant_id` direction — confirmed via direct DB query (live tenant's `parent_tenant_id` points to the test tenant's id; the test tenant's `parent_tenant_id` is NULL). This was the last outstanding item from this milestone and is now closed. See `docs/PROJECT_STATE.md` §7 for current values.
 
 ---
 
