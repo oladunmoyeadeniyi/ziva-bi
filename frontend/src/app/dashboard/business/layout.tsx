@@ -122,16 +122,38 @@ export default function BusinessLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, accessToken, impersonation, exitImpersonation, exitUserImpersonation } = useAuth();
+  const { user, accessToken, isLoading, impersonation, exitImpersonation, exitUserImpersonation } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [activeModules, setActiveModules] = useState<ModuleState[] | null>(null);
   const [orgConfig, setOrgConfig] = useState<{ use_dimensions?: boolean; use_multi_currency?: boolean } | null>(null);
 
-  // M9.3c: config access requires super admin (impersonating or native) or power_admin tier.
-  // is_tenant_admin alone no longer grants config access (backend enforces same rule).
-  const isAdmin = user?.is_super_admin || !!impersonation || user?.role_tier === "power_admin";
+  // Admin sections require an active tenant context.
+  //
+  // Non-user-impersonation mode: `!!impersonation` means a SA has entered a tenant
+  // (implementation or support). Regular tenant admins (is_tenant_admin) and power_admin
+  // role tier also qualify. is_super_admin is intentionally NOT included here — without
+  // impersonation the SA's base token carries no tenant_id, so every tenant-scoped API
+  // call would fail. The redirect guard below catches that case and sends them to /platform.
+  //
+  // User-impersonation mode (mode === "user"): `user` has been swapped to the target user's
+  // profile (M9.3b AuthContext fix), so we check the target user's own roles directly.
+  const isAdmin = impersonation?.mode === "user"
+    ? (user?.is_super_admin || user?.is_tenant_admin || user?.role_tier === "power_admin")
+    : (!!impersonation || user?.is_tenant_admin || user?.role_tier === "power_admin");
+
+  // Guard: a super admin with no active impersonation has no tenant context and cannot
+  // call any tenant-scoped API — send them to the platform portal immediately.
+  // Note: `!user.tenant_id` is intentionally absent. A SA whose DB profile has a
+  // tenant_id (e.g. the platform owner who is also a tenant member) still cannot use
+  // their BASE token for tenant API calls — only the impersonation token carries the
+  // necessary tenant_id JWT claim. Without impersonation they must go to /platform.
+  useEffect(() => {
+    if (!isLoading && user?.is_super_admin && !impersonation) {
+      router.push("/platform");
+    }
+  }, [isLoading, user, impersonation, router]);
 
   // Fetch pending approval badge
   useEffect(() => {
@@ -237,8 +259,11 @@ export default function BusinessLayout({
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
 
-      {/* Tenant-context banner — visible whenever a SA is inside a tenant (all modes) */}
-      {impersonation && (
+      {/* Tenant-context banner — visible when SA is inside a tenant, but NOT during
+          user-level impersonation. During mode === "user", only the indigo user banner
+          below is shown — hiding this prevents the SA from bypassing exitUserImpersonation
+          (which handles EP1/EP2 correctly) by clicking "Exit to platform" here first. */}
+      {impersonation && impersonation.mode !== "user" && (
         <ImpersonationBanner
           impersonation={impersonation}
           onExit={() => { exitImpersonation(); router.push("/platform"); }}
@@ -250,7 +275,17 @@ export default function BusinessLayout({
         <ImpersonationUserBanner
           fullName={impersonation.targetUser.fullName}
           role={impersonation.targetUser.role}
-          onExit={async () => { await exitUserImpersonation(); }}
+          onExit={async () => {
+            // Capture returnUrl BEFORE exit clears impersonation state.
+            // EP1: returnUrl = "/platform/tenants/{id}" (wherever the SA launched from)
+            // EP2: returnUrl = "/dashboard/business/settings/employees" (or cost-centers)
+            // exitUserImpersonation writes the restored implementation token to sessionStorage
+            // (EP2) or clears it (EP1) BEFORE we navigate, so restore() always reads the
+            // right state on the new page regardless of which entry point was used.
+            const returnUrl = impersonation?.returnUrl ?? "/platform";
+            await exitUserImpersonation();
+            window.location.replace(returnUrl);
+          }}
         />
       )}
 

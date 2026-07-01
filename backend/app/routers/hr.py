@@ -346,6 +346,7 @@ async def list_employees(
             | Employee.employee_code.ilike(term)
         )
 
+    result = await db.execute(q)
     rows = result.scalars().all()
     items = [EmployeeListItem.from_orm(e) for e in rows]
 
@@ -979,6 +980,26 @@ async def set_cost_center_head(
     if not cc_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cost center not found.")
 
+    # Resolve head_user_id from the employee's email so the impersonate button
+    # on the frontend can find the portal user for this cost center head.
+    # The frontend only sends head_employee_id; we do the email→user_id lookup here.
+    resolved_head_user_id: uuid.UUID | None = None
+    if data.head_employee_id:
+        from app.models.master_data import Employee as EmployeeModel
+        from app.models.auth import User as UserModel
+        emp_row = await db.execute(
+            select(EmployeeModel.email).where(
+                EmployeeModel.id == data.head_employee_id,
+                EmployeeModel.tenant_id == tenant_id,
+            )
+        )
+        emp_email = emp_row.scalar_one_or_none()
+        if emp_email:
+            user_row = await db.execute(
+                select(UserModel.id).where(UserModel.email == emp_email)
+            )
+            resolved_head_user_id = user_row.scalar_one_or_none()
+
     cfg_result = await db.execute(
         select(CostCenterConfig).where(
             CostCenterConfig.cost_center_id == cost_center_id,
@@ -988,13 +1009,13 @@ async def set_cost_center_head(
     cfg = cfg_result.scalar_one_or_none()
     if cfg:
         cfg.head_employee_id = data.head_employee_id
-        cfg.head_user_id = data.head_user_id
+        cfg.head_user_id = resolved_head_user_id
     else:
         cfg = CostCenterConfig(
             tenant_id=tenant_id,
             cost_center_id=cost_center_id,
             head_employee_id=data.head_employee_id,
-            head_user_id=data.head_user_id,
+            head_user_id=resolved_head_user_id,
         )
         db.add(cfg)
 
@@ -1204,27 +1225,4 @@ async def approve_employee_onboarding(
         raise HTTPException(status_code=404, detail="Employee not found.")
 
     emp.is_active = True
-    await db.commit()
-    return {"message": "Employee onboarding approved. Account is now active."}
-
-
-@router.post("/employees/{employee_id}/reject-onboarding", status_code=200)
-async def reject_employee_onboarding(
-    employee_id: uuid.UUID,
-    comment: str,
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """HR rejects self-onboarding with a comment. Employee stays in pending state."""
-    _require_admin(current_user)
-    tenant_id = _require_tenant(current_user)
-
-    result = await db.execute(
-        select(Employee).where(Employee.id == employee_id, Employee.tenant_id == tenant_id)
-    )
-    emp = result.scalar_one_or_none()
-    if not emp:
-        raise HTTPException(status_code=404, detail="Employee not found.")
-
-    logger.info("[ONBOARDING] HR rejected onboarding for employee %s", employee_id)
-    return {"message": "Onboarding rejected.", "comment": comment}
+    await d

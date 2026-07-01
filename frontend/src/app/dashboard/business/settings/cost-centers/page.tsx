@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import PageHeading from "@/components/PageHeading";
 
@@ -13,6 +14,9 @@ interface CostCenterConfig {
   head_employee_name: string | null;
   head_employee_email: string | null;
   head_employee_code: string | null;
+  // M9.3b: resolved from the head's email → user_id by the backend batch lookup.
+  // null when head is unset or has no Ziva portal account yet.
+  head_user_id: string | null;
 }
 
 interface Employee {
@@ -25,7 +29,9 @@ interface Employee {
 }
 
 export default function CostCentersPage() {
-  const { accessToken: token } = useAuth();
+  const { accessToken: token, user, startUserImpersonation } = useAuth();
+  const router = useRouter();
+  const [impersonatingCCId, setImpersonatingCCId] = useState<string | null>(null);
   const [costCenters, setCostCenters] = useState<CostCenterConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -178,7 +184,7 @@ export default function CostCentersPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         onClick={() => openSetHead(cc)}
                         className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -191,6 +197,31 @@ export default function CostCentersPage() {
                           className="text-xs px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
                         >
                           Remove
+                        </button>
+                      )}
+                      {/* M9.3b: Impersonate the cost center head — SA only. */}
+                      {user?.is_super_admin && cc.head_employee_id && (
+                        <button
+                          type="button"
+                          disabled={!!impersonatingCCId || !cc.head_user_id}
+                          title={!cc.head_user_id ? "No portal account — head has not registered on Ziva" : "Impersonate cost center head"}
+                          onClick={async () => {
+                            if (!cc.head_user_id) return;
+                            setImpersonatingCCId(cc.cost_center_id);
+                            try {
+                              await startUserImpersonation(cc.head_user_id, "employee_list");
+                              router.push("/dashboard/business");
+                            } catch {
+                              setImpersonatingCCId(null);
+                            }
+                          }}
+                          className={`text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
+                            cc.head_user_id
+                              ? "text-indigo-600 hover:text-indigo-800"
+                              : "text-gray-400"
+                          }`}
+                        >
+                          {impersonatingCCId === cc.cost_center_id ? "Entering…" : "Impersonate"}
                         </button>
                       )}
                     </div>
@@ -265,52 +296,4 @@ export default function CostCentersPage() {
                     <div className="font-medium text-gray-900">
                       {emp.preferred_name ?? emp.first_name} {emp.last_name}
                     </div>
-                    <div className="text-xs text-gray-400">
-                      {emp.employee_code} · {emp.email}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Selected employee badge */}
-            {selectedEmp && (
-              <div className="flex items-center gap-2 mb-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-blue-900">
-                    {selectedEmp.preferred_name ?? selectedEmp.first_name} {selectedEmp.last_name}
-                  </div>
-                  <div className="text-xs text-blue-600">
-                    {selectedEmp.employee_code} · {selectedEmp.email}
-                  </div>
-                </div>
-                <button
-                  onClick={() => { setSelectedEmp(null); setEmployeeSearch(""); }}
-                  className="text-blue-400 hover:text-blue-600 text-lg leading-none"
-                >
-                  ×
-                </button>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-3 mt-4">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveHead}
-                disabled={saving || !selectedEmp}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+            

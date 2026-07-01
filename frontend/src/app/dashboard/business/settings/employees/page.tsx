@@ -690,10 +690,11 @@ function EmployeesPage() {
                             <button type="button" onClick={() => handleDeactivate(emp.id)}
                               className="text-xs text-red-500 hover:text-red-700 font-medium">Deactivate</button>
                           )}
-                          {user?.is_super_admin && emp.is_active && emp.user_id && (
+                          {user?.is_super_admin && emp.is_active && (
                             <button
                               type="button"
-                              disabled={!!impersonatingEmpId}
+                              disabled={!!impersonatingEmpId || !emp.user_id}
+                              title={!emp.user_id ? "No portal account — employee has not registered on Ziva" : "Impersonate this user"}
                               onClick={async () => {
                                 if (!emp.user_id) return;
                                 setImpersonatingEmpId(emp.id);
@@ -704,7 +705,11 @@ function EmployeesPage() {
                                   setImpersonatingEmpId(null);
                                 }
                               }}
-                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50"
+                              className={`text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed ${
+                                emp.user_id
+                                  ? "text-indigo-600 hover:text-indigo-800"
+                                  : "text-gray-400"
+                              }`}
                             >
                               {impersonatingEmpId === emp.id ? "Entering…" : "Impersonate"}
                             </button>
@@ -946,20 +951,4 @@ function EmployeesPage() {
               <Button variant="primary" onClick={handleInvite}
                 disabled={inviting || !inviteForm.first_name.trim() || !inviteForm.last_name.trim() || !inviteForm.email.trim()}
                 loading={inviting}>
-                {inviting ? "Sending…" : "Send invite"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </PageContainer>
-  );
-}
-
-export default function EmployeesPageWrapper() {
-  return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
-      <EmployeesPage />
-    </Suspense>
-  );
-}
+                {inviting

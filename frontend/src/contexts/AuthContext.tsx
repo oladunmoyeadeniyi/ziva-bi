@@ -61,6 +61,14 @@ export interface ImpersonationState {
   // Only set when mode === "user" (M9.3b user-level impersonation)
   sessionId?: string;
   targetUser?: { id: string; fullName: string; role: string | null };
+  // M9.3b fix: true when user impersonation was started from INSIDE a tenant context
+  // (Entry Point 2 — employee list). False/absent = started from platform portal (EP1).
+  // Used by exitUserImpersonation to decide whether to restore tenant context or go to /platform.
+  hadPriorTenantContext?: boolean;
+  // URL to return to when exiting user impersonation — captured at start time so the SA
+  // is taken back to exactly where they came from (tenant detail page for EP1, employees
+  // page for EP2) rather than the generic /platform root.
+  returnUrl?: string;
 }
 
 interface AuthResponse {
@@ -126,10 +134,15 @@ interface AuthContextType {
     tenantContext?: { tenantId: string; tenantName: string; environment: string },
   ) => Promise<void>;
   /**
-   * Exit user-level impersonation and restore the tenant-level context (M9.3b).
-   * Calls the backend end-session endpoint, then restores the pre-impersonation token.
+   * Exit user-level impersonation (M9.3b).
+   *
+   * Calls the backend end-session endpoint, then either:
+   *  - Restores the prior tenant-level context (if user impersonation started from EP2 —
+   *    inside a tenant context), returning false.
+   *  - Clears impersonation entirely (if started from EP1 — platform portal), returning true.
+   *    When true, the caller is responsible for navigating to /platform.
    */
-  exitUserImpersonation: () => Promise<void>;
+  exitUserImpersonation: () => Promise<boolean>;
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -137,6 +150,10 @@ interface AuthContextType {
 const REFRESH_KEY = "ziva_refresh_token";
 const USER_KEY = "ziva_user";
 const IMPERSONATION_KEY = "ziva_impersonation"; // sessionStorage — tab-scoped
+// M9.3b fix: the implementation token held before user impersonation starts.
+// Persisted to sessionStorage (not just memory) so it survives a page refresh
+// mid-session — enabling correct EP2 restore even after a refresh.
+const PRIOR_TOKEN_KEY = "ziva_prior_imp_token"; // sessionStorage — tab-scoped
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -151,6 +168,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // M9.3b: original SA token saved when user-level impersonation starts, so it can
   // be restored when the SA exits user impersonation (returns to tenant context).
   const [_originalSAToken, _setOriginalSAToken] = useState<string | null>(null);
+  // M9.3b fix: original SA user profile saved when user-level impersonation starts.
+  // During user impersonation, `user` is swapped to the target user's profile so that
+  // all components (sidebar isAdmin, header name, etc.) reflect what the target user sees.
+  const [_originalUser, _setOriginalUser] = useState<AuthUser | null>(null);
 
   // Effective token exposed to consumers: impersonation token takes precedence.
   const accessToken = impersonation?.token ?? _accessToken;
@@ -170,9 +191,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     _setAccessToken(null);
     setUser(null);
     setImpersonation(null);
+    _setOriginalSAToken(null);
+    _setOriginalUser(null);
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(USER_KEY);
     sessionStorage.removeItem(IMPERSONATION_KEY);
+    sessionStorage.removeItem(PRIOR_TOKEN_KEY);
   };
 
   // ── Restore session on mount ──────────────────────────────────────────────
@@ -207,7 +231,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const storedImp = sessionStorage.getItem(IMPERSONATION_KEY);
         if (storedImp) {
           try {
-            setImpersonation(JSON.parse(storedImp) as ImpersonationState);
+            const parsedImp = JSON.parse(storedImp) as ImpersonationState;
+            setImpersonation(parsedImp);
+
+            // M9.3b fix: if user impersonation was active when the page refreshed,
+            // re-fetch the target user's profile so `user` reflects the impersonated
+            // identity rather than the SA's own profile. _originalUser is in memory
+            // only (lost on refresh) so we can't restore it here — the SA profile
+            // stays in localStorage and will be restored when the user exits impersonation.
+            if (parsedImp.mode === "user" && parsedImp.token) {
+              try {
+                const targetProfile = await apiFetch<AuthUser>("/api/users/me", {
+                  token: parsedImp.token,
+                });
+                setUser(targetProfile);
+                // Do NOT update localStorage — SA profile must stay there for restore on exit.
+              } catch {
+                // Impersonation token expired; clear user impersonation so the SA
+                // doesn't get stuck seeing stale/wrong UI after a refresh.
+                const restoredImp: ImpersonationState | null = parsedImp.hadPriorTenantContext
+                  ? { token: "", mode: "implementation", environment: parsedImp.environment, tenantId: parsedImp.tenantId, tenantName: parsedImp.tenantName }
+                  : null;
+                // Token is gone — we can't rebuild the implementation context without
+                // re-entering. Clear everything and let the SA log in / re-enter.
+                setImpersonation(restoredImp);
+                if (!restoredImp) sessionStorage.removeItem(IMPERSONATION_KEY);
+              }
+            }
           } catch {
             sessionStorage.removeItem(IMPERSONATION_KEY);
           }
@@ -304,9 +354,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const exitImpersonation = useCallback(() => {
     setImpersonation(null);
     _setOriginalSAToken(null);
+    // Restore original SA user if we were in user impersonation mode.
+    if (_originalUser) {
+      setUser(_originalUser);
+      _setOriginalUser(null);
+    }
     sessionStorage.removeItem(IMPERSONATION_KEY);
+    sessionStorage.removeItem(PRIOR_TOKEN_KEY);
     // accessToken automatically reverts to _accessToken (base super-admin token).
-  }, []);
+  }, [_originalUser]);
 
   // M9.3b — user-level impersonation ─────────────────────────────────────────
 
@@ -333,7 +389,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     // Save the current token (tenant-level or base SA) so we can restore it on exit.
+    // Persisted to sessionStorage so it survives a page refresh mid-session —
+    // without this, a refresh during EP2 user impersonation loses the implementation
+    // token and exitUserImpersonation cannot restore tenant context.
     _setOriginalSAToken(callerToken);
+    sessionStorage.setItem(PRIOR_TOKEN_KEY, callerToken);
 
     const newImp: ImpersonationState = {
       token: res.access_token,
@@ -347,17 +407,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         fullName: res.target_user.full_name,
         role: res.target_user.role,
       },
+      // M9.3b fix: record whether we had a prior tenant context (EP2) so exitUserImpersonation
+      // knows whether to restore the tenant context or clear entirely and return to platform.
+      hadPriorTenantContext: !!impersonation,
+      // Capture the caller's current URL so the SA is returned to exactly the right page
+      // on exit (tenant detail for EP1, employees/cost-centers page for EP2).
+      returnUrl: typeof window !== "undefined" ? window.location.pathname : undefined,
     };
 
     setImpersonation(newImp);
     sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify(newImp));
-  }, [impersonation, _accessToken]);
 
-  const exitUserImpersonation = useCallback(async (): Promise<void> => {
+    // M9.3b fix: swap `user` to the target user's profile so every component that reads
+    // `user` (sidebar isAdmin check, header, profile page, etc.) reflects what the
+    // target user actually sees — not the SA's own super-admin profile.
+    // Save the SA's profile first so we can restore it on exit.
+    _setOriginalUser(user);
+    try {
+      const targetProfile = await apiFetch<AuthUser>("/api/users/me", {
+        token: res.access_token,
+      });
+      setUser(targetProfile);
+      // Do NOT write to localStorage — SA profile must stay there so it can be
+      // restored if the page is refreshed during user impersonation.
+    } catch {
+      // Non-fatal: if the profile fetch fails, user state stays as the SA's profile.
+      // Components will degrade gracefully (may show SA-level UI for the target user).
+    }
+  }, [impersonation, _accessToken, user]);
+
+  const exitUserImpersonation = useCallback(async (): Promise<boolean> => {
     const sessionId = impersonation?.sessionId;
-    const restoredToken = _originalSAToken;
+    // Prefer in-memory value; fall back to sessionStorage for the page-refresh case
+    // where _originalSAToken was lost from memory but we persisted it before reloading.
+    const restoredToken = _originalSAToken ?? sessionStorage.getItem(PRIOR_TOKEN_KEY);
+    // hadPriorTenantContext is set in startUserImpersonation: true = EP2 (started inside
+    // tenant context), false/absent = EP1 (started from platform portal with no tenant context).
+    const hadPriorContext = impersonation?.hadPriorTenantContext ?? false;
 
-    // Best-effort: notify backend the session ended (use the original SA token).
+    // Best-effort: notify backend the session ended (use the original SA / tenant token).
     if (sessionId && restoredToken) {
       try {
         await apiFetch(`/api/platform/impersonation/${sessionId}/end`, {
@@ -369,26 +457,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Restore tenant-level impersonation state using the saved token.
-    if (impersonation && restoredToken) {
+    _setOriginalSAToken(null);
+    sessionStorage.removeItem(PRIOR_TOKEN_KEY);
+
+    // Restore the SA's original user profile.
+    // _originalUser is in memory (set in startUserImpersonation). If the page was
+    // refreshed during impersonation it will be null — fall back to localStorage
+    // which always holds the SA's own profile (we never overwrite it during impersonation).
+    const restoredUser = _originalUser ?? (() => {
+      try {
+        const stored = localStorage.getItem(USER_KEY);
+        return stored ? (JSON.parse(stored) as AuthUser) : null;
+      } catch { return null; }
+    })();
+    if (restoredUser) setUser(restoredUser);
+    _setOriginalUser(null);
+
+    if (hadPriorContext && impersonation && restoredToken) {
+      // EP2: restore the prior tenant-level implementation context.
+      // restoredToken = the implementation/support token from before user impersonation started,
+      // which carries tenant_id so all tenant-scoped API calls will work again.
+      // Write to sessionStorage FIRST so the reload in the caller picks it up immediately.
       const restoredImp: ImpersonationState = {
         token: restoredToken,
-        mode: impersonation.mode === "user"
-          ? ("implementation" as const)  // fall back to implementation; caller can override
-          : impersonation.mode,
+        mode: "implementation",
         environment: impersonation.environment,
         tenantId: impersonation.tenantId,
         tenantName: impersonation.tenantName,
       };
-      setImpersonation(restoredImp);
       sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify(restoredImp));
+      setImpersonation(restoredImp);
+      return false; // caller should window.location.reload() — restore() picks up sessionStorage
     } else {
+      // EP1 (no prior tenant context) or page was refreshed (restoredToken lost from memory):
+      // clear session state and signal the caller to hard-navigate to /platform.
+      // The caller uses window.location.replace (not router.push) so the page reloads
+      // cleanly from localStorage — avoiding the React async-state race where the platform
+      // layout renders before setUser(restoredUser) is applied and sees is_super_admin=false.
       setImpersonation(null);
       sessionStorage.removeItem(IMPERSONATION_KEY);
+      return true; // caller should window.location.replace("/platform")
     }
-
-    _setOriginalSAToken(null);
-  }, [impersonation, _originalSAToken]);
+  }, [impersonation, _originalSAToken, _originalUser]);
 
   return (
     <AuthContext.Provider
