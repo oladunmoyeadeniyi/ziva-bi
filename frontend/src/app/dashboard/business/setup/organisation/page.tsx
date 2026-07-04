@@ -774,7 +774,7 @@ function OrganisationPage() {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "" as "" | "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
   // Drag-and-drop state
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
@@ -866,7 +866,7 @@ function OrganisationPage() {
   const openAddRole = (parentId: string | null) => {
     setEditingRole(null);
     setRoleParentId(parentId);
-    setRoleForm({ name: "", description: "", capacity: "single", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
+    setRoleForm({ name: "", description: "", capacity: "", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
     setShowRoleModal(true);
   };
 
@@ -874,20 +874,20 @@ function OrganisationPage() {
     setEditingRole(role);
     setRoleParentId(role.parent_role_id);
     const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
-    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "" });
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "regular" });
     setShowRoleModal(true);
   };
 
   const saveRole = async () => {
-    if (!roleForm.name.trim() || !roleForm.costCenterId || !accessToken) return;
+    if (!roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation || !accessToken) return;
     setSavingRole(true);
-    const maxOcc = roleForm.capacity === "single" ? 1 : roleForm.capacity === "unlimited" ? null : parseInt(roleForm.customN) || null;
+    const maxOcc = roleForm.capacity === "single" ? 1 : (roleForm.capacity === "unlimited" || roleForm.capacity === "") ? null : parseInt(roleForm.customN) || null;
     const ccId = roleForm.costCenterId || null;
     try {
       if (editingRole) {
-        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: roleForm.designation || null } });
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: (roleForm.designation === "regular" || !roleForm.designation) ? null : roleForm.designation } });
       } else {
-        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: roleForm.designation || null } });
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: (roleForm.designation === "regular" || !roleForm.designation) ? null : roleForm.designation } });
       }
       await loadRoles();
       setShowRoleModal(false);
@@ -1454,7 +1454,7 @@ function OrganisationPage() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-2">Capacity</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">Capacity <span className="text-red-500">*</span></label>
                         <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
                           {([
                             { value: "single",    label: "Single person" },
@@ -1483,10 +1483,10 @@ function OrganisationPage() {
                         )}
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-2">Designation <span className="text-gray-400">(optional)</span></label>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">Designation <span className="text-red-500">*</span></label>
                         <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
                           {([
-                            { value: "",                   label: "Regular" },
+                            { value: "regular",            label: "Regular" },
                             { value: "head_of_department", label: "Head of Dept" },
                             { value: "head_of_entity",     label: "Head of Entity" },
                           ] as const).map((opt, idx) => (
@@ -1513,7 +1513,7 @@ function OrganisationPage() {
                         className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
                         Cancel
                       </button>
-                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim() || !roleForm.costCenterId}
+                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation}
                         className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
                         {savingRole ? "Saving…" : editingRole ? "Save changes" : "Add role"}
                       </button>
