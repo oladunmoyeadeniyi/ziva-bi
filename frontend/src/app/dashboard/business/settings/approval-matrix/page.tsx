@@ -26,6 +26,14 @@ interface ApprovalRole {
   is_active: boolean;
 }
 
+interface EmployeeOption {
+  id: string;
+  first_name: string;
+  last_name: string;
+  approval_role_id: string | null;
+  user_id: string | null;
+}
+
 interface ThresholdRow {
   approval_role_id: string;
   role_name: string;
@@ -122,6 +130,10 @@ export default function ApprovalWorkflowsPage() {
   const [thresholds, setThresholds] = useState<ThresholdRow[]>([]);
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [policySaved, setPolicySaved] = useState(false);
+  // Org-sync: maps approval_role_id -> "First Last" of whoever holds that role
+  const [roleHolders, setRoleHolders] = useState<Record<string, string>>({});
+  // All employees, for fallback approver picker
+  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
 
   const activeRoles = roles.filter((r) => r.is_active);
 
@@ -139,8 +151,25 @@ export default function ApprovalWorkflowsPage() {
     if (!accessToken) return;
     setLoadingPolicies(true);
     try {
-      const data = await apiFetch<ApprovalPolicy[]>("/api/approvals/policies", { token: accessToken });
+      const [data, emps] = await Promise.all([
+        apiFetch<ApprovalPolicy[]>("/api/approvals/policies", { token: accessToken }),
+        apiFetch<EmployeeOption[]>("/api/hr/employees?active_only=true", { token: accessToken }).catch(() => [] as EmployeeOption[]),
+      ]);
       setPolicies(data);
+      setEmployeeOptions(emps);
+      // Build role holders map: approval_role_id -> "First Last"
+      const holders: Record<string, string> = {};
+      for (const e of emps) {
+        if (e.approval_role_id) {
+          // If multiple employees share a role, show the first alphabetically
+          if (!holders[e.approval_role_id]) {
+            holders[e.approval_role_id] = `${e.first_name} ${e.last_name}`;
+          } else {
+            holders[e.approval_role_id] += `, ${e.first_name} ${e.last_name}`;
+          }
+        }
+      }
+      setRoleHolders(holders);
       const ep = data.find((p) => p.module === "expense");
       if (ep) {
         setRoutingMode(ep.routing_mode);
@@ -439,6 +468,13 @@ export default function ApprovalWorkflowsPage() {
                             <option value="">-- No ceiling (traverse to the top) --</option>
                             {activeRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                           </select>
+                          {ceilingRoleId && (
+                            <p className="text-xs mt-1.5">
+                              {roleHolders[ceilingRoleId]
+                                ? <span className="text-indigo-700"><i className="ti ti-shield-check" /> Held by: <span className="font-medium">{roleHolders[ceilingRoleId]}</span></span>
+                                : <span className="text-amber-600"><i className="ti ti-alert-triangle" /> No employee assigned this role yet</span>}
+                            </p>
+                          )}
                         </div>
                       )}
 
@@ -500,11 +536,15 @@ export default function ApprovalWorkflowsPage() {
                         </select>
                         {vacantBehavior === "escalate_to_fallback" && (
                           <div className="mt-3">
-                            <label className="block text-xs text-gray-500 mb-1">Fallback approver user ID</label>
-                            <input value={fallbackApproverId} onChange={(e) => setFallbackApproverId(e.target.value)}
-                              placeholder="Paste user UUID"
-                              className="w-full max-w-sm px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                            <p className="text-[10px] text-gray-400 mt-1">Find the UUID in Settings &rarr; Users.</p>
+                            <label className="block text-xs text-gray-500 mb-1">Fallback approver</label>
+                            <select value={fallbackApproverId} onChange={(e) => setFallbackApproverId(e.target.value)}
+                              className="w-full max-w-sm px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                              <option value="">-- Select employee --</option>
+                              {employeeOptions.filter(e => e.user_id).map((e) => (
+                                <option key={e.user_id!} value={e.user_id!}>{e.first_name} {e.last_name}</option>
+                              ))}
+                            </select>
+                            <p className="text-[10px] text-gray-400 mt-1">Only employees with a portal account can be a fallback approver.</p>
                           </div>
                         )}
                       </div>
@@ -548,6 +588,13 @@ export default function ApprovalWorkflowsPage() {
                                       <option value="">-- Select role --</option>
                                       {activeRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                                     </select>
+                                    {roleId && (
+                                      <p className="text-xs mt-1">
+                                        {roleHolders[roleId]
+                                          ? <span className="text-indigo-700"><i className="ti ti-shield-check" /> Held by: <span className="font-medium">{roleHolders[roleId]}</span></span>
+                                          : <span className="text-amber-600"><i className="ti ti-alert-triangle" /> No employee assigned this role yet</span>}
+                                      </p>
+                                    )}
                                   </div>
                                   {thresh !== null && setThresh && (
                                     <div>
@@ -556,56 +603,4 @@ export default function ApprovalWorkflowsPage() {
                                       </label>
                                       <div className="flex items-center gap-1">
                                         <span className="text-gray-400 text-xs">N</span>
-                                        <input type="number" min="0" step="1000" value={thresh}
-                                          onChange={(e) => setThresh(e.target.value)}
-                                          placeholder="Leave blank to always require"
-                                          className="w-48 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      <button type="button" onClick={() => savePolicy("expense")} disabled={savingPolicy}
-                        className="text-sm font-medium bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                        {savingPolicy ? "Saving..." : expensePolicy ? "Update policy" : "Save policy"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
-
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100">
-              <p className="text-sm font-semibold text-gray-800">Delete role?</p>
-            </div>
-            <div className="px-5 py-4">
-              <p className="text-sm text-gray-600">
-                <span className="font-medium">{pendingDelete.name}</span> will be permanently removed.
-                Any policies referencing this role will be affected.
-              </p>
-            </div>
-            <div className="px-5 py-3 bg-gray-50 flex justify-end gap-2 border-t border-gray-100">
-              <button type="button" onClick={() => setPendingDelete(null)}
-                className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100">Cancel</button>
-              <button type="button" disabled={savingRole} onClick={() => deleteRole(pendingDelete)}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50">
-                {savingRole ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </PageContainer>
-  );
-}
+                        

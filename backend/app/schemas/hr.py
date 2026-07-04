@@ -29,6 +29,7 @@ class EmployeeCreate(BaseModel):
     cost_center_id: uuid.UUID | None = None
     line_manager_id: uuid.UUID | None = None
     resumption_date: date | None = None
+    approval_role_id: uuid.UUID | None = None
 
     @field_validator("first_name", "last_name", "email")
     @classmethod
@@ -53,6 +54,7 @@ class EmployeeUpdate(BaseModel):
     line_manager_id: uuid.UUID | None = None
     resumption_date: date | None = None
     is_active: bool | None = None
+    approval_role_id: uuid.UUID | None = None
 
 
 class EmployeeListItem(BaseModel):
@@ -71,6 +73,8 @@ class EmployeeListItem(BaseModel):
     line_manager_name: str | None
     is_active: bool
     resumption_date: date | None
+    approval_role_id: str | None = None
+    approval_role_name: str | None = None
     # M9.3b: UUID of the linked users row — None if the employee has no portal account.
     # Populated by list_employees via a batch email→user_id lookup.
     user_id: str | None = None
@@ -87,6 +91,9 @@ class EmployeeListItem(BaseModel):
         lm_name = None
         if hasattr(e, "line_manager") and e.line_manager:
             lm_name = f"{e.line_manager.first_name} {e.line_manager.last_name}"
+        ar_name = None
+        if hasattr(e, "approval_role") and e.approval_role:
+            ar_name = e.approval_role.name
         return cls(
             id=str(e.id),
             employee_code=e.employee_code,
@@ -101,6 +108,8 @@ class EmployeeListItem(BaseModel):
             line_manager_name=lm_name,
             is_active=e.is_active,
             resumption_date=e.resumption_date,
+            approval_role_id=str(e.approval_role_id) if e.approval_role_id else None,
+            approval_role_name=ar_name,
         )
 
 
@@ -122,6 +131,9 @@ class EmployeeResponse(EmployeeListItem):
         lm_name = None
         if hasattr(e, "line_manager") and e.line_manager:
             lm_name = f"{e.line_manager.first_name} {e.line_manager.last_name}"
+        ar_name = None
+        if hasattr(e, "approval_role") and e.approval_role:
+            ar_name = e.approval_role.name
         return cls(
             id=str(e.id),
             employee_code=e.employee_code,
@@ -140,6 +152,8 @@ class EmployeeResponse(EmployeeListItem):
             created_at=e.created_at,
             updated_at=e.updated_at,
             employee_code_auto_generated=e.employee_code_auto_generated,
+            approval_role_id=str(e.approval_role_id) if e.approval_role_id else None,
+            approval_role_name=ar_name,
         )
 
 
@@ -293,6 +307,7 @@ class CostCenterConfigResponse(BaseModel):
     cost_center_id: str
     cost_center_code: str | None
     cost_center_name: str | None
+    parent_id: str | None          # OrgStructureNode.parent_id — used to detect nested CCs
     head_employee_id: str | None
     head_employee_name: str | None
     head_user_id: str | None
@@ -311,14 +326,18 @@ class CostCenterConfigResponse(BaseModel):
             emp_name = f"{c.head_employee.first_name} {c.head_employee.last_name}"
         user_name = None
         if hasattr(c, "head_user") and c.head_user:
-            user_name = f"{c.head_user.first_name} {c.head_user.last_name}"
+            user_name = c.head_user.full_name
         cc_code = c.cost_center.code if hasattr(c, "cost_center") and c.cost_center else None
         cc_name = c.cost_center.name if hasattr(c, "cost_center") and c.cost_center else None
+        parent_id = None
+        if hasattr(c, "cost_center") and c.cost_center and c.cost_center.parent_id:
+            parent_id = str(c.cost_center.parent_id)
         return cls(
             id=str(c.id),
             cost_center_id=str(c.cost_center_id),
             cost_center_code=cc_code,
             cost_center_name=cc_name,
+            parent_id=parent_id,
             head_employee_id=str(c.head_employee_id) if c.head_employee_id else None,
             head_employee_name=emp_name,
             head_user_id=str(c.head_user_id) if c.head_user_id else None,
@@ -376,24 +395,4 @@ class FinanceReviewConfigResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @classmethod
-    def from_orm(cls, cfg: object) -> "FinanceReviewConfigResponse":
-        from app.models.master_data import FinanceReviewConfig
-        c: FinanceReviewConfig = cfg  # type: ignore[assignment]
-        user_name = None
-        user_email = None
-        if hasattr(c, "reviewer") and c.reviewer:
-            user_name = f"{c.reviewer.first_name} {c.reviewer.last_name}"
-            user_email = c.reviewer.email
-        cc_name = c.cost_center.name if hasattr(c, "cost_center") and c.cost_center else None
-        return cls(
-            id=str(c.id),
-            module=c.module,
-            reviewer_user_id=str(c.reviewer_user_id),
-            reviewer_name=user_name,
-            reviewer_email=user_email,
-            review_level=c.review_level,
-            cost_center_id=str(c.cost_center_id) if c.cost_center_id else None,
-            cost_center_name=cc_name,
-            created_at=c.created_at,
-        )
+ 

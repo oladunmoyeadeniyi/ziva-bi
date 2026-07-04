@@ -105,6 +105,58 @@ def _require_admin(current_user: CurrentUser) -> None:
     block_if_readonly_impersonation(current_user)
 
 
+async def _ensure_portal_account(
+    email: str,
+    full_name: str,
+    first_name: str | None,
+    tenant_id: uuid.UUID,
+    db: AsyncSession,
+) -> None:
+    """
+    Idempotently ensure that a Ziva portal account (User + UserTenant) exists
+    for the given employee email.
+
+    Called every time an employee is created or imported. If neither a User nor
+    a UserTenant membership already exists for this email + tenant, both are
+    created with a random unusable password — the employee must use the
+    forgot-password flow to set a real password before logging in directly.
+
+    For SA impersonation (M9.3b), the account works immediately — the backend
+    issues a JWT directly; no password check is performed.
+    """
+    from app.models.auth import User as UserModel, UserTenant as UserTenantModel, AccountType
+    from app.core.security import hash_password as _hash
+
+    result = await db.execute(select(UserModel).where(UserModel.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = UserModel(
+            email=email,
+            full_name=full_name,
+            first_name=first_name,
+            account_type=AccountType.business,
+        )
+        db.add(user)
+        await db.flush()
+
+    ut_result = await db.execute(
+        select(UserTenantModel).where(
+            UserTenantModel.user_id == user.id,
+            UserTenantModel.tenant_id == tenant_id,
+        )
+    )
+    if not ut_result.scalar_one_or_none():
+        user_tenant = UserTenantModel(
+            user_id=user.id,
+            tenant_id=tenant_id,
+            # Random unusable password — employee activates account via forgot-password.
+            password_hash=_hash(secrets.token_hex(32)),
+        )
+        db.add(user_tenant)
+        await db.flush()
+
+
 async def _get_employee_or_404(
     employee_id: uuid.UUID, tenant_id: uuid.UUID, db: AsyncSession
 ) -> Employee:
@@ -114,6 +166,7 @@ async def _get_employee_or_404(
         .options(
             selectinload(Employee.cost_center),
             selectinload(Employee.line_manager),
+            selectinload(Employee.approval_role),
         )
     )
     emp = result.scalar_one_or_none()
@@ -328,6 +381,7 @@ async def list_employees(
         .options(
             selectinload(Employee.cost_center),
             selectinload(Employee.line_manager),
+            selectinload(Employee.approval_role),
         )
         .order_by(Employee.last_name, Employee.first_name)
         .limit(limit)
@@ -406,6 +460,7 @@ async def create_employee(
         cost_center_id=data.cost_center_id,
         line_manager_id=data.line_manager_id,
         resumption_date=data.resumption_date,
+        approval_role_id=data.approval_role_id,
     )
     db.add(emp)
     await db.flush()
@@ -422,6 +477,11 @@ async def create_employee(
         changed_by=current_user.user_id,
     ))
     await db.flush()
+
+    # Auto-provision portal account so the employee can log in (and SA can impersonate them)
+    # without a separate manual invite step.
+    full_name = f"{data.first_name} {data.last_name}".strip()
+    await _ensure_portal_account(data.email, full_name, data.first_name, tenant_id, db)
 
     orm_obj = await _get_employee_or_404(emp.id, tenant_id, db)
     return EmployeeResponse.from_orm(orm_obj)
@@ -824,6 +884,10 @@ async def upload_employees(
         await db.refresh(emp_obj)
         email_to_emp[email.lower()] = emp_obj
 
+        # Auto-provision portal account for both new and updated employees.
+        full_name_emp = f"{emp_obj.first_name} {emp_obj.last_name}".strip()
+        await _ensure_portal_account(email, full_name_emp, emp_obj.first_name, tenant_id, db)
+
     # Second pass — resolve line manager emails
     for i, row in enumerate(rows, start=4):
         if not any((c or "").strip() for c in row):
@@ -887,6 +951,70 @@ async def upload_employees(
     )
 
 
+@router.post("/employees/sync-portal-accounts")
+async def sync_employee_portal_accounts(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Retroactively ensure every active employee in this tenant has a Ziva portal
+    account (User + UserTenant). Idempotent — safe to call multiple times.
+
+    Used to backfill accounts for employees that were imported before the
+    auto-provision logic was added. After running this, the Impersonate button
+    on the Employees page will be enabled for all employees (greyed out only for
+    employees who still have no email address on record).
+
+    Admin only.
+    """
+    tenant_id = _require_tenant(current_user)
+    _require_admin(current_user)
+
+    result = await db.execute(
+        select(Employee).where(
+            Employee.tenant_id == tenant_id,
+            Employee.is_active.is_(True),
+            Employee.email.isnot(None),
+        )
+    )
+    employees = result.scalars().all()
+
+    for emp in employees:
+        full_name = f"{emp.first_name} {emp.last_name}".strip()
+        await _ensure_portal_account(emp.email, full_name, emp.first_name, tenant_id, db)
+
+    await db.flush()
+
+    # Backfill head_user_id on cost_center_config rows where it is still null.
+    # These are assignments made before the auto-resolve logic was added.
+    # We resolve by matching head_employee.email → users.id.
+    from app.models.auth import User as _UserModel
+    cc_result = await db.execute(
+        select(CostCenterConfig)
+        .options(selectinload(CostCenterConfig.head_employee))
+        .where(
+            CostCenterConfig.tenant_id == tenant_id,
+            CostCenterConfig.head_employee_id.isnot(None),
+            CostCenterConfig.head_user_id.is_(None),
+        )
+    )
+    cc_rows = cc_result.scalars().all()
+    head_emails = [cc.head_employee.email for cc in cc_rows if cc.head_employee and cc.head_employee.email]
+    if head_emails:
+        uid_result = await db.execute(
+            select(_UserModel.id, _UserModel.email).where(_UserModel.email.in_(head_emails))
+        )
+        email_to_uid = {row.email.lower(): row.id for row in uid_result}
+        for cc in cc_rows:
+            if cc.head_employee and cc.head_employee.email:
+                uid = email_to_uid.get(cc.head_employee.email.lower())
+                if uid:
+                    cc.head_user_id = uid
+
+    await db.flush()
+    return {"synced": len(employees), "cc_heads_resolved": len(cc_rows)}
+
+
 # ── Cost-center dimension helper ──────────────────────────────────────────────
 
 def _cc_nodes_query(tenant_id: uuid.UUID):
@@ -946,7 +1074,12 @@ async def list_cost_center_configs(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[CostCenterConfigResponse]:
-    """List all cost center head assignments for the tenant."""
+    """List all cost center head assignments for the tenant.
+
+    head_user_id is resolved dynamically from the head employee's email → users.id
+    so the Impersonate button works even for assignments made before the auto-resolve
+    logic was added (i.e. where head_user_id is still null in the DB).
+    """
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(
@@ -959,7 +1092,32 @@ async def list_cost_center_configs(
         )
         .order_by(CostCenterConfig.created_at)
     )
-    return [CostCenterConfigResponse.from_orm(c) for c in result.scalars().all()]
+    configs = result.scalars().all()
+
+    # Batch-resolve head_user_id from employee email → users.id for rows where
+    # the stored column is still null (set before auto-resolve was introduced).
+    # Wrapped in try/except so any error here degrades gracefully (impersonate
+    # buttons just won't activate) rather than crashing the entire endpoint.
+    try:
+        from app.models.auth import User as _UserModel
+        missing = [c for c in configs if c.head_employee_id and not c.head_user_id]
+        if missing:
+            emails = [c.head_employee.email for c in missing if c.head_employee and c.head_employee.email]
+            if emails:
+                uid_rows = await db.execute(
+                    select(_UserModel.id, _UserModel.email).where(_UserModel.email.in_(emails))
+                )
+                email_to_uid = {str(row[1]).lower(): str(row[0]) for row in uid_rows.all()}
+                for c in missing:
+                    if c.head_employee and c.head_employee.email:
+                        resolved = email_to_uid.get(c.head_employee.email.lower())
+                        if resolved:
+                            import uuid as _uuid
+                            c.head_user_id = _uuid.UUID(resolved)
+    except Exception:
+        pass  # Degrade gracefully — impersonate buttons just won't be active
+
+    return [CostCenterConfigResponse.from_orm(c) for c in configs]
 
 
 @router.put("/cost-centers/{cost_center_id}/head", response_model=CostCenterConfigResponse)
@@ -1225,4 +1383,13 @@ async def approve_employee_onboarding(
         raise HTTPException(status_code=404, detail="Employee not found.")
 
     emp.is_active = True
-    await d
+    await db.commit()
+    return {"message": "Employee onboarding approved. Account is now active."}
+
+
+@router.post("/employees/{employee_id}/reject-onboarding", status_code=200)
+async def reject_employee_onboarding(
+    employee_id: uuid.UUID,
+    comment: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: A

@@ -37,8 +37,16 @@ interface Employee {
   line_manager_name: string | null;
   is_active: boolean;
   resumption_date: string | null;
+  approval_role_id: string | null;
+  approval_role_name: string | null;
   // M9.3b: UUID of the linked users row; null if the employee has no portal account.
   user_id?: string | null;
+}
+
+interface ApprovalRole {
+  id: string;
+  name: string;
+  level: number;
 }
 
 interface CostCenterOption {
@@ -142,14 +150,21 @@ function EmployeesPage() {
   const [activeTab, setActiveTab] = useState<EmpTab>("add");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<CostCenterOption[]>([]);
+  const [approvalRoles, setApprovalRoles] = useState<ApprovalRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters & sort
+  // Filters & sort — status and CC persisted to localStorage
+  const _ep = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const _ew = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
+
   const [search, setSearch] = useState("");
-  const [filterCostCenter, setFilterCostCenter] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("active");
+  const [filterCostCenter, _setFilterCC] = useState(() => _ep("emp_cc", ""));
+  const [filterStatus, _setFilterStatus] = useState<"all" | "active" | "inactive">(() => _ep("emp_status", "active") as "all" | "active" | "inactive");
   const [sort, setSort] = useState<SortEntry[]>(loadSort);
+
+  const setFilterCostCenter = (v: string) => { _setFilterCC(v); _ew("emp_cc", v); };
+  const setFilterStatus = (v: "all" | "active" | "inactive") => { _setFilterStatus(v); _ew("emp_status", v); };
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -159,13 +174,13 @@ function EmployeesPage() {
 
   // Add modal
   const [showAdd, setShowAdd] = useState(false);
-  const [addForm, setAddForm] = useState({ first_name: "", last_name: "", email: "", phone: "", employee_code: "", cost_center_id: "", resumption_date: "" });
+  const [addForm, setAddForm] = useState({ first_name: "", last_name: "", email: "", phone: "", employee_code: "", cost_center_id: "", resumption_date: "", approval_role_id: "" });
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
   // Edit modal (matching CoA pattern)
   const [editEmpId, setEditEmpId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ first_name: "", last_name: "", other_name: "", preferred_name: "", phone: "", cost_center_id: "", resumption_date: "" });
+  const [editForm, setEditForm] = useState({ first_name: "", last_name: "", other_name: "", preferred_name: "", phone: "", cost_center_id: "", resumption_date: "", approval_role_id: "" });
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -218,12 +233,14 @@ function EmployeesPage() {
       if (search) params.set("search", search);
       if (filterCostCenter) params.set("cost_center_id", filterCostCenter);
       // Fetch all employees (active_only=false) then filter client-side for status
-      const [emps, ccOpts] = await Promise.all([
+      const [emps, ccOpts, aroles] = await Promise.all([
         apiFetch<Employee[]>(`/api/hr/employees?active_only=false&${params}`, { token: accessToken }),
         apiFetch<CostCenterOption[]>(`/api/hr/cost-centers/options`, { token: accessToken }),
+        apiFetch<ApprovalRole[]>(`/api/approvals/roles`, { token: accessToken }).catch(() => [] as ApprovalRole[]),
       ]);
       setEmployees(emps);
       setCostCenterOptions(ccOpts);
+      setApprovalRoles(aroles);
       setSelectedIds(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load employees.");
@@ -248,10 +265,10 @@ function EmployeesPage() {
     try {
       await apiFetch("/api/hr/employees", {
         method: "POST", token: accessToken,
-        body: JSON.stringify({ ...addForm, cost_center_id: addForm.cost_center_id || null, resumption_date: addForm.resumption_date || null, employee_code: addForm.employee_code || null }),
+        body: JSON.stringify({ ...addForm, cost_center_id: addForm.cost_center_id || null, resumption_date: addForm.resumption_date || null, employee_code: addForm.employee_code || null, approval_role_id: addForm.approval_role_id || null }),
       });
       setShowAdd(false);
-      setAddForm({ first_name: "", last_name: "", email: "", phone: "", employee_code: "", cost_center_id: "", resumption_date: "" });
+      setAddForm({ first_name: "", last_name: "", email: "", phone: "", employee_code: "", cost_center_id: "", resumption_date: "", approval_role_id: "" });
       await load();
     } catch (err) { setAddError(err instanceof Error ? err.message : "Failed to create employee."); }
     finally { setAdding(false); }
@@ -271,6 +288,7 @@ function EmployeesPage() {
           phone:      editForm.phone       || null,
           cost_center_id: editForm.cost_center_id || null,
           resumption_date: editForm.resumption_date || null,
+          approval_role_id: editForm.approval_role_id || null,
         }),
       });
       setEditEmpId(null);
@@ -289,6 +307,7 @@ function EmployeesPage() {
       phone:          emp.phone ?? "",
       cost_center_id: emp.cost_center_id ?? "",
       resumption_date: emp.resumption_date ?? "",
+      approval_role_id: emp.approval_role_id ?? "",
     });
     setEditError(null);
   };
@@ -575,12 +594,26 @@ function EmployeesPage() {
                 <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
               ))}
             </select>
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as typeof filterStatus)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="active">Active only</option>
-              <option value="inactive">Inactive only</option>
-              <option value="all">All</option>
-            </select>
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+              {([
+                { value: "active",   label: "Active" },
+                { value: "inactive", label: "Inactive" },
+                { value: "all",      label: "All" },
+              ] as { value: typeof filterStatus; label: string }[]).map(({ value, label }, i) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFilterStatus(value)}
+                  className={`px-3 py-2 font-medium transition-colors ${
+                    filterStatus === value
+                      ? "bg-blue-600 text-white"
+                      : "bg-white text-gray-600 hover:bg-gray-50"
+                  } ${i > 0 ? "border-l border-gray-300" : ""}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <button type="button" onClick={load}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Search</button>
             {(search || filterCostCenter) && (
@@ -668,6 +701,7 @@ function EmployeesPage() {
                       <td className="px-4 py-3 text-sm text-gray-900 font-medium">
                         {emp.preferred_name ?? emp.first_name} {emp.last_name}
                         {emp.line_manager_name && <div className="text-xs text-gray-400">Manager: {emp.line_manager_name}</div>}
+                        {emp.approval_role_name && <div className="text-xs text-indigo-600 mt-0.5"><i className="ti ti-shield-check" /> {emp.approval_role_name}</div>}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-500">{emp.cost_center_name ?? "—"}</td>
                       <td className="px-4 py-3">
@@ -752,6 +786,17 @@ function EmployeesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
                 <CostCenterSelect value={addForm.cost_center_id} onChange={v => setAddForm(f => ({ ...f, cost_center_id: v }))} />
               </div>
+              {/* Approval Role — wires employee into the routing engine */}
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Approval Role</label>
+                <select value={addForm.approval_role_id} onChange={e => setAddForm(f => ({ ...f, approval_role_id: e.target.value }))} className={selectCls}>
+                  <option value="">— None —</option>
+                  {approvalRoles.sort((a, b) => a.level - b.level).map(r => (
+                    <option key={r.id} value={r.id}>{r.name} (Level {r.level})</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-0.5">Assigns this employee a role in the approval chain (e.g. Finance Director, HOD).</p>
+              </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
               <Button variant="secondary" onClick={() => { setShowAdd(false); setAddError(null); }} disabled={adding}>Cancel</Button>
@@ -790,6 +835,17 @@ function EmployeesPage() {
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
                 <CostCenterSelect value={editForm.cost_center_id} onChange={v => setEditForm(f => ({ ...f, cost_center_id: v }))} />
+              </div>
+              {/* Approval Role — wires employee into the routing engine */}
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Approval Role</label>
+                <select value={editForm.approval_role_id} onChange={e => setEditForm(f => ({ ...f, approval_role_id: e.target.value }))} className={selectCls}>
+                  <option value="">— None —</option>
+                  {approvalRoles.sort((a, b) => a.level - b.level).map(r => (
+                    <option key={r.id} value={r.id}>{r.name} (Level {r.level})</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 mt-0.5">Assigns this employee a role in the approval chain (e.g. Finance Director, HOD).</p>
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-5">
@@ -905,50 +961,4 @@ function EmployeesPage() {
                             <span className="font-medium text-gray-800">{tr.from_cost_center_name ?? "—"} → {tr.to_cost_center_name ?? "—"}</span>
                             <span className="text-gray-400">{tr.effective_date}</span>
                           </div>
-                          {tr.notes && <p className="text-gray-500 mt-0.5">{tr.notes}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Invite modal — real CC dropdown ─────────────────────────────────── */}
-      {showInvite && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Send self-onboarding invite</h2>
-            {inviteError   && <p className="text-xs text-red-600 mb-3">{inviteError}</p>}
-            {inviteSuccess && <p className="text-xs text-green-600 mb-3">{inviteSuccess}</p>}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">First name <span className="text-red-500">*</span></label>
-                <input type="text" value={inviteForm.first_name} onChange={e => setInviteForm(f => ({ ...f, first_name: e.target.value }))} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Last name <span className="text-red-500">*</span></label>
-                <input type="text" value={inviteForm.last_name} onChange={e => setInviteForm(f => ({ ...f, last_name: e.target.value }))} className={inputCls} />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Email <span className="text-red-500">*</span></label>
-                <input type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
-                <CostCenterSelect value={inviteForm.cost_center_id} onChange={v => setInviteForm(f => ({ ...f, cost_center_id: v }))} />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Start date</label>
-                <input type="date" defaultValue={inviteForm.start_date} onBlur={e => setInviteForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} />
-              </div>
-            </div>
-            <div className="flex gap-3 justify-end mt-5">
-              <Button variant="secondary" onClick={() => { setShowInvite(false); setInviteError(null); }} disabled={inviting}>Cancel</Button>
-              <Button variant="primary" onClick={handleInvite}
-                disabled={inviting || !inviteForm.first_name.trim() || !inviteForm.last_name.trim() || !inviteForm.email.trim()}
-                loading={inviting}>
-                {inviting
+            
