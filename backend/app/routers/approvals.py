@@ -12,6 +12,7 @@ Endpoints:
     POST   /api/approvals/roles                                 Create an approver role
     PATCH  /api/approvals/roles/{role_id}                       Update an approver role
     DELETE /api/approvals/roles/{role_id}                       Delete an approver role
+    POST   /api/approvals/roles/bulk-upload                     Bulk-upload roles from Excel/CSV template
     GET    /api/approvals/policies                              List all policies for tenant
     POST   /api/approvals/policies                              Create or replace a module policy
     PATCH  /api/approvals/policies/{policy_id}                  Partial update a policy
@@ -31,6 +32,7 @@ Endpoints:
     POST   /api/approvals/{approval_id}/refer-back              Refer back to lower approver or requestor
 """
 
+import io
 import logging
 import smtplib
 import uuid
@@ -38,7 +40,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from email.mime.text import MIMEText
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -54,6 +56,7 @@ from app.models.approvals import (
     ApprovalRoleThreshold,
     ExpenseApproval,
 )
+from app.models.setup import OrgStructureNode
 from app.models.auth import AuditLog, User, UserTenant
 from app.models.expenses import ExpenseReport, ExpenseReportSnapshot
 from app.schemas.approvals import (
@@ -75,6 +78,7 @@ from app.schemas.approvals import (
     ChainPreviewStep,
     ReferBackRequest,
     RejectRequest,
+    RoleBulkUploadResult,
     SnapshotResponse,
     SubmitWithApproversRequest,
 )
@@ -397,6 +401,7 @@ async def list_approval_roles(
         raise HTTPException(status_code=400, detail="Tenant context required.")
     rows = (await db.execute(
         select(ApprovalRole)
+        .options(selectinload(ApprovalRole.cost_center))
         .where(ApprovalRole.tenant_id == current_user.tenant_id)
         .order_by(ApprovalRole.display_order, ApprovalRole.name)
     )).scalars().all()
@@ -412,6 +417,7 @@ async def list_approval_roles(
         await db.commit()
         rows = (await db.execute(
             select(ApprovalRole)
+            .options(selectinload(ApprovalRole.cost_center))
             .where(ApprovalRole.tenant_id == current_user.tenant_id)
             .order_by(ApprovalRole.display_order)
         )).scalars().all()
@@ -443,11 +449,18 @@ async def create_approval_role(
         description=data.description,
         display_order=data.display_order,
         parent_role_id=data.parent_role_id,
+        cost_center_id=data.cost_center_id,
         max_occupants=data.max_occupants,
     )
     db.add(role)
     await db.commit()
     await db.refresh(role)
+    # reload with cost_center eagerly so from_orm can read the name
+    role = (await db.execute(
+        select(ApprovalRole)
+        .options(selectinload(ApprovalRole.cost_center))
+        .where(ApprovalRole.id == role.id)
+    )).scalar_one()
     return ApprovalRoleResponse.from_orm(role)
 
 
@@ -482,8 +495,15 @@ async def update_approval_role(
         role.parent_role_id = data.parent_role_id
     if "max_occupants" in data.model_fields_set:
         role.max_occupants = data.max_occupants  # allows setting to None (unlimited)
+    if "cost_center_id" in data.model_fields_set:
+        role.cost_center_id = data.cost_center_id  # allows clearing to None
     await db.commit()
-    await db.refresh(role)
+    # reload with cost_center eagerly
+    role = (await db.execute(
+        select(ApprovalRole)
+        .options(selectinload(ApprovalRole.cost_center))
+        .where(ApprovalRole.id == role.id)
+    )).scalar_one()
     return ApprovalRoleResponse.from_orm(role)
 
 
@@ -507,6 +527,152 @@ async def delete_approval_role(
         raise HTTPException(status_code=404, detail="Role not found.")
     await db.delete(role)
     await db.commit()
+
+
+@router.post("/roles/bulk-upload", response_model=RoleBulkUploadResult, status_code=200)
+async def bulk_upload_roles(
+    file: UploadFile = File(..., description="Excel (.xlsx) or CSV file from the roles template"),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> RoleBulkUploadResult:
+    """
+    Bulk-create or update approval roles from an Excel/CSV template.
+
+    Expected columns (case-insensitive):
+        Role Name       | Required. Unique within the tenant.
+        Parent Role     | Optional. Name of the parent role (must already exist or appear earlier in file).
+        Cost Center     | Optional. Name of an OrgStructureNode with node_type='Cost center'.
+        Capacity        | Optional. 'single', a number (e.g. '3'), or blank/unlimited.
+        Description     | Optional. Free-text description.
+
+    Two-pass logic:
+        Pass 1: create / update all roles (without parent link).
+        Pass 2: wire parent_role_id by name.
+
+    Existing roles (matched by name) are updated; new names are created.
+    """
+    block_if_readonly_impersonation(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    # ── Parse file ────────────────────────────────────────────────────────────
+    content = await file.read()
+    filename = (file.filename or "").lower()
+    rows: list[dict] = []
+    errors: list[dict] = []
+
+    if filename.endswith(".csv"):
+        import csv
+        reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
+        rows = [dict(r) for r in reader]
+    elif filename.endswith(".xlsx") or filename.endswith(".xls"):
+        try:
+            import openpyxl
+        except ImportError:
+            raise HTTPException(status_code=500, detail="openpyxl not installed — use CSV upload instead.")
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        headers = [str(c.value or "").strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rows.append({headers[i]: (str(v).strip() if v is not None else "") for i, v in enumerate(row)})
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Upload an .xlsx or .csv file.")
+
+    # ── Normalise column names ────────────────────────────────────────────────
+    def _col(row: dict, *keys: str) -> str:
+        for k in keys:
+            for rk in row:
+                if rk.lower().replace(" ", "") == k.lower().replace(" ", ""):
+                    return (row[rk] or "").strip()
+        return ""
+
+    # ── Load existing roles + cost centers ───────────────────────────────────
+    existing_roles_q = (await db.execute(
+        select(ApprovalRole).where(ApprovalRole.tenant_id == tenant_id)
+    )).scalars().all()
+    role_by_name: dict[str, ApprovalRole] = {r.name.lower(): r for r in existing_roles_q}
+
+    cost_centers_q = (await db.execute(
+        select(OrgStructureNode).where(
+            OrgStructureNode.tenant_id == tenant_id,
+            OrgStructureNode.node_type == "Cost center",
+        )
+    )).scalars().all()
+    cc_by_name: dict[str, uuid.UUID] = {c.name.lower(): c.id for c in cost_centers_q}
+
+    # ── Pass 1: upsert roles (no parent wiring yet) ──────────────────────────
+    result = RoleBulkUploadResult()
+    upserted: list[tuple[str, ApprovalRole]] = []  # (original_name, role)
+
+    for i, row in enumerate(rows, start=2):
+        role_name = _col(row, "RoleName", "Role Name", "name")
+        if not role_name:
+            continue  # skip blank rows
+
+        cc_name = _col(row, "CostCenter", "Cost Center", "costcenter")
+        capacity_raw = _col(row, "Capacity", "MaxOccupants", "max_occupants")
+        description = _col(row, "Description", "Desc")
+
+        # Resolve cost center
+        cc_id: uuid.UUID | None = None
+        if cc_name:
+            cc_id = cc_by_name.get(cc_name.lower())
+            if cc_id is None:
+                errors.append({"row": i, "role": role_name, "error": f"Cost center '{cc_name}' not found."})
+                result.skipped += 1
+                continue
+
+        # Parse capacity
+        max_occupants: int | None = None
+        if capacity_raw.lower() in ("", "unlimited", "none", "-"):
+            max_occupants = None
+        elif capacity_raw.lower() in ("single", "1", "solo"):
+            max_occupants = 1
+        else:
+            try:
+                max_occupants = int(capacity_raw)
+            except ValueError:
+                errors.append({"row": i, "role": role_name, "error": f"Invalid capacity '{capacity_raw}'."})
+                result.skipped += 1
+                continue
+
+        existing = role_by_name.get(role_name.lower())
+        if existing:
+            existing.description = description or existing.description
+            existing.cost_center_id = cc_id if cc_id is not None else existing.cost_center_id
+            existing.max_occupants = max_occupants
+            upserted.append((role_name, existing))
+            result.updated += 1
+        else:
+            new_role = ApprovalRole(
+                tenant_id=tenant_id,
+                name=role_name,
+                description=description or None,
+                cost_center_id=cc_id,
+                max_occupants=max_occupants,
+                display_order=0,
+            )
+            db.add(new_role)
+            role_by_name[role_name.lower()] = new_role
+            upserted.append((role_name, new_role))
+            result.created += 1
+
+    await db.flush()  # generate PKs so pass-2 can reference them
+
+    # ── Pass 2: wire parent_role_id ───────────────────────────────────────────
+    for i, row in enumerate(rows, start=2):
+        role_name = _col(row, "RoleName", "Role Name", "name")
+        parent_name = _col(row, "ParentRole", "Parent Role", "parentrole")
+        if not role_name or not parent_name:
+            continue
+        child = role_by_name.get(role_name.lower())
+        parent = role_by_name.get(parent_name.lower())
+        if child and parent:
+            child.parent_role_id = parent.id
+        elif child and not parent:
+            errors.append({"row": i, "role": role_name, "error": f"Parent role '{parent_name}' not found."})
+
+    await db.commit()
+    return result
 
 
 # ── Approval Policies ────────────────────────────────────────────────────────
@@ -1662,183 +1828,4 @@ async def reject(
     if approval.approver_id != current_user.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="You are not the designated approver for this record.")
-    if approval.status != "PENDING":
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="This approval record has already been actioned.")
-
-    report = await _get_report_or_404(approval.report_id, tenant_id, db)
-
-    if report.current_approval_level != approval.level:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="This approval level is not currently active for this report.")
-
-    approval.status = "REJECTED"
-    approval.comment = data.comment
-    approval.actioned_at = datetime.now(timezone.utc)
-
-    report.status = "REJECTED"
-    report.rejection_comment = data.comment
-    report.rejected_at_level = approval.level
-    report.referred_back_from_level = None
-    report.referred_back_levels = None
-    report.current_approval_level = None
-
-    await db.flush()
-
-    await _write_audit_log(db, "EXPENSE_REJECTED", current_user.user_id, tenant_id, {
-        "report_id": str(report.id),
-        "report_number": report.report_number,
-        "level": approval.level,
-        "approver_id": str(approval.approver_id),
-        "comment": data.comment,
-        "total_amount": str(report.total_amount),
-        "rejected_at_level": approval.level,
-    })
-
-    employee_result = await db.execute(select(User).where(User.id == report.employee_id))
-    employee = employee_result.scalar_one_or_none()
-    if employee:
-        _send_rejection_email(
-            to_email=employee.email,
-            report_number=report.report_number,
-            report_date=str(report.report_date),
-            total_amount=report.total_amount,
-            rejection_comment=data.comment,
-        )
-
-    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
-
-
-# ── Refer Back ────────────────────────────────────────────────────────────────
-
-@router.post("/{approval_id}/refer-back", response_model=ExpenseReportResponse)
-async def refer_back(
-    approval_id: uuid.UUID,
-    data: ReferBackRequest,
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> ExpenseReportResponse:
-    """Refer back an expense report from the current approval level."""
-    tenant_id = _require_tenant(current_user)
-    block_if_readonly_impersonation(current_user)
-
-    result = await db.execute(
-        select(ExpenseApproval).where(
-            ExpenseApproval.id == approval_id,
-            ExpenseApproval.tenant_id == tenant_id,
-        )
-    )
-    approval = result.scalar_one_or_none()
-    if not approval:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval record not found.")
-
-    if approval.approver_id != current_user.user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="You are not the designated approver for this record.")
-    if approval.status != "PENDING":
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="This approval record has already been actioned.")
-
-    report = await _get_report_or_404(approval.report_id, tenant_id, db)
-
-    if report.current_approval_level != approval.level:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail="This approval level is not currently active for this report.")
-
-    approval.status = "REFERRED_BACK"
-    approval.comment = data.comment
-    approval.visible_to_requestor = data.visible_to_requestor
-    approval.actioned_at = datetime.now(timezone.utc)
-
-    if data.target_type == "requestor":
-        report.status = "REFERRED_TO_REQUESTOR"
-        report.rejection_comment = data.comment
-        report.rejected_at_level = approval.level
-        report.current_approval_level = None
-
-        await _write_audit_log(db, "EXPENSE_REFERRED_BACK", current_user.user_id, tenant_id, {
-            "report_id": str(report.id),
-            "report_number": report.report_number,
-            "level": approval.level,
-            "referring_approver_id": str(approval.approver_id),
-            "target_type": "requestor",
-            "target_levels": [],
-            "comment": data.comment,
-            "visible_to_requestor": data.visible_to_requestor,
-            "total_amount": str(report.total_amount),
-        })
-
-        if data.visible_to_requestor:
-            employee_result = await db.execute(select(User).where(User.id == report.employee_id))
-            employee = employee_result.scalar_one_or_none()
-            if employee:
-                _send_refer_back_email(
-                    to_email=employee.email,
-                    report_number=report.report_number,
-                    comment=data.comment,
-                    referring_level=approval.level,
-                )
-
-    else:
-        if not data.target_levels:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="target_levels is required when target_type is \'approver\'.",
-            )
-
-        invalid = [lvl for lvl in data.target_levels if lvl >= approval.level]
-        if invalid:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"All target levels must be lower than the current level ({approval.level}).",
-            )
-
-        sorted_levels = sorted(set(data.target_levels))
-
-        target_approvals: dict[int, ExpenseApproval] = {}
-        for lvl in sorted_levels:
-            target_result = await db.execute(
-                select(ExpenseApproval).where(
-                    ExpenseApproval.report_id == report.id,
-                    ExpenseApproval.level == lvl,
-                ).order_by(ExpenseApproval.created_at.desc())
-            )
-            ta = target_result.scalars().first()
-            if not ta:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"No approval record found for level {lvl}.",
-                )
-            target_approvals[lvl] = ta
-
-        first_level = sorted_levels[0]
-        remaining = sorted_levels[1:]
-
-        first_target = target_approvals[first_level]
-        first_target.status = "PENDING"
-        first_target.actioned_at = None
-
-        report.current_approval_level = first_level
-        report.referred_back_from_level = approval.level
-        report.referred_back_levels = remaining if remaining else None
-
-        await _write_audit_log(db, "EXPENSE_REFERRED_BACK", current_user.user_id, tenant_id, {
-            "report_id": str(report.id),
-            "report_number": report.report_number,
-            "level": approval.level,
-            "referring_approver_id": str(approval.approver_id),
-            "target_type": "approver",
-            "target_levels": sorted_levels,
-            "comment": data.comment,
-            "visible_to_requestor": data.visible_to_requestor,
-            "total_amount": str(report.total_amount),
-        })
-
-        referring_approver_result = await db.execute(select(User).where(User.id == approval.approver_id))
-        referring_approver = referring_approver_result.scalar_one_or_none()
-        first_approver_result = await db.execute(select(User).where(User.id == first_target.approver_id))
-        first_approver = first_approver_result.scalar_one_or_none()
-        if first_approver and referring_approver:
-            _send_referred_approver_email(
-                to_email=first_approver.email,
-            
+    if approval.status !=

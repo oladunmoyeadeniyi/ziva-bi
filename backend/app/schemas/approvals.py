@@ -23,6 +23,7 @@ class ApprovalRoleCreate(BaseModel):
     description: str | None = None
     display_order: int = 0
     parent_role_id: uuid.UUID | None = None
+    cost_center_id: uuid.UUID | None = None
     max_occupants: int | None = None  # None=unlimited, 1=solo, N=capped
 
 
@@ -33,6 +34,7 @@ class ApprovalRoleUpdate(BaseModel):
     display_order: int | None = None
     is_active: bool | None = None
     parent_role_id: uuid.UUID | None = None
+    cost_center_id: uuid.UUID | None = None
     max_occupants: int | None = None
 
 
@@ -44,12 +46,17 @@ class ApprovalRoleResponse(BaseModel):
     display_order: int
     is_active: bool
     parent_role_id: str | None = None
+    cost_center_id: str | None = None
+    cost_center_name: str | None = None
     max_occupants: int | None = None
 
     @classmethod
     def from_orm(cls, r: object) -> "ApprovalRoleResponse":
         from app.models.approvals import ApprovalRole
         assert isinstance(r, ApprovalRole)
+        cc_name = None
+        if hasattr(r, "cost_center") and r.cost_center:
+            cc_name = r.cost_center.name
         return cls(
             id=str(r.id),
             name=r.name,
@@ -57,8 +64,18 @@ class ApprovalRoleResponse(BaseModel):
             display_order=r.display_order,
             is_active=r.is_active,
             parent_role_id=str(r.parent_role_id) if r.parent_role_id else None,
+            cost_center_id=str(r.cost_center_id) if r.cost_center_id else None,
+            cost_center_name=cc_name,
             max_occupants=r.max_occupants,
         )
+
+
+class RoleBulkUploadResult(BaseModel):
+    """Result from the bulk role upload endpoint."""
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[dict] = []
 
 
 # ── Approval Policy ───────────────────────────────────────────────────────────
@@ -186,19 +203,4 @@ class ApprovalPolicyResponse(BaseModel):
             finance_amount_threshold_l2=p.finance_amount_threshold_l2,
             finance_amount_threshold_l3=p.finance_amount_threshold_l3,
             is_active=p.is_active,
-            thresholds=[ApprovalRoleThresholdResponse.from_orm(t) for t in (p.thresholds or [])],
-            created_at=p.created_at,
-            updated_at=p.updated_at,
-        )
-
-
-# ── Approval Chain Preview ────────────────────────────────────────────────────
-
-class ChainPreviewStep(BaseModel):
-    """One step in the computed chain preview returned to the submission form."""
-    level: int
-    name: str
-    email: str
-    role_label: str
-    chain_type: str  # "management" | "finance"
-    is_d
+            threshol

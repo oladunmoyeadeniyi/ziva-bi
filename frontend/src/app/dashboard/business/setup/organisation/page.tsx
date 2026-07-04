@@ -291,6 +291,14 @@ interface OrgRole {
   is_active: boolean;
   parent_role_id: string | null;
   max_occupants: number | null; // null=unlimited, 1=solo, N=capped
+  cost_center_id: string | null;
+  cost_center_name: string | null;
+}
+
+interface CostCenterOption {
+  id: string;
+  name: string;
+  code: string;
 }
 
 interface RoleTreeNode extends OrgRole {
@@ -305,18 +313,33 @@ function buildRoleTree(roles: OrgRole[], parentId: string | null = null, depth =
     .map(r => ({ ...r, depth, children: buildRoleTree(roles, r.id, depth + 1) }));
 }
 
-// Depth-indexed colour palette
-const ROLE_DEPTH_COLORS = [
-  { accent: "#1d4ed8", light: "#dbeafe", mid: "#3b82f6" },
-  { accent: "#0891b2", light: "#cffafe", mid: "#06b6d4" },
-  { accent: "#059669", light: "#d1fae5", mid: "#10b981" },
-  { accent: "#d97706", light: "#fef3c7", mid: "#f59e0b" },
-  { accent: "#7c3aed", light: "#ede9fe", mid: "#8b5cf6" },
-  { accent: "#be185d", light: "#fce7f3", mid: "#ec4899" },
+// Cost-centre–indexed colour palette (deterministic hash by CC id/name seed)
+const CC_PALETTE = [
+  { accent: "#1d4ed8", light: "#dbeafe" },
+  { accent: "#0891b2", light: "#cffafe" },
+  { accent: "#059669", light: "#d1fae5" },
+  { accent: "#d97706", light: "#fef3c7" },
+  { accent: "#7c3aed", light: "#ede9fe" },
+  { accent: "#be185d", light: "#fce7f3" },
+  { accent: "#b45309", light: "#fef9c3" },
+  { accent: "#0f766e", light: "#ccfbf1" },
 ];
 
-function roleColor(depth: number) {
-  return ROLE_DEPTH_COLORS[depth % ROLE_DEPTH_COLORS.length];
+// Null / cross-functional roles get a neutral grey palette
+const CC_NEUTRAL = { accent: "#475569", light: "#f1f5f9" };
+
+function hashString(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) & 0x7fffffff;
+  }
+  return h;
+}
+
+function roleColor(node: OrgRole) {
+  if (!node.cost_center_id) return CC_NEUTRAL;
+  const idx = hashString(node.cost_center_id) % CC_PALETTE.length;
+  return CC_PALETTE[idx];
 }
 
 const RC = "#e2e8f0"; // connector colour
@@ -355,7 +378,7 @@ function RoleChartNode({
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
-  const c = roleColor(node.depth);
+  const c = roleColor(node);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -397,6 +420,19 @@ function RoleChartNode({
           <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, letterSpacing: 0.1 }}>
             {node.name}
           </div>
+
+          {/* Cost centre tag */}
+          {node.cost_center_name && (
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              marginTop: 5, padding: "2px 8px",
+              background: c.light, borderRadius: 20,
+              fontSize: 10, fontWeight: 600, color: c.accent,
+            }}>
+              <i className="ti ti-building" style={{ fontSize: 9 }} />
+              {node.cost_center_name}
+            </div>
+          )}
 
           {/* Capacity */}
           <CapacityBadge max={node.max_occupants} />
@@ -728,14 +764,20 @@ function OrganisationPage() {
   const [structureView, setStructureView] = useState<"edit" | "chart">("edit");
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
+  const [costCenters, setCostCenters] = useState<CostCenterOption[]>([]);
 
   // Add/edit modal state
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2" });
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "" });
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
+
+  // Bulk upload state
+  const roleUploadRef = useRef<HTMLInputElement>(null);
+  const [roleUploadResult, setRoleUploadResult] = useState<{ created: number; updated: number; skipped: number; errors: Array<{ row: number; role: string; error: string }> } | null>(null);
+  const [uploadingRoles, setUploadingRoles] = useState(false);
 
   const loadRoles = async () => {
     if (!accessToken) return;
@@ -746,7 +788,10 @@ function OrganisationPage() {
   useEffect(() => {
     if (tab !== "structure" || structureView !== "chart" || !accessToken) return;
     setLoadingRoles(true);
-    loadRoles().finally(() => setLoadingRoles(false));
+    Promise.all([
+      loadRoles(),
+      apiFetch<CostCenterOption[]>("/api/hr/cost-centers/options", { token: accessToken }).catch(() => [] as CostCenterOption[]).then(setCostCenters),
+    ]).finally(() => setLoadingRoles(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, structureView, accessToken]);
 
@@ -755,7 +800,7 @@ function OrganisationPage() {
   const openAddRole = (parentId: string | null) => {
     setEditingRole(null);
     setRoleParentId(parentId);
-    setRoleForm({ name: "", description: "", capacity: "single", customN: "2" });
+    setRoleForm({ name: "", description: "", capacity: "single", customN: "2", costCenterId: "" });
     setShowRoleModal(true);
   };
 
@@ -763,7 +808,7 @@ function OrganisationPage() {
     setEditingRole(role);
     setRoleParentId(role.parent_role_id);
     const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
-    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2) });
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "" });
     setShowRoleModal(true);
   };
 
@@ -771,11 +816,12 @@ function OrganisationPage() {
     if (!roleForm.name.trim() || !accessToken) return;
     setSavingRole(true);
     const maxOcc = roleForm.capacity === "single" ? 1 : roleForm.capacity === "unlimited" ? null : parseInt(roleForm.customN) || null;
+    const ccId = roleForm.costCenterId || null;
     try {
       if (editingRole) {
-        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc } });
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId } });
       } else {
-        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc } });
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId } });
       }
       await loadRoles();
       setShowRoleModal(false);
@@ -797,6 +843,42 @@ function OrganisationPage() {
       alert((e as Error).message);
     } finally {
       setDeletingRoleId(null);
+    }
+  };
+
+  const downloadRoleTemplate = () => {
+    const csv = [
+      "Role Name,Parent Role,Cost Center,Capacity,Description",
+      "General Manager,,Admin,single,Top of the org",
+      "Finance Director,General Manager,Finance,single,Heads the Finance department",
+      "Chief Accountant,Finance Director,Finance,1,",
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "roles_template.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRoleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !accessToken) return;
+    setUploadingRoles(true);
+    setRoleUploadResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = await apiFetch<{ created: number; updated: number; skipped: number; errors: Array<{ row: number; role: string; error: string }> }>(
+        "/api/approvals/roles/bulk-upload",
+        { method: "POST", token: accessToken, formData: form }
+      );
+      setRoleUploadResult(result);
+      await loadRoles();
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    } finally {
+      setUploadingRoles(false);
+      if (roleUploadRef.current) roleUploadRef.current.value = "";
     }
   };
 
@@ -1082,16 +1164,39 @@ function OrganisationPage() {
               <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
                 <div>
                   <p className="text-sm font-semibold text-gray-800">Role hierarchy</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Build your organisation's role structure. Each card is a position — set its capacity and reporting line.</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Build your organisation's role structure. Each card is a position — set its capacity, cost centre and reporting line.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => openAddRole(null)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                >
-                  <i className="ti ti-plus" style={{ fontSize: 14 }} /> Add top-level role
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button type="button" onClick={downloadRoleTemplate}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
+                    <i className="ti ti-download" style={{ fontSize: 13 }} /> Template
+                  </button>
+                  <label className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer ${uploadingRoles ? "opacity-60 pointer-events-none" : ""}`}>
+                    <i className="ti ti-upload" style={{ fontSize: 13 }} /> {uploadingRoles ? "Uploading…" : "Bulk upload"}
+                    <input ref={roleUploadRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={handleRoleUpload} />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => openAddRole(null)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  >
+                    <i className="ti ti-plus" style={{ fontSize: 14 }} /> Add top-level role
+                  </button>
+                </div>
               </div>
+
+              {/* Bulk upload result banner */}
+              {roleUploadResult && (
+                <div className={`mb-4 p-3 rounded-md text-sm ${roleUploadResult.errors.length ? "bg-amber-50 border border-amber-200" : "bg-green-50 border border-green-200"}`}>
+                  <span className="font-medium">Upload complete:</span> {roleUploadResult.created} created · {roleUploadResult.updated} updated · {roleUploadResult.skipped} skipped
+                  {roleUploadResult.errors.length > 0 && (
+                    <ul className="mt-1 text-xs text-red-600 list-disc list-inside">
+                      {roleUploadResult.errors.slice(0, 8).map((e, i) => <li key={i}>Row {e.row} ({e.role}): {e.error}</li>)}
+                      {roleUploadResult.errors.length > 8 && <li>…and {roleUploadResult.errors.length - 8} more</li>}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {loadingRoles ? (
                 <div className="flex items-start justify-center gap-10 py-10">
@@ -1158,6 +1263,19 @@ function OrganisationPage() {
                           placeholder="Brief description of this role"
                           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Cost centre (optional)</label>
+                        <select
+                          value={roleForm.costCenterId}
+                          onChange={e => setRoleForm(f => ({ ...f, costCenterId: e.target.value }))}
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">— Cross-functional / none —</option>
+                          {costCenters.map(cc => (
+                            <option key={cc.id} value={cc.id}>{cc.name} ({cc.code})</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-2">Capacity</label>
@@ -1640,4 +1758,282 @@ function OrganisationPage() {
                       return;
                     }
                     const existing = org.branding?.themes ?? [];
-                    const i
+                    const idx = existing.findIndex(t => t.id === editTheme.id);
+                    const updated = idx >= 0
+                      ? existing.map((t, i) => i === idx ? editTheme : t)
+                      : [...existing, editTheme];
+                    const newBranding: BrandingConfig = {
+                      active_theme_id: org.branding?.active_theme_id ?? editTheme.id,
+                      themes: updated,
+                    };
+                    setOrg(o => ({ ...o, branding: newBranding }));
+                    await save({ branding: newBranding });
+                    setBrandingTab("themes");
+                  }} disabled={saving} loading={saving}>
+                    {saving ? "Saving..." : "Save theme"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PREVIEW sub-tab */}
+          {brandingTab === "preview" && (
+            <div className="space-y-4">
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="bg-gray-100 border-b border-gray-200 px-3 py-2 flex items-center justify-between">
+                  <p className="text-xs text-gray-500">Portal preview</p>
+                  <div className="flex gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+                  </div>
+                </div>
+                <div className="flex" style={{ height: 340 }}>
+                  <div className="w-36 flex-shrink-0 py-4" style={{ background: editTheme.sidebar }}>
+                    <div className="px-3 pb-3 mb-2" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.1)" }}>
+                      <p className="text-xs font-medium text-white">ZivaBI</p>
+                    </div>
+                    <div className="px-0">
+                      <p className="text-xs px-3 mb-1 mt-2" style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: "0.05em" }}>COMMON DATA</p>
+                      <div className="px-3 py-1.5 mb-0.5" style={{ background: "rgba(255,255,255,0.12)" }}>
+                        <p className="text-xs font-medium text-white">Organisation</p>
+                      </div>
+                      <div className="px-3 py-1.5">
+                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Modules</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-1 p-4 overflow-auto bg-gray-50">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Organisation</p>
+                        <p className="text-xs text-gray-500">Configure your company identity</p>
+                      </div>
+                      <button type="button" style={{
+                        background: editTheme.primary,
+                        color: getButtonTextColor(editTheme.primary),
+                        borderRadius: editTheme.button_style === "rounded" ? 6 : editTheme.button_style === "pill" ? 999 : 2,
+                        border: "none", padding: "6px 14px", fontSize: 12, cursor: "default",
+                      }}>Save changes</button>
+                    </div>
+                    <div className="bg-white border border-gray-200 p-3 mb-3"
+                      style={{ borderRadius: editTheme.card_radius === "sharp" ? 2 : editTheme.card_radius === "medium" ? 8 : 16 }}>
+                      <p className="text-xs font-medium text-gray-500 mb-2">LEGAL</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Legal name</p>
+                          <div className="border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-800">{org.legal_name || "Acme Corporation"}</div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">RC number</p>
+                          <div className="border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-800">RC1234567</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-md">
+                <p className="text-xs text-blue-700">This is a simulated preview. Full live theming is planned for a future milestone.</p>
+              </div>
+              <div className="flex justify-between">
+                <Button variant="secondary" onClick={() => setBrandingTab("controls")}>
+                  Back to edit
+                </Button>
+                <Button variant="primary" onClick={async () => {
+                  const existing = org.branding?.themes ?? [];
+                  const idx = existing.findIndex(t => t.id === editTheme.id);
+                  const updated = idx >= 0
+                    ? existing.map((t, i) => i === idx ? editTheme : t)
+                    : [...existing, editTheme];
+                  const newBranding: BrandingConfig = {
+                    active_theme_id: editTheme.id,
+                    themes: updated,
+                  };
+                  setOrg(o => ({ ...o, branding: newBranding }));
+                  await save({ branding: newBranding });
+                  setBrandingTab("themes");
+                }} disabled={saving} loading={saving}>
+                  {saving ? "Saving..." : "Save & apply"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* Configuration tab */}
+      {tab === "config" && (
+        <div className="space-y-0">
+          <div className="space-y-0 max-w-2xl">
+
+            {/* Dimensions */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Analytical dimensions <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
+                <p className="text-xs text-gray-500 mt-0.5">Tag transactions with cost center, project, brand, or region to slice reports beyond just the GL account.</p>
+                {config.use_dimensions && (
+                  <p className="text-xs text-blue-600 mt-1.5">Dimensions page is now visible in the sidebar.</p>
+                )}
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_dimensions}
+                  onChange={e => setConfig(c => ({ ...c, use_dimensions: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_dimensions ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_dimensions ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            {/* Multi-currency */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Multi-currency <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
+                <p className="text-xs text-gray-500 mt-0.5">Enable if your organisation transacts in foreign currencies.</p>
+                {config.use_multi_currency && (
+                  <div className="mt-2 grid grid-cols-2 gap-3">
+                    <Field label="FX rate source">
+                      <Select value={config.fx_rate_source ?? "Manual entry"} onChange={e => setConfig(c => ({ ...c, fx_rate_source: e.target.value }))}>
+                        {["Manual entry","Central bank feed","Custom API"].map(o => <option key={o}>{o}</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="Rate update frequency">
+                      <Select value={config.fx_update_frequency ?? "Daily"} onChange={e => setConfig(c => ({ ...c, fx_update_frequency: e.target.value }))}>
+                        {["Daily","Weekly","Monthly"].map(o => <option key={o}>{o}</option>)}
+                      </Select>
+                    </Field>
+                  </div>
+                )}
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_multi_currency}
+                  onChange={e => setConfig(c => ({ ...c, use_multi_currency: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multi_currency ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multi_currency ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            {/* Intercompany */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Intercompany transactions</p>
+                <p className="text-xs text-gray-500 mt-0.5">Enable if this entity transacts with other group entities.</p>
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_intercompany}
+                  onChange={e => setConfig(c => ({ ...c, use_intercompany: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_intercompany ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_intercompany ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            {/* Inventory costing */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Inventory costing method <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded ml-1">Required for inventory</span></p>
+                <p className="text-xs text-gray-500 mt-0.5">Choose how inventory cost is calculated. Irreversible after go-live (IAS 2).</p>
+                {config.use_inventory_costing && (
+                  <div className="mt-2">
+                    <Field label="Costing method">
+                      <Select value={config.inventory_costing_method ?? ""} onChange={e => setConfig(c => ({ ...c, inventory_costing_method: e.target.value }))}>
+                        <option>Weighted average cost (AVCO)</option>
+                        <option>First in, first out (FIFO)</option>
+                        <option>Standard cost</option>
+                      </Select>
+                    </Field>
+                  </div>
+                )}
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_inventory_costing}
+                  onChange={e => setConfig(c => ({ ...c, use_inventory_costing: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_inventory_costing ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_inventory_costing ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            {/* Budget control */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Budget control</p>
+                <p className="text-xs text-gray-500 mt-0.5">Control what happens when a transaction exceeds the approved budget.</p>
+                {config.use_budget_control && (
+                  <div className="mt-2">
+                    <Field label="When budget is exceeded">
+                      <Select value={config.budget_exceeded_action ?? ""} onChange={e => setConfig(c => ({ ...c, budget_exceeded_action: e.target.value }))}>
+                        <option>Show warning, allow posting</option>
+                        <option>Block posting -- hard stop</option>
+                        <option>Require approval to override</option>
+                      </Select>
+                    </Field>
+                  </div>
+                )}
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_budget_control}
+                  onChange={e => setConfig(c => ({ ...c, use_budget_control: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_budget_control ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_budget_control ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            <div className="pt-4 flex justify-end">
+              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
+                {saving ? "Saving..." : saved ? "Saved" : "Save features"}
+              </Button>
+            </div>
+          </div>
+
+          <hr className="my-6 border-gray-200" />
+
+          <div className="space-y-0 max-w-2xl">
+
+            {/* Audit trail */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Full audit trail</p>
+                <p className="text-xs text-gray-500 mt-0.5">Log every create, edit, and delete action. Required for SOX and ISO 27001.</p>
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_audit_trail}
+                  onChange={e => setConfig(c => ({ ...c, use_audit_trail: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_audit_trail ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_audit_trail ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            {/* Multi-level auth */}
+            <div className="flex items-start justify-between gap-4 py-4">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Multi-level payment authorisation</p>
+                <p className="text-xs text-gray-500 mt-0.5">Require sequential approval by multiple authorisers on payments above defined thresholds.</p>
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_multilevel_auth}
+                  onChange={e => setConfig(c => ({ ...c, use_multilevel_auth: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multilevel_auth ? "bg-blue-600" : "bg-gray-300"}`} />
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multilevel_auth ? "translate-x-4" : ""}`} />
+              </label>
+            </div>
+
+            <div className="pt-4 flex justify-end border-t border-gray-100">
+              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
+                {saving ? "Saving..." : saved ? "Saved" : "Save governance settings"}
+              </Button>
+            </div>
+          </div>
+
+        </div>
+      )}
+    </PageContainer>
+  );
+}
+
+export default function OrganisationPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading...</div>}>
+      <OrganisationPage />
+    </Suspense>
+  );
+}

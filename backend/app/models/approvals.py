@@ -118,4 +118,288 @@ class ApprovalRole(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    display_order: Mapped[int] = mapped_colum
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Org-chart hierarchy fields
+    parent_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    cost_center_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("org_structure.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Which cost centre / department this role belongs to",
+    )
+    max_occupants: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, comment="None=unlimited; 1=solo; N=capped"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_approval_role_tenant_name"),
+    )
+
+    # Self-referential relationship for org chart
+    parent_role: Mapped[Optional["ApprovalRole"]] = relationship(
+        "ApprovalRole",
+        foreign_keys=[parent_role_id],
+        remote_side="ApprovalRole.id",
+        back_populates="child_roles",
+    )
+    child_roles: Mapped[list["ApprovalRole"]] = relationship(
+        "ApprovalRole",
+        foreign_keys="ApprovalRole.parent_role_id",
+        back_populates="parent_role",
+    )
+    cost_center: Mapped[Optional["OrgStructureNode"]] = relationship(  # type: ignore[name-defined]
+        "OrgStructureNode",
+        foreign_keys=[cost_center_id],
+        lazy="select",
+    )
+
+
+class ApprovalPolicy(Base):
+    """
+    Per-tenant per-module approval routing configuration.
+
+    routing_mode controls how the management approval chain is built:
+      org_tree          -- walk employee.line_manager_id chain up to ceiling_role.
+      requestor_selects -- requestor picks approver, system validates hierarchy.
+      direct_to_hod     -- skip intermediate managers, go straight to HOD.
+
+    ceiling_role_id: the approval role at which org_tree traversal stops.
+    Anyone holding this role is always the last management approver.
+
+    Finance review runs AFTER the management chain clears.
+    finance_levels 0 = no finance review required.
+
+    vacant_seat_behavior: what happens when the next approver has no active user:
+        skip                  -- bypass that step, go to next.
+        hold                  -- pause the chain (alert generated).
+        escalate_to_fallback  -- route to fallback_approver_id instead.
+
+    UNIQUE on (tenant_id, module) -- one policy per module per tenant.
+    """
+
+    __tablename__ = "approval_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    module: Mapped[str] = mapped_column(String(50), nullable=False)
+    routing_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="org_tree")
+    ceiling_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    vacant_seat_behavior: Mapped[str] = mapped_column(String(30), nullable=False, default="skip")
+    fallback_approver_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    requires_finance_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    finance_levels: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finance_l1_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    finance_l2_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    finance_l3_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    finance_amount_threshold_l2: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
+    finance_amount_threshold_l3: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "module", name="uq_approval_policy_tenant_module"),
+    )
+
+    ceiling_role: Mapped[Optional["ApprovalRole"]] = relationship(
+        "ApprovalRole", foreign_keys=[ceiling_role_id],
+    )
+    thresholds: Mapped[list["ApprovalRoleThreshold"]] = relationship(
+        "ApprovalRoleThreshold", back_populates="policy", cascade="all, delete-orphan",
+    )
+
+
+class ApprovalRoleThreshold(Base):
+    """
+    Per-policy amount cap for each approval role, used during org_tree traversal.
+
+    max_amount: the maximum report total this role can be the final approver for.
+      None means no limit -- this role is always the ceiling for the chain.
+
+    During traversal: if the current manager's approval role has max_amount >= report total
+    (or max_amount is None), they are the last management approver. Otherwise, escalate up.
+
+    UNIQUE on (policy_id, approval_role_id).
+    """
+
+    __tablename__ = "approval_role_thresholds"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    approval_role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    max_amount: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("policy_id", "approval_role_id", name="uq_threshold_policy_role"),
+    )
+
+    policy: Mapped["ApprovalPolicy"] = relationship("ApprovalPolicy", back_populates="thresholds")
+    role: Mapped["ApprovalRole"] = relationship(
+        "ApprovalRole", foreign_keys=[approval_role_id]
+    )
+
+
+class ApprovalDelegation(Base):
+    """
+    Time-bounded delegation of approval authority from one user to another.
+
+    When the routing engine places delegator_id in the chain, it checks for an
+    active delegation and substitutes delegate_id instead. The audit trail records
+    both: "approved by <delegate> on behalf of <delegator>".
+
+    end_date=None means the delegation is open-ended (until explicitly deactivated).
+    is_active=False can be used to revoke a delegation before end_date.
+    """
+
+    __tablename__ = "approval_delegations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    delegator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    delegate_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
+class ExpenseApproval(Base):
+    """
+    One approval record per (expense report x level).
+
+    Created at submit time for each applicable approval level. The status
+    starts as PENDING. The queue query activates only the record whose level
+    matches expense_reports.current_approval_level, enforcing sequential approval.
+
+    approver_id: the specific user assigned to this step (by engine or manual selection).
+    delegated_from_id: set when this step was created via a delegation (original approver).
+    chain_type: "management" or "finance" -- which phase of the chain this step belongs to.
+    role_label: display label shown in the approval trail (e.g. "Line Manager").
+    comment: required on rejection; optional on approval.
+    actioned_at: set when the approver takes action.
+    """
+
+    __tablename__ = "expense_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    level: Mapped[int] = mapped_column(Integer, nullable=False)
+    approver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Delegation: if fulfilled via delegation, original approver stored here
+    delegated_from_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Chain metadata (nullable for backward compat with pre-engine records)
+    chain_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    role_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # For REFERRED_BACK records: whether the requestor can see the referral comment
+    visible_to_requestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Referred approver's reply back to the referring approver
+    response_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actioned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
