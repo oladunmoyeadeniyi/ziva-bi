@@ -11,7 +11,7 @@
  * Route: /dashboard/business/setup/organisation
  */
 
-import { useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
@@ -380,30 +380,54 @@ function RoleChartNode({
   onAddChild,
   onDelete,
   onEdit,
+  draggingId,
+  dropTargetId,
+  onDragStart,
+  onDragEnter,
+  onDragEnd,
+  onDrop,
 }: {
   node: RoleTreeNode;
   onAddChild: (parentId: string) => void;
   onDelete: (id: string, name: string) => void;
   onEdit: (role: OrgRole) => void;
+  draggingId: string | null;
+  dropTargetId: string | null;
+  onDragStart: (id: string) => void;
+  onDragEnter: (id: string | null) => void;
+  onDragEnd: () => void;
+  onDrop: (targetId: string | null) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
   const c = roleColor(node);
+  const isDragging  = draggingId === node.id;
+  const isDropTarget = dropTargetId === node.id && draggingId !== node.id;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
 
       {/* ── Card ── */}
-      <div style={{
-        background: "#fff",
-        border: `1.5px solid ${c.light}`,
-        borderRadius: 12,
-        minWidth: 190,
-        maxWidth: 240,
-        textAlign: "center",
-        boxShadow: "0 2px 12px rgba(0,0,0,0.07)",
-        overflow: "hidden",
-      }}>
+      <div
+        draggable
+        onDragStart={(e) => { e.stopPropagation(); onDragStart(node.id); }}
+        onDragOver={(e)  => { e.preventDefault();  e.stopPropagation(); onDragEnter(node.id); }}
+        onDragLeave={(e) => { e.stopPropagation(); if (dropTargetId === node.id) onDragEnter(null); }}
+        onDrop={(e)      => { e.preventDefault();  e.stopPropagation(); onDrop(node.id); }}
+        onDragEnd={onDragEnd}
+        style={{
+          background: "#fff",
+          border: isDropTarget ? "2.5px solid #3b82f6" : `1.5px solid ${c.light}`,
+          borderRadius: 12,
+          minWidth: 190,
+          maxWidth: 240,
+          textAlign: "center",
+          boxShadow: isDropTarget ? "0 0 0 3px rgba(59,130,246,0.18)" : "0 2px 12px rgba(0,0,0,0.07)",
+          overflow: "hidden",
+          opacity: isDragging ? 0.42 : 1,
+          cursor: draggingId ? "copy" : "grab",
+          transition: "border-color 0.12s, box-shadow 0.12s, opacity 0.12s",
+        }}>
         {/* Colour accent bar at top */}
         <div style={{ height: 6, background: c.accent }} />
 
@@ -513,7 +537,11 @@ function RoleChartNode({
                   {!isOnly && !isFirst && <div style={{ position: "absolute", top: 0, left: 0, right: "50%", height: RW, background: RC }} />}
                   {!isOnly && !isLast  && <div style={{ position: "absolute", top: 0, left: "50%", right: 0, height: RW, background: RC }} />}
                   <div style={{ width: RW, height: RH, background: RC }} />
-                  <RoleChartNode node={child} onAddChild={onAddChild} onDelete={onDelete} onEdit={onEdit} />
+                  <RoleChartNode
+                    node={child} onAddChild={onAddChild} onDelete={onDelete} onEdit={onEdit}
+                    draggingId={draggingId} dropTargetId={dropTargetId}
+                    onDragStart={onDragStart} onDragEnter={onDragEnter} onDragEnd={onDragEnd} onDrop={onDrop}
+                  />
                 </div>
               );
             })}
@@ -782,6 +810,9 @@ function OrganisationPage() {
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
   const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "" });
+  // Drag-and-drop state
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
 
@@ -808,6 +839,41 @@ function OrganisationPage() {
   }, [tab, structureView, accessToken]);
 
   const roleTree = useMemo(() => buildRoleTree(orgRoles), [orgRoles]);
+
+  // Returns all descendant IDs of a given role (to prevent cycle on drop)
+  const getDescendantIds = useCallback((roleId: string): Set<string> => {
+    const result = new Set<string>();
+    const add = (id: string) => {
+      orgRoles.filter(r => r.parent_role_id === id).forEach(child => {
+        result.add(child.id);
+        add(child.id);
+      });
+    };
+    add(roleId);
+    return result;
+  }, [orgRoles]);
+
+  const handleRoleDragStart = (id: string) => { setDraggingId(id); setDropTargetId(null); };
+  const handleRoleDragEnter = (id: string | null) => setDropTargetId(id);
+  const handleRoleDragEnd   = () => { setDraggingId(null); setDropTargetId(null); };
+  const handleRoleDrop = async (targetId: string | null) => {
+    // targetId === "__root__" → make the role a root (parent_role_id = null)
+    const newParentId = (targetId === "__root__") ? null : targetId;
+    if (!draggingId || !accessToken) { handleRoleDragEnd(); return; }
+    if (draggingId === newParentId) { handleRoleDragEnd(); return; }
+    if (newParentId !== null && getDescendantIds(draggingId).has(newParentId)) {
+      handleRoleDragEnd(); return; // would create a cycle
+    }
+    const prevDragging = draggingId;
+    handleRoleDragEnd();
+    try {
+      await apiFetch(`/api/approvals/roles/${prevDragging}`, {
+        method: "PATCH", token: accessToken,
+        body: { parent_role_id: newParentId },
+      });
+      await loadRoles();
+    } catch (_) {}
+  };
 
   const openAddRole = (parentId: string | null) => {
     setEditingRole(null);
@@ -929,12 +995,14 @@ function OrganisationPage() {
         </button>
       )}
       <PageHeading title="Organisation" />
-      <p className="text-sm text-gray-500 mb-6">
-        Configure your company identity, org structure, branding, and fiscal year.
-      </p>
+      {tab === "identity" && (
+        <p className="text-sm text-gray-500 mb-3">
+          Configure your company identity, org structure, branding, and fiscal year.
+        </p>
+      )}
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
+      <div className="flex border-b border-gray-200 mb-4">
         <TabBtn tab="identity" active={tab === "identity"} onClick={setTab} label="Identity" />
         <TabBtn tab="structure" active={tab === "structure"} onClick={setTab} label="Structure" />
         <TabBtn tab="branding" active={tab === "branding"} onClick={setTab} label="Branding" />
@@ -1113,7 +1181,7 @@ function OrganisationPage() {
       {tab === "structure" && (
         <div>
           {/* Sub-tab toggle */}
-          <div className="flex items-center gap-0 border-b border-gray-200 mb-5">
+          <div className="flex items-center gap-0 border-b border-gray-200 mb-3">
             {(["edit", "chart"] as const).map(v => (
               <button key={v} type="button" onClick={() => setStructureView(v)}
                 className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${structureView === v ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
@@ -1176,11 +1244,8 @@ function OrganisationPage() {
           {structureView === "chart" && (
             <>
               {/* Header */}
-              <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-gray-800">Role hierarchy</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Build your organisation's role structure. Each card is a position — set its capacity, cost centre and reporting line.</p>
-                </div>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <p className="text-sm font-semibold text-gray-800">Role hierarchy</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <button type="button" onClick={downloadRoleTemplate}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
@@ -1229,6 +1294,29 @@ function OrganisationPage() {
                 </div>
               ) : (
                 <>
+                  {/* Root drop zone — visible only while dragging */}
+                  {draggingId && (
+                    <div
+                      onDragOver={(e) => { e.preventDefault(); handleRoleDragEnter("__root__"); }}
+                      onDragLeave={() => { if (dropTargetId === "__root__") handleRoleDragEnter(null); }}
+                      onDrop={(e) => { e.preventDefault(); handleRoleDrop("__root__"); }}
+                      style={{
+                        border: `2px dashed ${dropTargetId === "__root__" ? "#3b82f6" : "#d1d5db"}`,
+                        borderRadius: 10,
+                        padding: "7px 20px",
+                        marginBottom: 10,
+                        textAlign: "center",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: dropTargetId === "__root__" ? "#3b82f6" : "#9ca3af",
+                        background: dropTargetId === "__root__" ? "#eff6ff" : "transparent",
+                        transition: "all 0.12s",
+                      }}
+                    >
+                      <i className="ti ti-arrow-up" style={{ marginRight: 5 }} />
+                      Drop here to make top-level role
+                    </div>
+                  )}
                   <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 32, paddingTop: 4 }}>
                     <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0" }}>
                       {roleTree.map(root => (
@@ -1238,6 +1326,12 @@ function OrganisationPage() {
                           onAddChild={openAddRole}
                           onDelete={deleteRole}
                           onEdit={openEditRole}
+                          draggingId={draggingId}
+                          dropTargetId={dropTargetId}
+                          onDragStart={handleRoleDragStart}
+                          onDragEnter={handleRoleDragEnter}
+                          onDragEnd={handleRoleDragEnd}
+                          onDrop={handleRoleDrop}
                         />
                       ))}
                     </div>
