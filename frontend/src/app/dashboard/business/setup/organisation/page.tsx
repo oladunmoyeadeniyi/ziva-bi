@@ -97,6 +97,16 @@ interface OrgNode {
   children: OrgNode[];
 }
 
+interface ChartEmployee {
+  id: string;
+  first_name: string;
+  last_name: string;
+  preferred_name: string | null;
+  cost_center_id: string | null;
+  approval_role_id: string | null;
+  approval_role_name: string | null;
+}
+
 interface BrandingTheme {
   id: string;
   name: string;
@@ -263,6 +273,113 @@ function TreeNode({
           onEdit={onEdit}
           onDelete={onDelete}
           deletingId={deletingId}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── People View tree ──────────────────────────────────────────────────────────
+
+const NODE_TYPE_BORDER: Record<string, string> = {
+  "Legal entity":             "border-blue-300 bg-blue-50",
+  "Division / Business unit": "border-violet-300 bg-violet-50",
+  "Department":               "border-amber-300 bg-amber-50",
+  "Cost center":              "border-emerald-300 bg-emerald-50",
+};
+
+const NODE_TYPE_BADGE: Record<string, string> = {
+  "Legal entity":             "bg-blue-100 text-blue-700",
+  "Division / Business unit": "bg-violet-100 text-violet-700",
+  "Department":               "bg-amber-100 text-amber-700",
+  "Cost center":              "bg-emerald-100 text-emerald-700",
+};
+
+function OrgChartNode({
+  node,
+  depth = 0,
+  employeesByCC,
+  ccCodeToId,
+}: {
+  node: OrgNode;
+  depth?: number;
+  employeesByCC: Record<string, ChartEmployee[]>;
+  ccCodeToId: Record<string, string>;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const hasChildren = node.children && node.children.length > 0;
+  const borderCls = NODE_TYPE_BORDER[node.node_type] ?? "border-gray-200 bg-gray-50";
+  const badgeCls  = NODE_TYPE_BADGE[node.node_type]  ?? "bg-gray-100 text-gray-600";
+
+  const ccEmployees: ChartEmployee[] = [];
+  if (node.node_type === "Cost center" && node.cost_center_code) {
+    const ccId = ccCodeToId[node.cost_center_code];
+    if (ccId) ccEmployees.push(...(employeesByCC[ccId] ?? []));
+  }
+
+  return (
+    <div style={{ marginLeft: depth * 20 }} className="mb-2">
+      <div className={`border rounded-lg overflow-hidden ${borderCls}`}>
+        {/* Node header */}
+        <div className="flex items-center gap-2 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setExpanded(v => !v)}
+            className={`shrink-0 text-gray-400 hover:text-gray-600 transition-transform ${!hasChildren && ccEmployees.length === 0 ? "invisible" : ""}`}
+          >
+            <i className={`ti ti-chevron-${expanded ? "down" : "right"}`} style={{ fontSize: 12 }} />
+          </button>
+          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${badgeCls}`}>{node.node_type}</span>
+          <span className="text-sm font-semibold text-gray-800 truncate">{node.name}</span>
+          <span className="text-xs text-gray-400 font-mono ml-1 shrink-0">{node.code}</span>
+          {node.cost_center_code && (
+            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-mono shrink-0 ml-1">
+              {node.cost_center_code}
+            </span>
+          )}
+          {node.node_type === "Cost center" && (
+            <span className="ml-auto text-[10px] text-gray-400 shrink-0">
+              {ccEmployees.length} {ccEmployees.length === 1 ? "person" : "people"}
+            </span>
+          )}
+        </div>
+
+        {/* Employees — only shown on Cost center nodes when expanded */}
+        {expanded && node.node_type === "Cost center" && (
+          <div className="border-t border-emerald-200 bg-white divide-y divide-gray-50">
+            {ccEmployees.length === 0 ? (
+              <p className="px-4 py-2 text-[11px] text-gray-400 italic">No employees assigned</p>
+            ) : (
+              ccEmployees.map(emp => (
+                <div key={emp.id} className="flex items-center gap-2 px-4 py-1.5">
+                  <div className="w-5 h-5 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+                    <i className="ti ti-user" style={{ fontSize: 9, color: "#9ca3af" }} />
+                  </div>
+                  <span className="text-xs text-gray-700">
+                    {emp.preferred_name ?? emp.first_name} {emp.last_name}
+                  </span>
+                  {emp.approval_role_name ? (
+                    <span className="ml-auto text-[10px] font-medium bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded shrink-0">
+                      <i className="ti ti-shield-check mr-0.5" style={{ fontSize: 9 }} />{emp.approval_role_name}
+                    </span>
+                  ) : (
+                    <span className="ml-auto text-[10px] text-gray-300 shrink-0">no role</span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Children */}
+      {expanded && node.children?.map(child => (
+        <OrgChartNode
+          key={child.id}
+          node={child}
+          depth={depth + 1}
+          employeesByCC={employeesByCC}
+          ccCodeToId={ccCodeToId}
         />
       ))}
     </div>
@@ -515,6 +632,40 @@ function OrganisationPage() {
     return result;
   }, [nodes]);
 
+  // People view state
+  const [structureView, setStructureView] = useState<"edit" | "chart">("edit");
+  const [chartEmployees, setChartEmployees] = useState<ChartEmployee[]>([]);
+  const [chartCostCenters, setChartCostCenters] = useState<{ id: string; code: string; name: string }[]>([]);
+  const [loadingChart, setLoadingChart] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "structure" || structureView !== "chart" || !accessToken) return;
+    setLoadingChart(true);
+    Promise.all([
+      apiFetch<ChartEmployee[]>("/api/hr/employees?active_only=true", { token: accessToken }).catch(() => [] as ChartEmployee[]),
+      apiFetch<{ id: string; code: string; name: string }[]>("/api/hr/cost-centers/options", { token: accessToken }).catch(() => []),
+    ]).then(([emps, ccs]) => {
+      setChartEmployees(emps);
+      setChartCostCenters(ccs);
+    }).finally(() => setLoadingChart(false));
+  }, [tab, structureView, accessToken]);
+
+  // Derived maps for OrgChartNode lookups
+  const ccCodeToId = useMemo(
+    () => Object.fromEntries(chartCostCenters.map(cc => [cc.code, cc.id])),
+    [chartCostCenters]
+  );
+  const employeesByCC = useMemo(() => {
+    const map: Record<string, ChartEmployee[]> = {};
+    for (const emp of chartEmployees) {
+      if (emp.cost_center_id) {
+        if (!map[emp.cost_center_id]) map[emp.cost_center_id] = [];
+        map[emp.cost_center_id].push(emp);
+      }
+    }
+    return map;
+  }, [chartEmployees]);
+
   if (isLoading) {
     return (
       <PageContainer maxWidth="4xl">
@@ -730,50 +881,104 @@ function OrganisationPage() {
       {/* ── Structure tab ────────────────────────────────────────────────────── */}
       {tab === "structure" && (
         <div>
-          <div className="flex items-center gap-2 mb-4">
-            <button type="button" onClick={() => setShowAddNode(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
-              <i className="ti ti-plus" style={{ fontSize: 14 }} /> Add node
-            </button>
-            <button type="button" onClick={downloadStructureTemplate}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
-              <i className="ti ti-download" style={{ fontSize: 14 }} /> Download template
-            </button>
-            <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer">
-              <i className="ti ti-upload" style={{ fontSize: 14 }} /> Upload structure
-              <input ref={uploadRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={handleStructureUpload} />
-            </label>
+          {/* Sub-tab toggle */}
+          <div className="flex items-center gap-0 border-b border-gray-200 mb-5">
+            {(["edit", "chart"] as const).map(v => (
+              <button key={v} type="button" onClick={() => setStructureView(v)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${structureView === v ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
+                {v === "edit" ? "Edit structure" : "People view"}
+              </button>
+            ))}
           </div>
 
-          {uploadResult && (
-            <div className={`mb-4 p-3 rounded-md text-sm ${uploadResult.errors.length ? "bg-amber-50 border border-amber-200" : "bg-green-50 border border-green-200"}`}>
-              Imported {uploadResult.imported} · Updated {uploadResult.updated} · {uploadResult.errors.length} error(s)
-              {uploadResult.errors.length > 0 && (
-                <ul className="mt-1 text-xs text-red-600 list-disc list-inside">
-                  {uploadResult.errors.map((e, i) => <li key={i}>Row {e.row}: {e.reason}</li>)}
-                </ul>
+          {/* ── Edit sub-tab ──────────────────────────────────────────────── */}
+          {structureView === "edit" && (
+            <>
+              <div className="flex items-center gap-2 mb-4">
+                <button type="button" onClick={() => setShowAddNode(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
+                  <i className="ti ti-plus" style={{ fontSize: 14 }} /> Add node
+                </button>
+                <button type="button" onClick={downloadStructureTemplate}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
+                  <i className="ti ti-download" style={{ fontSize: 14 }} /> Download template
+                </button>
+                <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer">
+                  <i className="ti ti-upload" style={{ fontSize: 14 }} /> Upload structure
+                  <input ref={uploadRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={handleStructureUpload} />
+                </label>
+              </div>
+
+              {uploadResult && (
+                <div className={`mb-4 p-3 rounded-md text-sm ${uploadResult.errors.length ? "bg-amber-50 border border-amber-200" : "bg-green-50 border border-green-200"}`}>
+                  Imported {uploadResult.imported} · Updated {uploadResult.updated} · {uploadResult.errors.length} error(s)
+                  {uploadResult.errors.length > 0 && (
+                    <ul className="mt-1 text-xs text-red-600 list-disc list-inside">
+                      {uploadResult.errors.map((e, i) => <li key={i}>Row {e.row}: {e.reason}</li>)}
+                    </ul>
+                  )}
+                </div>
               )}
-            </div>
+
+              {nodes.length === 0 ? (
+                <div className="text-center py-12 text-sm text-gray-400">
+                  <i className="ti ti-building block mb-2" style={{ fontSize: 28 }} />
+                  <p>No org structure yet. Add nodes or upload a template.</p>
+                </div>
+              ) : (
+                <div className="border border-gray-200 rounded-lg p-3 bg-white">
+                  {nodes.map(n => (
+                    <TreeNode
+                      key={n.id}
+                      node={n}
+                      onEdit={openEdit}
+                      onDelete={deleteNode}
+                      deletingId={deletingId}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
-          {/* Org tree */}
-          {nodes.length === 0 ? (
-            <div className="text-center py-12 text-sm text-gray-400">
-              <i className="ti ti-building block mb-2" style={{ fontSize: 28 }} />
-              <p>No org structure yet. Add nodes or upload a template.</p>
-            </div>
-          ) : (
-            <div className="border border-gray-200 rounded-lg p-3 bg-white">
-              {nodes.map(n => (
-                <TreeNode
-                  key={n.id}
-                  node={n}
-                  onEdit={openEdit}
-                  onDelete={deleteNode}
-                  deletingId={deletingId}
-                />
-              ))}
-            </div>
+          {/* ── People view sub-tab ───────────────────────────────────────── */}
+          {structureView === "chart" && (
+            <>
+              {/* Legend */}
+              <div className="flex items-center gap-3 mb-4 flex-wrap">
+                {[
+                  { label: "Legal entity",             cls: "bg-blue-100 text-blue-700" },
+                  { label: "Division / Business unit", cls: "bg-violet-100 text-violet-700" },
+                  { label: "Department",               cls: "bg-amber-100 text-amber-700" },
+                  { label: "Cost center",              cls: "bg-emerald-100 text-emerald-700" },
+                  { label: "Approval role",            cls: "bg-indigo-100 text-indigo-700" },
+                ].map(({ label, cls }) => (
+                  <span key={label} className={`text-[10px] font-semibold px-2 py-0.5 rounded ${cls}`}>{label}</span>
+                ))}
+              </div>
+
+              {loadingChart ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map(i => <div key={i} className="h-14 bg-gray-100 rounded-lg animate-pulse" />)}
+                </div>
+              ) : nodes.length === 0 ? (
+                <div className="text-center py-12 text-sm text-gray-400">
+                  <i className="ti ti-sitemap block mb-2" style={{ fontSize: 28 }} />
+                  <p>No org structure yet. Switch to Edit structure to add nodes.</p>
+                </div>
+              ) : (
+                <div>
+                  {nodes.map(n => (
+                    <OrgChartNode
+                      key={n.id}
+                      node={n}
+                      employeesByCC={employeesByCC}
+                      ccCodeToId={ccCodeToId}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {/* Add node modal */}
@@ -1399,147 +1604,4 @@ function OrganisationPage() {
                 )}
               </div>
               <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_multi_currency}
-                  onChange={e => setConfig(c => ({ ...c, use_multi_currency: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multi_currency ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multi_currency ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Intercompany */}
-            <div className="flex items-start justify-between gap-4 py-4">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Intercompany transactions</p>
-                <p className="text-xs text-gray-500 mt-0.5">Enable if this entity transacts with other entities in the same group. Required for intercompany eliminations in consolidated reports.</p>
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_intercompany}
-                  onChange={e => setConfig(c => ({ ...c, use_intercompany: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_intercompany ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_intercompany ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Inventory costing */}
-            <div className="flex items-start justify-between gap-4 py-4 border-t border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Inventory costing method <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded ml-1">Required for inventory</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Choose how inventory cost is calculated. This is a one-time irreversible decision (IAS 2) — locked after go-live.</p>
-                {config.use_inventory_costing && (
-                  <div className="mt-2">
-                    <Field label="Costing method">
-                      <Select value={config.inventory_costing_method ?? ""} onChange={e => setConfig(c => ({ ...c, inventory_costing_method: e.target.value }))}>
-                        <option>Weighted average cost (AVCO)</option>
-                        <option>First in, first out (FIFO)</option>
-                        <option>Standard cost</option>
-                      </Select>
-                    </Field>
-                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <i className="ti ti-lock" style={{ fontSize: 12 }} /> Cannot be changed after go-live.
-                    </p>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_inventory_costing}
-                  onChange={e => setConfig(c => ({ ...c, use_inventory_costing: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_inventory_costing ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_inventory_costing ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Budget control */}
-            <div className="flex items-start justify-between gap-4 py-4 border-t border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Budget control</p>
-                <p className="text-xs text-gray-500 mt-0.5">Control what happens when a transaction exceeds the approved budget for a cost center or GL account.</p>
-                {config.use_budget_control && (
-                  <div className="mt-2">
-                    <Field label="When budget is exceeded">
-                      <Select value={config.budget_exceeded_action ?? ""} onChange={e => setConfig(c => ({ ...c, budget_exceeded_action: e.target.value }))}>
-                        <option>Show warning, allow posting</option>
-                        <option>Block posting — hard stop</option>
-                        <option>Require approval to override</option>
-                      </Select>
-                    </Field>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_budget_control}
-                  onChange={e => setConfig(c => ({ ...c, use_budget_control: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_budget_control ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_budget_control ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            <div className="pt-4 flex justify-end">
-              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
-                {saving ? "Saving…" : saved ? "✓ Saved" : "Save features"}
-              </Button>
-            </div>
-          </div>
-
-          <hr className="my-6 border-gray-200" />
-
-          {/* ── GOVERNANCE ── */}
-          <div className="space-y-0 max-w-2xl">
-
-            {/* Audit trail */}
-            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Full audit trail</p>
-                <p className="text-xs text-gray-500 mt-0.5">Log every create, edit, and delete action against a user, timestamp, and IP address. Required for SOX, ISO 27001, and most enterprise compliance frameworks.</p>
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_audit_trail}
-                  onChange={e => setConfig(c => ({ ...c, use_audit_trail: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_audit_trail ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_audit_trail ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Multi-level auth */}
-            <div className="flex items-start justify-between gap-4 py-4">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Multi-level payment authorisation</p>
-                <p className="text-xs text-gray-500 mt-0.5">Require sequential approval by multiple authorisers on payments above defined thresholds. Number of levels configurable up to 5.</p>
-                {config.use_multilevel_auth && (
-                  <div className="mt-2 flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-100 rounded-md">
-                    <i className="ti ti-info-circle text-blue-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
-                    <p className="text-xs text-blue-700">
-                      Multi-level payment authorisation is enabled. Configure the number of levels, approver roles,
-                      and thresholds in <span className="font-medium">Approval workflows</span> — approvers are assigned
-                      from your employee and roles data.
-                    </p>
-                  </div>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_multilevel_auth}
-                  onChange={e => setConfig(c => ({ ...c, use_multilevel_auth: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_multilevel_auth ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_multilevel_auth ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            <div className="pt-4 flex justify-end border-t border-gray-100">
-              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
-                {saving ? "Saving…" : saved ? "✓ Saved" : "Save governance settings"}
-              </Button>
-            </div>
-          </div>
-
-        </div>
-      )}
-    </PageContainer>
-  );
-}
-
-export default function OrganisationPageWrapper() {
-  return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
-      <OrganisationPage />
-    </Suspense>
-  );
-}
+                <input type="checkbox" className="sr-only" checked={con
