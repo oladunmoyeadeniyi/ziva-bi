@@ -22,7 +22,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -414,6 +414,14 @@ class Employee(Base):
         ForeignKey("employees.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # approval_role_id: links this employee to an org-level approval role (e.g. "Finance Director").
+    # Used by the approval routing engine to determine their position in the approval chain
+    # and apply the correct amount threshold. Nullable — not all employees hold an approval role.
+    approval_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     resumption_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     employee_code_auto_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -435,6 +443,10 @@ class Employee(Base):
         "Employee",
         foreign_keys=[line_manager_id],
         remote_side=[id],
+    )
+    approval_role: Mapped[Optional["ApprovalRole"]] = relationship(  # type: ignore[name-defined]
+        "ApprovalRole",
+        foreign_keys=[approval_role_id],
     )
 
 
@@ -709,3 +721,27 @@ class FinanceReviewConfig(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ── Tenant Permission Matrix ──────────────────────────────────────────────────
+
+class TenantPermissionMatrix(Base):
+    """
+    Per-tenant override for the role permission matrix.
+
+    The default matrix (hardcoded) gives:
+      consultant       → full on all sections
+      power_admin      → full on all sections
+      functional_admin → read_only on all sections
+
+    Rows in this table override those defaults for a specific tenant.
+    Missing rows fall back to the hardcoded defaults.
+    access_level: 'full' | 'read_only' | 'none' | 'delegatable'
+    """
+
+    __tablename__ = "tenant_permission_matrix"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenan

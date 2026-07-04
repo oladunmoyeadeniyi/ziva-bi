@@ -1,24 +1,44 @@
 """
-ZivaBI — approval workflow ORM models (Milestones 4–5).
+ZivaBI — approval workflow ORM models (Milestones 4–5 + Approval Engine).
 
 Tables:
-    approval_matrix    One row per tenant; configures the number of approval levels
-                       and which role label each level carries.
-    expense_approvals  One row per (report × level); tracks each approver's action
-                       on an expense report.
+    approval_matrix          Legacy per-tenant fixed-level config (kept for backward compat).
+    approval_roles           Org-level approver role registry (e.g. "Line Manager", "CFO").
+    approval_policies        Per-tenant per-module policy: routing mode, finance chain, vacant-seat behaviour.
+    approval_role_thresholds Per-policy amount cap per approval role (org_tree traversal stops when role's
+                             max_amount >= report total, or max_amount is None = ceiling/final approver).
+    approval_delegations     Time-bounded delegation of approval authority from one user to another.
+    expense_approvals        One row per (report x level); tracks each approver's action on a report.
 
-Status flow: PENDING → APPROVED | REJECTED | REFERRED_BACK
+Status flow: PENDING -> APPROVED | REJECTED | REFERRED_BACK
 
-M5 additions to expense_approvals:
-    visible_to_requestor — whether the referral comment is visible to the requestor
-    response_comment     — referred approver's reply back to the referring approver
+Routing modes (approval_policies.routing_mode):
+    org_tree          -- auto-walk employee.line_manager_id chain up to ceiling role.
+    requestor_selects -- requestor picks approver; system validates they are above in hierarchy.
+    direct_to_hod     -- skip intermediate managers, route straight to Head of Department.
+
+Chain types (expense_approvals.chain_type):
+    management -- org-tree / management-level approval step.
+    finance    -- finance-review step that follows all management approvals.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Optional
 
-from sqlalchemy import Boolean, NUMERIC, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    NUMERIC,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,14 +47,17 @@ from app.database import Base
 
 class ApprovalMatrix(Base):
     """
-    Approval configuration for one tenant.
+    Approval configuration for one tenant (legacy).
 
     Defines how many sequential approval levels are required and the role label
     displayed to employees at each level. Level 2 and 3 are optional.
     amount_threshold_l2/l3 allow skipping a level when the report total is below
     the threshold; None means the level is always required.
 
-    UNIQUE on tenant_id — one row per tenant, upserted on save.
+    Superseded by ApprovalPolicy when a tenant has configured one. Kept for
+    backward compatibility with existing tenants and submitted reports.
+
+    UNIQUE on tenant_id -- one row per tenant, upserted on save.
     """
 
     __tablename__ = "approval_matrix"
@@ -51,14 +74,10 @@ class ApprovalMatrix(Base):
     )
     levels: Mapped[int] = mapped_column(Integer, nullable=False)
     level1_role: Mapped[str] = mapped_column(String(100), nullable=False)
-    level2_role: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    level3_role: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    amount_threshold_l2: Mapped[Decimal | None] = mapped_column(
-        NUMERIC(15, 2), nullable=True
-    )
-    amount_threshold_l3: Mapped[Decimal | None] = mapped_column(
-        NUMERIC(15, 2), nullable=True
-    )
+    level2_role: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    level3_role: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    amount_threshold_l2: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
+    amount_threshold_l3: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -70,29 +89,21 @@ class ApprovalMatrix(Base):
     )
 
 
-class ExpenseApproval(Base):
+class ApprovalRole(Base):
     """
-    One approval record per (expense report × level).
+    Org-level approver role registry for one tenant.
 
-    Created at submit time for each applicable approval level. The status
-    starts as PENDING. The queue query activates only the record whose level
-    matches expense_reports.current_approval_level, enforcing sequential approval.
+    Defines the named roles that can appear as approvers across any module
+    (Expense, AP, AR, Payroll, etc.). Each module's approval config references
+    these roles by name. Roles are tenant-scoped and ordered for display.
 
-    approver_id: the specific user selected by the employee at submission time.
-    comment:     required on rejection; optional on approval.
-    actioned_at: set when the approver takes action (approve/reject).
+    Examples: "Line Manager", "Department Head", "Finance Director", "CFO", "Board".
     """
 
-    __tablename__ = "expense_approvals"
+    __tablename__ = "approval_roles"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    report_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("expense_reports.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -100,22 +111,12 @@ class ExpenseApproval(Base):
         nullable=False,
         index=True,
     )
-    level: Mapped[int] = mapped_column(Integer, nullable=False)
-    approver_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
-    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # For REFERRED_BACK records: whether the requestor can see the referral comment
-    visible_to_requestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    # Referred approver's reply back to the referring approver (set when they approve back up)
-    response_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    actioned_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    _

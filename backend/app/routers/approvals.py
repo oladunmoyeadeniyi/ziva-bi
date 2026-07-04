@@ -1,12 +1,25 @@
 """
-ZivaBI — approval workflow router (Milestones 4–5).
+ZivaBI — approval workflow router (Milestones 4–5 + Approval Engine).
 
 Implements the full expense approval chain with audit trail, snapshots,
-refer-back enhancements, separation of duties, and full email coverage.
+refer-back enhancements, separation of duties, full email coverage, and the
+new configurable routing engine (org_tree, requestor_selects, direct_to_hod).
 
 Endpoints:
-    POST   /api/approvals/matrix                                Create or update approval matrix
-    GET    /api/approvals/matrix                                Get current tenant's matrix
+    POST   /api/approvals/matrix                                Create or update approval matrix (legacy)
+    GET    /api/approvals/matrix                                Get current tenant's matrix (legacy)
+    GET    /api/approvals/roles                                 List approver roles (auto-seeds defaults)
+    POST   /api/approvals/roles                                 Create an approver role
+    PATCH  /api/approvals/roles/{role_id}                       Update an approver role
+    DELETE /api/approvals/roles/{role_id}                       Delete an approver role
+    GET    /api/approvals/policies                              List all policies for tenant
+    POST   /api/approvals/policies                              Create or replace a module policy
+    PATCH  /api/approvals/policies/{policy_id}                  Partial update a policy
+    DELETE /api/approvals/policies/{policy_id}                  Delete a policy
+    GET    /api/approvals/policies/{module}/chain-preview        Preview computed chain for a module
+    GET    /api/approvals/delegations                           List my delegations
+    POST   /api/approvals/delegations                           Create a delegation
+    PATCH  /api/approvals/delegations/{delegation_id}           Update / revoke a delegation
     POST   /api/approvals/reports/{report_id}/submit            Submit report for approval
     GET    /api/approvals/queue                                  Reports pending current user's action
     GET    /api/approvals/rejected                               Reports rejected involving current user
@@ -21,28 +34,45 @@ Endpoints:
 import logging
 import smtplib
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from email.mime.text import MIMEText
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
-from app.models.approvals import ApprovalMatrix, ExpenseApproval
+from app.models.approvals import (
+    ApprovalDelegation,
+    ApprovalMatrix,
+    ApprovalPolicy,
+    ApprovalRole,
+    ApprovalRoleThreshold,
+    ExpenseApproval,
+)
 from app.models.auth import AuditLog, User, UserTenant
 from app.models.expenses import ExpenseReport, ExpenseReportSnapshot
 from app.schemas.approvals import (
+    ApprovalDelegationCreate,
+    ApprovalDelegationResponse,
+    ApprovalDelegationUpdate,
     ApprovalMatrixCreate,
     ApprovalMatrixResponse,
+    ApprovalPolicyCreate,
+    ApprovalPolicyResponse,
+    ApprovalPolicyUpdate,
     ApprovalQueueItem,
     ApprovalRecordResponse,
+    ApprovalRoleCreate,
+    ApprovalRoleResponse,
+    ApprovalRoleUpdate,
     ApproveRequest,
     AuditLogEntry,
+    ChainPreviewStep,
     ReferBackRequest,
     RejectRequest,
     SnapshotResponse,
@@ -50,6 +80,13 @@ from app.schemas.approvals import (
 )
 from app.schemas.expenses import ExpenseReportResponse
 from app.services.account_determination import AccountMappingError
+from app.services.approval_routing import (
+    ApprovalChainHoldError,
+    ApprovalRoutingError,
+    compute_chain,
+    get_policy,
+    preview_chain,
+)
 from app.services.expense_posting import ExpensePostingError, post_expense_to_gl
 from app.services.gl_posting import PostingError
 from app.services.periods import is_date_postable
@@ -340,7 +377,474 @@ def _smtp_send(to_email: str, subject: str, body: str) -> None:
         logger.warning("Failed to send email to %s: %s", to_email, exc)
 
 
-# ── Approval Matrix ───────────────────────────────────────────────────────────
+# ── Approval Roles ────────────────────────────────────────────────────────────
+
+DEFAULT_ROLES = [
+    ("Line Manager",      "Direct line manager of the employee submitting the transaction.", 0),
+    ("Department Head",   "Head of the submitting employee's department or cost center.",   1),
+    ("Finance Director",  "Approves from a finance control perspective.",                   2),
+    ("CFO",               "Chief Financial Officer — final sign-off for high-value items.", 3),
+]
+
+
+@router.get("/roles", response_model=list[ApprovalRoleResponse])
+async def list_approval_roles(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[ApprovalRoleResponse]:
+    """Return all approver roles for the current tenant, ordered by display_order."""
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required.")
+    rows = (await db.execute(
+        select(ApprovalRole)
+        .where(ApprovalRole.tenant_id == current_user.tenant_id)
+        .order_by(ApprovalRole.display_order, ApprovalRole.name)
+    )).scalars().all()
+
+    # Seed defaults on first visit
+    if not rows:
+        for name, desc, order in DEFAULT_ROLES:
+            role = ApprovalRole(
+                tenant_id=current_user.tenant_id,
+                name=name, description=desc, display_order=order,
+            )
+            db.add(role)
+        await db.commit()
+        rows = (await db.execute(
+            select(ApprovalRole)
+            .where(ApprovalRole.tenant_id == current_user.tenant_id)
+            .order_by(ApprovalRole.display_order)
+        )).scalars().all()
+
+    return [ApprovalRoleResponse.from_orm(r) for r in rows]
+
+
+@router.post("/roles", response_model=ApprovalRoleResponse, status_code=201)
+async def create_approval_role(
+    data: ApprovalRoleCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalRoleResponse:
+    """Create a new approver role."""
+    block_if_readonly_impersonation(current_user)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required.")
+    existing = (await db.execute(
+        select(ApprovalRole).where(
+            ApprovalRole.tenant_id == current_user.tenant_id,
+            ApprovalRole.name == data.name.strip(),
+        )
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="A role with this name already exists.")
+    role = ApprovalRole(
+        tenant_id=current_user.tenant_id,
+        name=data.name.strip(),
+        description=data.description,
+        display_order=data.display_order,
+    )
+    db.add(role)
+    await db.commit()
+    await db.refresh(role)
+    return ApprovalRoleResponse.from_orm(role)
+
+
+@router.patch("/roles/{role_id}", response_model=ApprovalRoleResponse)
+async def update_approval_role(
+    role_id: uuid.UUID,
+    data: ApprovalRoleUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalRoleResponse:
+    """Update an existing approver role."""
+    block_if_readonly_impersonation(current_user)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required.")
+    role = (await db.execute(
+        select(ApprovalRole).where(
+            ApprovalRole.id == role_id,
+            ApprovalRole.tenant_id == current_user.tenant_id,
+        )
+    )).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found.")
+    if data.name is not None:
+        role.name = data.name.strip()
+    if data.description is not None:
+        role.description = data.description
+    if data.display_order is not None:
+        role.display_order = data.display_order
+    if data.is_active is not None:
+        role.is_active = data.is_active
+    await db.commit()
+    await db.refresh(role)
+    return ApprovalRoleResponse.from_orm(role)
+
+
+@router.delete("/roles/{role_id}", status_code=204)
+async def delete_approval_role(
+    role_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete an approver role."""
+    block_if_readonly_impersonation(current_user)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required.")
+    role = (await db.execute(
+        select(ApprovalRole).where(
+            ApprovalRole.id == role_id,
+            ApprovalRole.tenant_id == current_user.tenant_id,
+        )
+    )).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found.")
+    await db.delete(role)
+    await db.commit()
+
+
+# ── Approval Policies ────────────────────────────────────────────────────────
+
+@router.get("/policies", response_model=list[ApprovalPolicyResponse])
+async def list_policies(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[ApprovalPolicyResponse]:
+    """List all approval policies for the current tenant."""
+    tenant_id = _require_tenant(current_user)
+    result = await db.execute(
+        select(ApprovalPolicy)
+        .options(
+            selectinload(ApprovalPolicy.ceiling_role),
+            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+        )
+        .where(ApprovalPolicy.tenant_id == tenant_id)
+        .order_by(ApprovalPolicy.module)
+    )
+    policies = result.scalars().all()
+    return [ApprovalPolicyResponse.from_orm(p) for p in policies]
+
+
+@router.post("/policies", response_model=ApprovalPolicyResponse, status_code=201)
+async def upsert_policy(
+    data: ApprovalPolicyCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalPolicyResponse:
+    """
+    Create or replace the approval policy for a module.
+    If a policy already exists for this module, it is replaced (upsert semantics).
+    Thresholds are fully replaced when provided.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    # Check for existing policy for this module
+    existing_result = await db.execute(
+        select(ApprovalPolicy)
+        .options(
+            selectinload(ApprovalPolicy.ceiling_role),
+            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+        )
+        .where(
+            and_(ApprovalPolicy.tenant_id == tenant_id, ApprovalPolicy.module == data.module)
+        )
+    )
+    policy = existing_result.scalar_one_or_none()
+
+    def _to_uuid(v: str | None) -> uuid.UUID | None:
+        return uuid.UUID(v) if v else None
+
+    if policy:
+        policy.routing_mode = data.routing_mode
+        policy.ceiling_role_id = _to_uuid(data.ceiling_role_id)
+        policy.vacant_seat_behavior = data.vacant_seat_behavior
+        policy.fallback_approver_id = _to_uuid(data.fallback_approver_id)
+        policy.requires_finance_review = data.requires_finance_review
+        policy.finance_levels = data.finance_levels
+        policy.finance_l1_role_id = _to_uuid(data.finance_l1_role_id)
+        policy.finance_l2_role_id = _to_uuid(data.finance_l2_role_id)
+        policy.finance_l3_role_id = _to_uuid(data.finance_l3_role_id)
+        policy.finance_amount_threshold_l2 = data.finance_amount_threshold_l2
+        policy.finance_amount_threshold_l3 = data.finance_amount_threshold_l3
+        policy.is_active = True
+        # Delete old thresholds and replace
+        old_thresh = await db.execute(
+            select(ApprovalRoleThreshold).where(ApprovalRoleThreshold.policy_id == policy.id)
+        )
+        for t in old_thresh.scalars().all():
+            await db.delete(t)
+        await db.flush()
+    else:
+        policy = ApprovalPolicy(
+            tenant_id=tenant_id,
+            module=data.module,
+            routing_mode=data.routing_mode,
+            ceiling_role_id=_to_uuid(data.ceiling_role_id),
+            vacant_seat_behavior=data.vacant_seat_behavior,
+            fallback_approver_id=_to_uuid(data.fallback_approver_id),
+            requires_finance_review=data.requires_finance_review,
+            finance_levels=data.finance_levels,
+            finance_l1_role_id=_to_uuid(data.finance_l1_role_id),
+            finance_l2_role_id=_to_uuid(data.finance_l2_role_id),
+            finance_l3_role_id=_to_uuid(data.finance_l3_role_id),
+            finance_amount_threshold_l2=data.finance_amount_threshold_l2,
+            finance_amount_threshold_l3=data.finance_amount_threshold_l3,
+        )
+        db.add(policy)
+        await db.flush()
+
+    for t in data.thresholds:
+        db.add(ApprovalRoleThreshold(
+            policy_id=policy.id,
+            approval_role_id=uuid.UUID(t.approval_role_id),
+            max_amount=t.max_amount,
+        ))
+
+    await db.commit()
+
+    # Reload with relationships
+    reloaded = (await db.execute(
+        select(ApprovalPolicy)
+        .options(
+            selectinload(ApprovalPolicy.ceiling_role),
+            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+        )
+        .where(ApprovalPolicy.id == policy.id)
+    )).scalar_one()
+    return ApprovalPolicyResponse.from_orm(reloaded)
+
+
+@router.patch("/policies/{policy_id}", response_model=ApprovalPolicyResponse)
+async def update_policy(
+    policy_id: uuid.UUID,
+    data: ApprovalPolicyUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalPolicyResponse:
+    """Partially update an approval policy. Pass thresholds to fully replace them."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    def _to_uuid(v: str | None) -> uuid.UUID | None:
+        return uuid.UUID(v) if v else None
+
+    policy = (await db.execute(
+        select(ApprovalPolicy)
+        .options(
+            selectinload(ApprovalPolicy.ceiling_role),
+            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+        )
+        .where(and_(ApprovalPolicy.id == policy_id, ApprovalPolicy.tenant_id == tenant_id))
+    )).scalar_one_or_none()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found.")
+
+    if data.routing_mode is not None:
+        policy.routing_mode = data.routing_mode
+    if data.ceiling_role_id is not None:
+        policy.ceiling_role_id = _to_uuid(data.ceiling_role_id)
+    if data.vacant_seat_behavior is not None:
+        policy.vacant_seat_behavior = data.vacant_seat_behavior
+    if data.fallback_approver_id is not None:
+        policy.fallback_approver_id = _to_uuid(data.fallback_approver_id)
+    if data.requires_finance_review is not None:
+        policy.requires_finance_review = data.requires_finance_review
+    if data.finance_levels is not None:
+        policy.finance_levels = data.finance_levels
+    if data.finance_l1_role_id is not None:
+        policy.finance_l1_role_id = _to_uuid(data.finance_l1_role_id)
+    if data.finance_l2_role_id is not None:
+        policy.finance_l2_role_id = _to_uuid(data.finance_l2_role_id)
+    if data.finance_l3_role_id is not None:
+        policy.finance_l3_role_id = _to_uuid(data.finance_l3_role_id)
+    if data.finance_amount_threshold_l2 is not None:
+        policy.finance_amount_threshold_l2 = data.finance_amount_threshold_l2
+    if data.finance_amount_threshold_l3 is not None:
+        policy.finance_amount_threshold_l3 = data.finance_amount_threshold_l3
+    if data.is_active is not None:
+        policy.is_active = data.is_active
+
+    if data.thresholds is not None:
+        old = await db.execute(
+            select(ApprovalRoleThreshold).where(ApprovalRoleThreshold.policy_id == policy.id)
+        )
+        for t in old.scalars().all():
+            await db.delete(t)
+        await db.flush()
+        for t in data.thresholds:
+            db.add(ApprovalRoleThreshold(
+                policy_id=policy.id,
+                approval_role_id=uuid.UUID(t.approval_role_id),
+                max_amount=t.max_amount,
+            ))
+
+    await db.commit()
+
+    reloaded = (await db.execute(
+        select(ApprovalPolicy)
+        .options(
+            selectinload(ApprovalPolicy.ceiling_role),
+            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+        )
+        .where(ApprovalPolicy.id == policy.id)
+    )).scalar_one()
+    return ApprovalPolicyResponse.from_orm(reloaded)
+
+
+@router.delete("/policies/{policy_id}", status_code=204)
+async def delete_policy(
+    policy_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete an approval policy."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+    policy = (await db.execute(
+        select(ApprovalPolicy).where(
+            and_(ApprovalPolicy.id == policy_id, ApprovalPolicy.tenant_id == tenant_id)
+        )
+    )).scalar_one_or_none()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found.")
+    await db.delete(policy)
+    await db.commit()
+
+
+@router.get("/policies/{module}/chain-preview", response_model=list[ChainPreviewStep])
+async def get_chain_preview(
+    module: str,
+    amount: Decimal = Query(default=Decimal("0")),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[ChainPreviewStep]:
+    """
+    Preview the computed approval chain for the current user and a given amount.
+    Used by the expense submission form to show who will be notified before submitting.
+    """
+    tenant_id = _require_tenant(current_user)
+    steps = await preview_chain(
+        submitter_user_id=current_user.user_id,
+        tenant_id=tenant_id,
+        module=module,
+        total_amount=amount,
+        db=db,
+    )
+    return [ChainPreviewStep(**s) for s in steps]
+
+
+# ── Approval Delegations ──────────────────────────────────────────────────────
+
+async def _load_delegation_response(d: ApprovalDelegation, db: AsyncSession) -> ApprovalDelegationResponse:
+    """Load user names for delegation response."""
+    delegator = (await db.execute(select(User).where(User.id == d.delegator_id))).scalar_one_or_none()
+    delegate = (await db.execute(select(User).where(User.id == d.delegate_id))).scalar_one_or_none()
+    return ApprovalDelegationResponse.from_orm(
+        d,
+        delegator_name=delegator.full_name if delegator else "Unknown",
+        delegate_name=delegate.full_name if delegate else "Unknown",
+    )
+
+
+@router.get("/delegations", response_model=list[ApprovalDelegationResponse])
+async def list_delegations(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[ApprovalDelegationResponse]:
+    """List delegations where the current user is the delegator."""
+    tenant_id = _require_tenant(current_user)
+    result = await db.execute(
+        select(ApprovalDelegation)
+        .where(
+            and_(
+                ApprovalDelegation.tenant_id == tenant_id,
+                ApprovalDelegation.delegator_id == current_user.user_id,
+            )
+        )
+        .order_by(ApprovalDelegation.created_at.desc())
+    )
+    delegations = result.scalars().all()
+    return [await _load_delegation_response(d, db) for d in delegations]
+
+
+@router.post("/delegations", response_model=ApprovalDelegationResponse, status_code=201)
+async def create_delegation(
+    data: ApprovalDelegationCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalDelegationResponse:
+    """
+    Create an approval delegation — delegate your approval authority to another user.
+    Cannot delegate to yourself. end_date=null means open-ended until revoked.
+    """
+    block_if_readonly_impersonation(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    delegate_id = uuid.UUID(data.delegate_id)
+    if delegate_id == current_user.user_id:
+        raise HTTPException(status_code=400, detail="Cannot delegate approval authority to yourself.")
+
+    # Validate delegate exists in this tenant
+    delegate = (await db.execute(
+        select(User)
+        .join(UserTenant, UserTenant.user_id == User.id)
+        .where(and_(User.id == delegate_id, UserTenant.tenant_id == tenant_id))
+    )).scalar_one_or_none()
+    if not delegate:
+        raise HTTPException(status_code=404, detail="Delegate user not found in this tenant.")
+
+    delegation = ApprovalDelegation(
+        tenant_id=tenant_id,
+        delegator_id=current_user.user_id,
+        delegate_id=delegate_id,
+        start_date=data.start_date,
+        end_date=data.end_date,
+        reason=data.reason,
+        created_by_id=current_user.user_id,
+    )
+    db.add(delegation)
+    await db.commit()
+    await db.refresh(delegation)
+    return await _load_delegation_response(delegation, db)
+
+
+@router.patch("/delegations/{delegation_id}", response_model=ApprovalDelegationResponse)
+async def update_delegation(
+    delegation_id: uuid.UUID,
+    data: ApprovalDelegationUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalDelegationResponse:
+    """Update or revoke a delegation. Set is_active=false to revoke immediately."""
+    block_if_readonly_impersonation(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    delegation = (await db.execute(
+        select(ApprovalDelegation).where(
+            and_(
+                ApprovalDelegation.id == delegation_id,
+                ApprovalDelegation.tenant_id == tenant_id,
+                ApprovalDelegation.delegator_id == current_user.user_id,
+            )
+        )
+    )).scalar_one_or_none()
+    if not delegation:
+        raise HTTPException(status_code=404, detail="Delegation not found.")
+
+    if data.end_date is not None:
+        delegation.end_date = data.end_date
+    if data.is_active is not None:
+        delegation.is_active = data.is_active
+    if data.reason is not None:
+        delegation.reason = data.reason
+
+    await db.commit()
+    await db.refresh(delegation)
+    return await _load_delegation_response(delegation, db)
+
+
+# ── Approval Matrix (legacy) ──────────────────────────────────────────────────
 
 @router.post("/matrix", response_model=ApprovalMatrixResponse)
 async def upsert_approval_matrix(
@@ -445,12 +949,8 @@ async def submit_with_approvers(
             ),
         )
 
-    matrix = await _get_matrix(tenant_id, db)
-    if not matrix:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Your company has not configured an approval matrix. Contact your administrator.",
-        )
+    # ── Determine routing mode: policy engine or legacy matrix ───────────────
+    policy = await get_policy("expense", tenant_id, db)
 
     existing_result = await db.execute(
         select(ExpenseApproval)
@@ -463,27 +963,33 @@ async def submit_with_approvers(
     snapshot_version = await _write_snapshot(report, tenant_id, db)
 
     if existing_approvals:
-        # Resubmission — smart resume from rejected_at_level
+        # ── Resubmission — smart resume from rejected_at_level ────────────────
+        # Resubmission reuses the original chain (same approvers, same levels).
+        # The routing engine is NOT re-run here — the chain was already computed
+        # on first submission and the approver ids are stored in expense_approvals.
         rejected_at = report.rejected_at_level or 1
 
         to_recreate = [a for a in existing_approvals if a.level >= rejected_at]
-        level_to_approver: dict[int, uuid.UUID] = {a.level: a.approver_id for a in to_recreate}
+        level_to_record: dict[int, ExpenseApproval] = {a.level: a for a in to_recreate}
 
         for old in to_recreate:
             await db.delete(old)
         await db.flush()
 
-        for level, approver_id in sorted(level_to_approver.items()):
+        for level, old_rec in sorted(level_to_record.items()):
             db.add(ExpenseApproval(
                 report_id=report.id,
                 tenant_id=tenant_id,
                 level=level,
-                approver_id=approver_id,
+                approver_id=old_rec.approver_id,
+                delegated_from_id=old_rec.delegated_from_id,
+                chain_type=old_rec.chain_type,
+                role_label=old_rec.role_label,
                 status="PENDING",
             ))
 
         start_level = rejected_at
-        approver_ids_for_log = [str(v) for v in level_to_approver.values()]
+        approver_ids_for_log = [str(r.approver_id) for r in level_to_record.values()]
 
         report.status = "PENDING_APPROVAL"
         report.current_approval_level = start_level
@@ -504,25 +1010,114 @@ async def submit_with_approvers(
         })
 
         # Notify the first active approver
-        first_approver_id = level_to_approver.get(start_level)
-        if first_approver_id:
-            approver_result = await db.execute(select(User).where(User.id == first_approver_id))
+        first_rec = level_to_record.get(start_level)
+        if first_rec:
+            approver_result = await db.execute(select(User).where(User.id == first_rec.approver_id))
             approver = approver_result.scalar_one_or_none()
             employee_result = await db.execute(select(User).where(User.id == report.employee_id))
             employee = employee_result.scalar_one_or_none()
             if approver and employee:
+                role_label = first_rec.role_label or "Approver"
                 _send_approver_notification_email(
                     to_email=approver.email,
                     report_number=report.report_number,
                     report_date=str(report.report_date),
                     total_amount=report.total_amount,
                     employee_name=employee.full_name,
-                    role_label=_role_label_for_level(matrix, start_level),
+                    role_label=role_label,
                 )
 
         return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
     # ── First-time submission ─────────────────────────────────────────────────
+
+    if policy:
+        # ── Routing engine path ───────────────────────────────────────────────
+        try:
+            chain_steps = await compute_chain(
+                submitter_user_id=current_user.user_id,
+                tenant_id=tenant_id,
+                module="expense",
+                total_amount=report.total_amount,
+                db=db,
+                requestor_selected_approver_id=data.selected_approver_id,
+            )
+        except ApprovalChainHoldError as e:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        except ApprovalRoutingError as e:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+        # Separation of duties: no step may target the submitter
+        for step in chain_steps:
+            if step.approver_user_id == current_user.user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="An approver in the computed chain is the same person as the submitter. "
+                           "Check the reporting structure or delegation configuration.",
+                )
+
+        for step in chain_steps:
+            db.add(ExpenseApproval(
+                report_id=report.id,
+                tenant_id=tenant_id,
+                level=step.level,
+                approver_id=step.approver_user_id,
+                delegated_from_id=step.delegated_from_id,
+                chain_type=step.chain_type,
+                role_label=step.role_label,
+                status="PENDING",
+            ))
+
+        report.status = "PENDING_APPROVAL"
+        report.current_approval_level = 1
+        report.submitted_at = datetime.now(timezone.utc)
+        report.rejection_comment = None
+        report.rejected_at_level = None
+        report.referred_back_from_level = None
+        report.referred_back_levels = None
+
+        await db.flush()
+
+        approver_ids_for_log = [str(s.approver_user_id) for s in chain_steps]
+        await _write_audit_log(db, "EXPENSE_SUBMITTED", current_user.user_id, tenant_id, {
+            "report_id": str(report.id),
+            "report_number": report.report_number,
+            "total_amount": str(report.total_amount),
+            "employee_id": str(report.employee_id),
+            "approver_ids": approver_ids_for_log,
+            "routing_mode": policy.routing_mode,
+            "snapshot_version": snapshot_version,
+        })
+
+        # Notify Level 1 approver
+        l1 = chain_steps[0]
+        approver_result = await db.execute(select(User).where(User.id == l1.approver_user_id))
+        approver = approver_result.scalar_one_or_none()
+        employee_result = await db.execute(select(User).where(User.id == report.employee_id))
+        employee = employee_result.scalar_one_or_none()
+        if approver and employee:
+            _send_approver_notification_email(
+                to_email=approver.email,
+                report_number=report.report_number,
+                report_date=str(report.report_date),
+                total_amount=report.total_amount,
+                employee_name=employee.full_name,
+                role_label=l1.role_label,
+            )
+
+        return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
+
+    # ── Legacy matrix path (no policy configured) ─────────────────────────────
+    matrix = await _get_matrix(tenant_id, db)
+    if not matrix:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "No approval policy or matrix is configured. "
+                "Go to Setup → Approval Workflows to configure one."
+            ),
+        )
+
     if data.level1_approver_id is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -551,7 +1146,7 @@ async def submit_with_approvers(
                 )
             applicable_levels.append((3, data.level3_approver_id))
 
-    # Separation of duties: no approver may be the requestor
+    # Separation of duties
     for _, approver_id in applicable_levels:
         if approver_id == report.employee_id:
             raise HTTPException(
@@ -568,6 +1163,8 @@ async def submit_with_approvers(
             tenant_id=tenant_id,
             level=level,
             approver_id=approver_id,
+            role_label=_role_label_for_level(matrix, level),
+            chain_type="management",
             status="PENDING",
         ))
 
@@ -588,10 +1185,10 @@ async def submit_with_approvers(
         "total_amount": str(report.total_amount),
         "employee_id": str(report.employee_id),
         "approver_ids": approver_ids_for_log,
+        "routing_mode": "legacy_matrix",
         "snapshot_version": snapshot_version,
     })
 
-    # Notify Level 1 approver
     l1_approver_id = applicable_levels[0][1]
     approver_result = await db.execute(select(User).where(User.id == l1_approver_id))
     approver = approver_result.scalar_one_or_none()
@@ -745,7 +1342,6 @@ async def get_audit_log(
             AuditLog.log_metadata["report_id"].astext == str(report_id),
             AuditLog.event_type.in_([
                 "EXPENSE_SUBMITTED", "EXPENSE_APPROVED", "EXPENSE_REJECTED",
-                "EXPENSE_REFERRED_BACK", "EXPENSE_RESUBMITTED",
             ]),
         )
         .order_by(AuditLog.created_at.asc())
@@ -765,7 +1361,7 @@ async def get_audit_log(
     ]
 
 
-# ── Snapshot ─────────────────────────────────────────────────────────────────
+# ── Snapshot ──────────────────────────────────────────────────────────────────
 
 @router.get("/reports/{report_id}/snapshot/{version}", response_model=SnapshotResponse)
 async def get_snapshot(
@@ -774,11 +1370,7 @@ async def get_snapshot(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> SnapshotResponse:
-    """
-    Return the expense report snapshot for a specific submission version.
-
-    Any tenant member can view snapshots for reports in their tenant.
-    """
+    """Return the expense report snapshot for a specific submission version."""
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(
@@ -813,12 +1405,7 @@ async def get_report_approvals(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[ApprovalRecordResponse]:
-    """
-    Return all approval records for a given expense report.
-
-    Used by the report detail page to display the approval chain.
-    Any tenant member can view the approval chain for any report in their tenant.
-    """
+    """Return all approval records for a given expense report."""
     tenant_id = _require_tenant(current_user)
 
     report_result = await db.execute(
@@ -848,10 +1435,14 @@ async def get_report_approvals(
         if approval.level in seen_levels:
             continue
         seen_levels.add(approval.level)
+        level_label = (
+            approval.role_label
+            or (_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}")
+        )
         deduped.append(ApprovalRecordResponse(
             id=str(approval.id),
             level=approval.level,
-            level_label=_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}",
+            level_label=level_label,
             approver_id=str(approval.approver_id),
             approver_name=approver.full_name,
             status=approval.status,
@@ -873,14 +1464,7 @@ async def approve(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ExpenseReportResponse:
-    """
-    Approve an expense report at the current level.
-
-    If the approval is part of a refer-back-to-approver flow, control returns to
-    the referring level after all referred levels have approved.
-    Supports optional response_comment sent back to the referring approver.
-    Sends a full-approval email to the requestor when the last level approves.
-    """
+    """Approve an expense report at the current level."""
     tenant_id = _require_tenant(current_user)
     block_if_readonly_impersonation(current_user)
 
@@ -923,7 +1507,6 @@ async def approve(
     })
 
     if report.referred_back_from_level is not None:
-        # Multi-level refer-back: check if there are more levels to visit
         referred_levels_queue = report.referred_back_levels or []
 
         if referred_levels_queue:
@@ -941,7 +1524,6 @@ async def approve(
                 next_target.status = "PENDING"
                 next_target.actioned_at = None
 
-                # Notify next referred approver
                 next_approver_result = await db.execute(select(User).where(User.id == next_target.approver_id))
                 next_approver = next_approver_result.scalar_one_or_none()
                 referring_approver_result = await db.execute(select(User).where(User.id == approval.approver_id))
@@ -959,7 +1541,6 @@ async def approve(
             report.referred_back_levels = new_queue if new_queue else None
 
         else:
-            # All referred levels done — reactivate the referring level
             referring_level = report.referred_back_from_level
             referring_result = await db.execute(
                 select(ExpenseApproval).where(
@@ -977,7 +1558,6 @@ async def approve(
             report.referred_back_from_level = None
             report.referred_back_levels = None
     else:
-        # Normal sequential chain — advance to the next PENDING level
         next_result = await db.execute(
             select(ExpenseApproval).where(
                 ExpenseApproval.report_id == report.id,
@@ -990,81 +1570,52 @@ async def approve(
         if next_approval:
             report.current_approval_level = next_approval.level
 
-            # Notify the next approver
-            matrix = await _get_matrix(tenant_id, db)
             next_approver_result = await db.execute(select(User).where(User.id == next_approval.approver_id))
             next_approver = next_approver_result.scalar_one_or_none()
             employee_result = await db.execute(select(User).where(User.id == report.employee_id))
             employee = employee_result.scalar_one_or_none()
             if next_approver and employee:
+                role_label = next_approval.role_label or f"Level {next_approval.level}"
                 _send_approver_notification_email(
                     to_email=next_approver.email,
                     report_number=report.report_number,
                     report_date=str(report.report_date),
                     total_amount=report.total_amount,
                     employee_name=employee.full_name,
-                    role_label=_role_label_for_level(matrix, next_approval.level) if matrix else f"Level {next_approval.level}",
+                    role_label=role_label,
                 )
         else:
-            # Final approval — post to GL first, then mark approved.
-            # Posting runs BEFORE status change so a GL failure never transiently
-            # marks the report as APPROVED. Both operations share the same DB
-            # session; get_db() commits only on success, so a PostingError here
-            # triggers a full rollback — no partial writes survive.
             try:
-                journal_entry = await post_expense_to_gl(
-                    db, tenant_id, report, current_user.user_id
-                )
+                journal_entry = await post_expense_to_gl(db, tenant_id, report, current_user.user_id)
             except ExpensePostingError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=str(exc),
-                ) from exc
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
             except AccountMappingError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"{exc} "
-                        "Configure the missing posting role(s) in Setup → Account Mapping, then re-approve."
-                    ),
+                    detail=f"{exc} Configure the missing posting role(s) in Setup -> Account Mapping, then re-approve.",
                 ) from exc
             except PostingError as exc:
-                # Surface a clear error with a path forward.
-                # DATE_NOT_POSTABLE at this stage means the report date fell in a period that
-                # was closed after submission; the submitter couldn't have known. The approver
-                # must either reject+return the report for date correction, or a consultant
-                # can reopen the period via the Periods management page.
                 if exc.code == "DATE_NOT_POSTABLE":
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail=(
                             f"Cannot post: {exc.message} "
                             "To resolve: either reject the report so the submitter can correct the date, "
-                            "or ask a Ziva consultant to reopen the period via Setup → Periods."
+                            "or ask a Ziva consultant to reopen the period via Setup -> Periods."
                         ),
                     ) from exc
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=str(exc),
-                ) from exc
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
             report.status = "APPROVED"
             report.current_approval_level = None
 
-            # Separate audit entry carrying the GL reference number.
-            # (The EXPENSE_APPROVED entry above covers all approval levels and is
-            # written before we have the reference; this entry is final-only.)
-            await _write_audit_log(
-                db, "EXPENSE_GL_POSTED", current_user.user_id, tenant_id,
-                {
-                    "report_id": str(report.id),
-                    "report_number": report.report_number,
-                    "journal_reference": journal_entry.reference_number,
-                    "total_amount": str(report.total_amount),
-                },
-            )
+            await _write_audit_log(db, "EXPENSE_GL_POSTED", current_user.user_id, tenant_id, {
+                "report_id": str(report.id),
+                "report_number": report.report_number,
+                "journal_reference": journal_entry.reference_number,
+                "total_amount": str(report.total_amount),
+            })
 
-            # Notify requestor
             employee_result = await db.execute(select(User).where(User.id == report.employee_id))
             employee = employee_result.scalar_one_or_none()
             if employee:
@@ -1088,12 +1639,7 @@ async def reject(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ExpenseReportResponse:
-    """
-    Reject an expense report with a mandatory comment.
-
-    Sets rejected_at_level so smart resubmission resumes from this level.
-    Sends a rejection email to the employee.
-    """
+    """Reject an expense report with a mandatory comment."""
     tenant_id = _require_tenant(current_user)
     block_if_readonly_impersonation(current_user)
 
@@ -1166,17 +1712,7 @@ async def refer_back(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ExpenseReportResponse:
-    """
-    Refer back an expense report from the current approval level.
-
-    target_type = "requestor": report → REFERRED_TO_REQUESTOR.
-      visible_to_requestor controls whether the requestor can see the comment.
-      On resubmit, the chain resumes at the referring level.
-
-    target_type = "approver": activates one or more lower levels for consultation
-      via target_levels (list, visited in ascending order). After all complete,
-      control returns to the referring level.
-    """
+    """Refer back an expense report from the current approval level."""
     tenant_id = _require_tenant(current_user)
     block_if_readonly_impersonation(current_user)
 
@@ -1203,7 +1739,6 @@ async def refer_back(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="This approval level is not currently active for this report.")
 
-    # Mark the referring approval as referred back
     approval.status = "REFERRED_BACK"
     approval.comment = data.comment
     approval.visible_to_requestor = data.visible_to_requestor
@@ -1239,11 +1774,10 @@ async def refer_back(
                 )
 
     else:
-        # target_type == "approver"
         if not data.target_levels:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="target_levels is required when target_type is 'approver'.",
+                detail="target_levels is required when target_type is \'approver\'.",
             )
 
         invalid = [lvl for lvl in data.target_levels if lvl >= approval.level]
@@ -1255,7 +1789,6 @@ async def refer_back(
 
         sorted_levels = sorted(set(data.target_levels))
 
-        # Verify all target approval records exist
         target_approvals: dict[int, ExpenseApproval] = {}
         for lvl in sorted_levels:
             target_result = await db.execute(
@@ -1272,7 +1805,6 @@ async def refer_back(
                 )
             target_approvals[lvl] = ta
 
-        # Activate the first (lowest) level; queue the rest
         first_level = sorted_levels[0]
         remaining = sorted_levels[1:]
 
@@ -1296,10 +1828,8 @@ async def refer_back(
             "total_amount": str(report.total_amount),
         })
 
-        # Fetch referring approver name for the notification
         referring_approver_result = await db.execute(select(User).where(User.id == approval.approver_id))
         referring_approver = referring_approver_result.scalar_one_or_none()
-
         first_approver_result = await db.execute(select(User).where(User.id == first_target.approver_id))
         first_approver = first_approver_result.scalar_one_or_none()
         if first_approver and referring_approver:

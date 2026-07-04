@@ -96,6 +96,22 @@ interface ApprovalMatrix {
 
 interface TenantUser { id: string; full_name: string; email: string; }
 
+interface ChainPreviewStep {
+  level: number;
+  name: string;
+  email: string;
+  role_label: string;
+  chain_type: string;
+  is_delegated: boolean;
+  error: string | null;
+}
+
+interface ApprovalPolicy {
+  module: string;
+  routing_mode: string;
+  is_active: boolean;
+}
+
 interface DocumentRecord {
   id: string; report_id: string; line_id: string | null; file_name: string;
   file_size: number; mime_type: string; storage_path: string;
@@ -270,6 +286,10 @@ export default function NewExpensePage() {
   const [l2Approver, setL2Approver] = useState("");
   const [l3Approver, setL3Approver] = useState("");
   const [approverError, setApproverError] = useState<string | null>(null);
+  // Policy-engine state
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy | null>(null);
+  const [chainPreview, setChainPreview] = useState<ChainPreviewStep[]>([]);
+  const [selectedApprover, setSelectedApprover] = useState("");
 
   // Refs
   const savedReportIdRef = useRef<string | null>(null);
@@ -756,6 +776,40 @@ export default function NewExpensePage() {
     try {
       const rid = await saveAll();
       setCreatedReportId(rid);
+      const total = calcTotal(lines);
+
+      // Try the new policy engine first
+      let policy: ApprovalPolicy | null = null;
+      try {
+        const policies = await apiFetch<ApprovalPolicy[]>("/api/approvals/policies", { token: accessToken! });
+        policy = policies.find((p) => p.module === "expense" && p.is_active) ?? null;
+      } catch { /* fall through to legacy matrix */ }
+
+      if (policy) {
+        setApprovalPolicy(policy);
+        setApproverError(null);
+        setSelectedApprover("");
+        setChainPreview([]);
+
+        if (policy.routing_mode === "requestor_selects") {
+          // Need tenant users for the picker
+          const usersData = await apiFetch<TenantUser[]>("/api/users/tenant", { token: accessToken! });
+          setTenantUsers(usersData.filter((u) => u.id !== user?.id));
+        } else {
+          // org_tree / direct_to_hod — fetch chain preview
+          try {
+            const preview = await apiFetch<ChainPreviewStep[]>(
+              `/api/approvals/policies/expense/chain-preview?amount=${total}`,
+              { token: accessToken! }
+            );
+            setChainPreview(preview);
+          } catch { /* non-fatal — show modal without preview */ }
+        }
+        setShowApproverModal(true);
+        return;
+      }
+
+      // Legacy matrix fallback
       const [matrixData, usersData] = await Promise.all([
         apiFetch<ApprovalMatrix | null>("/api/approvals/matrix", { token: accessToken! }),
         apiFetch<TenantUser[]>("/api/users/tenant", { token: accessToken! }),
@@ -765,6 +819,7 @@ export default function NewExpensePage() {
         setError("Approval matrix not configured. Contact your administrator.");
         return;
       }
+      setApprovalPolicy(null);
       setMatrix(matrixData);
       setTenantUsers(usersData.filter((u) => u.id !== user?.id));
       setL1Approver(""); setL2Approver(""); setL3Approver("");
@@ -777,8 +832,33 @@ export default function NewExpensePage() {
   };
 
   const handleSubmitWithApprovers = async () => {
-    if (!matrix || !createdReportId) return;
+    if (!createdReportId) return;
     setApproverError(null);
+
+    // Policy-engine path
+    if (approvalPolicy) {
+      if (approvalPolicy.routing_mode === "requestor_selects" && !selectedApprover) {
+        setApproverError("Please select an approver.");
+        return;
+      }
+      setIsSubmitting(true);
+      try {
+        await apiFetch(`/api/approvals/reports/${createdReportId}/submit`, {
+          method: "POST", token: accessToken!,
+          body: approvalPolicy.routing_mode === "requestor_selects"
+            ? { selected_approver_id: selectedApprover }
+            : {},
+        });
+        router.push("/dashboard/business/expenses");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to submit.";
+        setApproverError(msg === "Failed to fetch" ? "Cannot reach the server." : msg);
+      } finally { setIsSubmitting(false); }
+      return;
+    }
+
+    // Legacy matrix path
+    if (!matrix) return;
     const total = calcTotal(lines);
     const needsL2 = matrix.levels >= 2 && (matrix.amount_threshold_l2 === null || total > parseFloat(matrix.amount_threshold_l2));
     const needsL3 = matrix.levels >= 3 && (matrix.amount_threshold_l3 === null || total > parseFloat(matrix.amount_threshold_l3));
@@ -789,11 +869,11 @@ export default function NewExpensePage() {
     try {
       await apiFetch(`/api/approvals/reports/${createdReportId}/submit`, {
         method: "POST", token: accessToken!,
-        body: JSON.stringify({
+        body: {
           level1_approver_id: l1Approver,
           level2_approver_id: needsL2 ? l2Approver : null,
           level3_approver_id: needsL3 ? l3Approver : null,
-        }),
+        },
       });
       router.push("/dashboard/business/expenses");
     } catch (err) {
@@ -839,47 +919,110 @@ export default function NewExpensePage() {
         />
       )}
 
-      {/* Approver modal */}
-      {showApproverModal && matrix && (
+      {/* Approver / Submit confirmation modal */}
+      {showApproverModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
-            <h2 className="text-base font-semibold text-gray-900 mb-1">Select Approvers</h2>
-            <p className="text-sm text-gray-500 mb-4">Choose who should review this report at each level.</p>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level1_role} <span className="text-red-500">*</span></label>
-                <select value={l1Approver} onChange={(e) => setL1Approver(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">Select approver…</option>
-                  {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
-                </select>
-              </div>
-              {needsL2 && matrix.level2_role && (
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+
+            {/* ---- Policy engine: org_tree / direct_to_hod --- show chain preview ---- */}
+            {approvalPolicy && approvalPolicy.routing_mode !== "requestor_selects" && (
+              <>
+                <h2 className="text-base font-semibold text-gray-900 mb-1">Submit for approval</h2>
+                <p className="text-sm text-gray-500 mb-4">
+                  {approvalPolicy.routing_mode === "direct_to_hod"
+                    ? "Your request will go directly to your Head of Department."
+                    : "Your request will be routed up your reporting chain automatically."}
+                </p>
+                {chainPreview.length > 0 ? (
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Approval chain</p>
+                    <div className="space-y-1">
+                      {chainPreview.map((step, idx) => (
+                        <div key={idx} className="flex items-start gap-3 p-2.5 rounded-lg bg-gray-50 border border-gray-100">
+                          <div className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${step.chain_type === "finance" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+                            {idx + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">
+                              {step.name}
+                              {step.is_delegated && <span className="ml-1 text-[10px] text-amber-600 border border-amber-200 rounded px-1">Delegated</span>}
+                            </p>
+                            <p className="text-xs text-gray-400">{step.role_label} &middot; {step.chain_type === "finance" ? "Finance review" : "Management"}</p>
+                            {step.error && <p className="text-xs text-red-500 mt-0.5">{step.error}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
+                    Approval chain will be determined at submission time based on your reporting line.
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ---- Policy engine: requestor_selects --- approver picker ---- */}
+            {approvalPolicy && approvalPolicy.routing_mode === "requestor_selects" && (
+              <>
+                <h2 className="text-base font-semibold text-gray-900 mb-1">Select approver</h2>
+                <p className="text-sm text-gray-500 mb-4">
+                  Choose someone above you in the hierarchy to approve this report.
+                </p>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level2_role} <span className="text-red-500">*</span></label>
-                  <select value={l2Approver} onChange={(e) => setL2Approver(e.target.value)}
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Approver <span className="text-red-500">*</span></label>
+                  <select value={selectedApprover} onChange={(e) => setSelectedApprover(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">Select approver…</option>
+                    <option value="">Select approver...</option>
                     {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
                   </select>
                 </div>
-              )}
-              {needsL3 && matrix.level3_role && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level3_role} <span className="text-red-500">*</span></label>
-                  <select value={l3Approver} onChange={(e) => setL3Approver(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">Select approver…</option>
-                    {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
-                  </select>
+              </>
+            )}
+
+            {/* ---- Legacy matrix path ---- */}
+            {!approvalPolicy && matrix && (
+              <>
+                <h2 className="text-base font-semibold text-gray-900 mb-1">Select Approvers</h2>
+                <p className="text-sm text-gray-500 mb-4">Choose who should review this report at each level.</p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level1_role} <span className="text-red-500">*</span></label>
+                    <select value={l1Approver} onChange={(e) => setL1Approver(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="">Select approver...</option>
+                      {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
+                    </select>
+                  </div>
+                  {needsL2 && matrix.level2_role && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level2_role} <span className="text-red-500">*</span></label>
+                      <select value={l2Approver} onChange={(e) => setL2Approver(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select approver...</option>
+                        {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {needsL3 && matrix.level3_role && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">{matrix.level3_role} <span className="text-red-500">*</span></label>
+                      <select value={l3Approver} onChange={(e) => setL3Approver(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select approver...</option>
+                        {tenantUsers.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
+                      </select>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
+
             {approverError && <p className="mt-3 text-xs text-red-600">{approverError}</p>}
             <div className="flex gap-3 justify-end mt-6">
               <Button variant="secondary" onClick={() => { setShowApproverModal(false); setApproverError(null); }} disabled={isSubmitting}>Cancel</Button>
               <Button variant="primary" onClick={handleSubmitWithApprovers} disabled={isSubmitting} loading={isSubmitting}>
-                {isSubmitting ? "Submitting…" : "Confirm & Submit"}
+                {isSubmitting ? "Submitting..." : "Confirm & Submit"}
               </Button>
             </div>
           </div>
