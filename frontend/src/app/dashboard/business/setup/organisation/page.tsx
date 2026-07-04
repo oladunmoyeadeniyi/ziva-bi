@@ -218,7 +218,7 @@ function TreeNode({
   onDelete: (id: string) => void;
   deletingId: string | null;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(depth === 0);
   const hasChildren = node.children && node.children.length > 0;
   const icon = NODE_TYPE_ICON[node.node_type] ?? "folder";
   const isDeleting = deletingId === node.id;
@@ -853,6 +853,20 @@ function OrganisationPage() {
     return result;
   }, [orgRoles]);
 
+  const [clearingRoles, setClearingRoles] = useState(false);
+  const clearAllRoles = async () => {
+    if (!window.confirm(`Delete all ${orgRoles.length} role${orgRoles.length !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!accessToken) return;
+    setClearingRoles(true);
+    try {
+      for (const r of orgRoles) {
+        await apiFetch(`/api/approvals/roles/${r.id}`, { method: "DELETE", token: accessToken });
+      }
+      await loadRoles();
+    } catch (_) { /* ignore */ }
+    setClearingRoles(false);
+  };
+
   const handleRoleDragStart = (id: string) => { setDraggingId(id); setDropTargetId(null); };
   const handleRoleDragEnter = (id: string | null) => setDropTargetId(id);
   const handleRoleDragEnd   = () => { setDraggingId(null); setDropTargetId(null); };
@@ -1185,7 +1199,7 @@ function OrganisationPage() {
             {(["edit", "chart"] as const).map(v => (
               <button key={v} type="button" onClick={() => setStructureView(v)}
                 className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${structureView === v ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
-                {v === "edit" ? "Edit structure" : "People view"}
+                {v === "edit" ? "Org Structure" : "Role Hierarchy"}
               </button>
             ))}
           </div>
@@ -1255,6 +1269,16 @@ function OrganisationPage() {
                     <i className="ti ti-upload" style={{ fontSize: 13 }} /> {uploadingRoles ? "Uploading…" : "Bulk upload"}
                     <input ref={roleUploadRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={handleRoleUpload} />
                   </label>
+                  {orgRoles.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearAllRoles}
+                      disabled={clearingRoles}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-red-200 text-red-600 rounded-md hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <i className="ti ti-trash" style={{ fontSize: 13 }} /> {clearingRoles ? "Clearing…" : "Clear all"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => openAddRole(null)}
