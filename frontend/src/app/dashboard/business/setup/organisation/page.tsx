@@ -855,18 +855,25 @@ function OrganisationPage() {
   }, [orgRoles]);
 
   const [clearingRoles, setClearingRoles] = useState(false);
+  const [clearRolesError, setClearRolesError] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [deleteRoleTarget, setDeleteRoleTarget] = useState<{ id: string; name: string } | null>(null);
   const clearAllRoles = async () => {
     if (!accessToken) return;
     setClearingRoles(true);
+    setClearRolesError(null);
     setShowClearConfirm(false);
-    try {
-      for (const r of orgRoles) {
+    const snapshot = [...orgRoles]; // capture list before any re-renders
+    const errors: string[] = [];
+    for (const r of snapshot) {
+      try {
         await apiFetch(`/api/approvals/roles/${r.id}`, { method: "DELETE", token: accessToken });
+      } catch (e: unknown) {
+        errors.push(`${r.name}: ${(e as Error).message}`);
       }
-      await loadRoles();
-    } catch (_) { /* ignore */ }
+    }
+    await loadRoles(); // always reload regardless of individual errors
+    if (errors.length) setClearRolesError(errors.join(" · "));
     setClearingRoles(false);
   };
 
@@ -1303,6 +1310,13 @@ function OrganisationPage() {
                       {roleUploadResult.errors.length > 8 && <li>…and {roleUploadResult.errors.length - 8} more</li>}
                     </ul>
                   )}
+                </div>
+              )}
+
+              {clearRolesError && (
+                <div className="mb-3 p-3 rounded-md text-sm bg-red-50 border border-red-200 text-red-700 flex items-start justify-between gap-3">
+                  <span><i className="ti ti-alert-circle mr-1.5" />{clearRolesError}</span>
+                  <button type="button" onClick={() => setClearRolesError(null)} className="text-red-400 hover:text-red-600 shrink-0"><i className="ti ti-x" /></button>
                 </div>
               )}
 
