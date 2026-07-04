@@ -855,10 +855,12 @@ function OrganisationPage() {
   }, [orgRoles]);
 
   const [clearingRoles, setClearingRoles] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [deleteRoleTarget, setDeleteRoleTarget] = useState<{ id: string; name: string } | null>(null);
   const clearAllRoles = async () => {
-    if (!window.confirm(`Delete all ${orgRoles.length} role${orgRoles.length !== 1 ? "s" : ""}? This cannot be undone.`)) return;
     if (!accessToken) return;
     setClearingRoles(true);
+    setShowClearConfirm(false);
     try {
       for (const r of orgRoles) {
         await apiFetch(`/api/approvals/roles/${r.id}`, { method: "DELETE", token: accessToken });
@@ -925,18 +927,19 @@ function OrganisationPage() {
     }
   };
 
-  const deleteRole = async (id: string, name: string) => {
-    if (!confirm(`Remove role "${name}"? Any sub-roles will be detached (not deleted).`)) return;
-    if (!accessToken) return;
+  const deleteRole = (id: string, name: string) => {
+    setDeleteRoleTarget({ id, name });
+  };
+  const confirmDeleteRole = async () => {
+    if (!deleteRoleTarget || !accessToken) return;
+    const { id } = deleteRoleTarget;
+    setDeleteRoleTarget(null);
     setDeletingRoleId(id);
     try {
       await apiFetch(`/api/approvals/roles/${id}`, { method: "DELETE", token: accessToken });
       await loadRoles();
-    } catch (e: unknown) {
-      alert((e as Error).message);
-    } finally {
-      setDeletingRoleId(null);
-    }
+    } catch (_) { /* ignore */ }
+    setDeletingRoleId(null);
   };
 
   const downloadRoleTemplate = async () => {
@@ -1273,7 +1276,7 @@ function OrganisationPage() {
                   {orgRoles.length > 0 && (
                     <button
                       type="button"
-                      onClick={clearAllRoles}
+                      onClick={() => setShowClearConfirm(true)}
                       disabled={clearingRoles}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-red-200 text-red-600 rounded-md hover:bg-red-50 disabled:opacity-50"
                     >
@@ -1367,6 +1370,52 @@ function OrganisationPage() {
                     <span><i className="ti ti-users mr-1.5 text-violet-400" /><strong className="text-gray-700">{orgRoles.filter(r => r.max_occupants !== 1).length}</strong> multi-occupant</span>
                   </div>
                 </>
+              )}
+
+              {/* ── Clear-all confirm modal ── */}
+              {showClearConfirm && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+                    <h3 className="text-base font-semibold text-gray-900 mb-2">Clear all roles?</h3>
+                    <p className="text-sm text-gray-500 mb-5">
+                      This will permanently delete all {orgRoles.length} role{orgRoles.length !== 1 ? "s" : ""}.
+                      Sub-role relationships will be removed too. This cannot be undone.
+                    </p>
+                    <div className="flex gap-3 justify-end">
+                      <button type="button" onClick={() => setShowClearConfirm(false)}
+                        className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
+                        Cancel
+                      </button>
+                      <button type="button" onClick={clearAllRoles}
+                        className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700">
+                        Delete all
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Single-role delete confirm modal ── */}
+              {deleteRoleTarget && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+                    <h3 className="text-base font-semibold text-gray-900 mb-2">Remove role?</h3>
+                    <p className="text-sm text-gray-500 mb-5">
+                      <strong className="text-gray-800">"{deleteRoleTarget.name}"</strong> will be deleted.
+                      Any sub-roles will be detached but not deleted.
+                    </p>
+                    <div className="flex gap-3 justify-end">
+                      <button type="button" onClick={() => setDeleteRoleTarget(null)}
+                        className="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50">
+                        Cancel
+                      </button>
+                      <button type="button" onClick={confirmDeleteRole}
+                        className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
 
               {/* Add / Edit role modal */}
