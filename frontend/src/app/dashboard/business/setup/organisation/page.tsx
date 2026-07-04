@@ -785,6 +785,7 @@ function OrganisationPage() {
   const roleUploadRef = useRef<HTMLInputElement>(null);
   const [roleUploadResult, setRoleUploadResult] = useState<{ created: number; updated: number; skipped: number; errors: Array<{ row: number; role: string; error: string }> } | null>(null);
   const [uploadingRoles, setUploadingRoles] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
 
   const loadRoles = async () => {
     if (!accessToken) return;
@@ -915,18 +916,25 @@ function OrganisationPage() {
 
   const downloadRoleTemplate = async () => {
     if (!accessToken) return;
+    setTemplateError(null);
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/api/approvals/roles/template`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      if (!res.ok) throw new Error("Failed to download template");
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        let detail = body;
+        try { detail = JSON.parse(body)?.detail || body; } catch (_) {}
+        setTemplateError(detail || `HTTP ${res.status}`);
+        return;
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = "roles_template.xlsx"; a.click();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
-      alert((e as Error).message);
+      setTemplateError((e as Error).message);
     }
   };
 
@@ -1265,6 +1273,12 @@ function OrganisationPage() {
               </div>
 
               {/* Bulk upload result banner */}
+              {templateError && (
+                <div className="mb-3 p-2 rounded-md bg-red-50 border border-red-200 text-sm text-red-700">
+                  <span className="font-medium">Template error:</span> {templateError}
+                  <button type="button" onClick={() => setTemplateError(null)} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+                </div>
+              )}
               {roleUploadResult && (
                 <div className={`mb-4 p-3 rounded-md text-sm ${roleUploadResult.errors.length ? "bg-amber-50 border border-amber-200" : "bg-green-50 border border-green-200"}`}>
                   <span className="font-medium">Upload complete:</span> {roleUploadResult.created} created · {roleUploadResult.updated} updated · {roleUploadResult.skipped} skipped

@@ -542,6 +542,8 @@ async def download_roles_template(
         from openpyxl.styles import Font, PatternFill, Alignment
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
+    except Exception as _exc:
+        raise HTTPException(status_code=500, detail=f"Template init error: {_exc}")
 
     tenant_id = _require_tenant(current_user)
 
@@ -659,9 +661,12 @@ async def download_roles_template(
     dv_cap.sqref = f"E2:E{max_row}"
 
     # ── Stream ────────────────────────────────────────────────────────────────
-    buf = _io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+    try:
+        buf = _io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+    except Exception as _exc:
+        raise HTTPException(status_code=500, detail=f"Template generation error: {_exc}")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
