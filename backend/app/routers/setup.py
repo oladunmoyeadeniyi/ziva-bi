@@ -902,7 +902,7 @@ async def download_org_structure_template(
     ins.row_dimensions[4].height = 24
 
     col_rows = [
-        ("Node Type *",      "Required. Select from dropdown:\n• Company — top-level holding / group entity (e.g. Red Bull GMBH)\n• Legal entity — subsidiary registered in a specific country\n• Division / Business unit — major grouping\n• Department — functional unit\n• Cost center — lowest level where costs are posted"),
+        ("Node Type *",      "Required. Select from dropdown:\n• Parent company — top-level holding / group entity (e.g. Red Bull GMBH)\n• Legal entity — subsidiary registered in a specific country\n• Division / Business unit — major grouping\n• Department — functional unit\n• Cost center — lowest level where costs are posted"),
         ("Name *",           "Required. Full display name. Examples: Sales, Finance, Off Premise"),
         ("Code *",           "Required. Unique short code, no spaces. Examples: N22341SA, NG_FIN"),
         ("Parent Code",      "Code of this node's parent. Leave blank only for the top-level Legal entity.\nMust exactly match a Code in this file or already in the system."),
@@ -962,12 +962,12 @@ async def download_org_structure_template(
     # Node Type dropdown
     dv = DataValidation(
         type="list",
-        formula1='"Company,Legal entity,Division / Business unit,Department,Cost center"',
+        formula1='"Parent company,Legal entity,Division / Business unit,Department,Cost center"',
         allow_blank=False,
         showDropDown=False,
         showErrorMessage=True,
         errorTitle="Invalid node type",
-        error="Select from: Company, Legal entity, Division / Business unit, Department, Cost center",
+        error="Select from: Parent company, Legal entity, Division / Business unit, Department, Cost center",
     )
     ws.add_data_validation(dv)
     dv.sqref = "A2:A500"
@@ -1050,7 +1050,7 @@ async def upload_org_structure(
         # Try "Org Structure" sheet first, fall back to active
         ws = wb["Org Structure"] if "Org Structure" in wb.sheetnames else wb.active
 
-        VALID_NODE_TYPES = {"Company", "Legal entity", "Division / Business unit", "Department", "Cost center"}
+        VALID_NODE_TYPES = {"Parent company", "Legal entity", "Division / Business unit", "Department", "Cost center"}
 
         for row in ws.iter_rows(min_row=2, values_only=True):
             if not any(row):
@@ -1076,7 +1076,7 @@ async def upload_org_structure(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
 
-    VALID_TYPES = {"Company", "Legal entity", "Division / Business unit", "Department", "Cost center"}
+    VALID_TYPES = {"Parent company", "Legal entity", "Division / Business unit", "Department", "Cost center"}
     imported = updated = 0
     errors: list[dict] = []
 
