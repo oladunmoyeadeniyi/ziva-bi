@@ -293,12 +293,22 @@ interface OrgRole {
   max_occupants: number | null; // null=unlimited, 1=solo, N=capped
   cost_center_id: string | null;
   cost_center_name: string | null;
+  entity_node_id: string | null;
+  entity_code: string | null;
+  entity_name: string | null;
 }
 
 interface CostCenterOption {
   id: string;
   name: string;
   code: string;
+}
+
+interface EntityOption {
+  id: string;
+  name: string;
+  code: string;
+  entity_code: string | null;
 }
 
 interface RoleTreeNode extends OrgRole {
@@ -765,12 +775,13 @@ function OrganisationPage() {
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
   const [costCenters, setCostCenters] = useState<CostCenterOption[]>([]);
+  const [entityOptions, setEntityOptions] = useState<EntityOption[]>([]);
 
   // Add/edit modal state
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "" });
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "" });
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
 
@@ -791,6 +802,7 @@ function OrganisationPage() {
     Promise.all([
       loadRoles(),
       apiFetch<CostCenterOption[]>("/api/hr/cost-centers/options", { token: accessToken }).catch(() => [] as CostCenterOption[]).then(setCostCenters),
+      apiFetch<EntityOption[]>("/api/setup/entity-options", { token: accessToken }).catch(() => [] as EntityOption[]).then(setEntityOptions),
     ]).finally(() => setLoadingRoles(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, structureView, accessToken]);
@@ -800,7 +812,7 @@ function OrganisationPage() {
   const openAddRole = (parentId: string | null) => {
     setEditingRole(null);
     setRoleParentId(parentId);
-    setRoleForm({ name: "", description: "", capacity: "single", customN: "2", costCenterId: "" });
+    setRoleForm({ name: "", description: "", capacity: "single", customN: "2", costCenterId: "", entityNodeId: "" });
     setShowRoleModal(true);
   };
 
@@ -808,20 +820,20 @@ function OrganisationPage() {
     setEditingRole(role);
     setRoleParentId(role.parent_role_id);
     const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
-    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "" });
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "" });
     setShowRoleModal(true);
   };
 
   const saveRole = async () => {
-    if (!roleForm.name.trim() || !accessToken) return;
+    if (!roleForm.name.trim() || !roleForm.costCenterId || !accessToken) return;
     setSavingRole(true);
     const maxOcc = roleForm.capacity === "single" ? 1 : roleForm.capacity === "unlimited" ? null : parseInt(roleForm.customN) || null;
     const ccId = roleForm.costCenterId || null;
     try {
       if (editingRole) {
-        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId } });
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null } });
       } else {
-        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId } });
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null } });
       }
       await loadRoles();
       setShowRoleModal(false);
@@ -846,18 +858,21 @@ function OrganisationPage() {
     }
   };
 
-  const downloadRoleTemplate = () => {
-    const csv = [
-      "Role Name,Parent Role,Cost Center,Capacity,Description",
-      "General Manager,,Admin,single,Top of the org",
-      "Finance Director,General Manager,Finance,single,Heads the Finance department",
-      "Chief Accountant,Finance Director,Finance,1,",
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "roles_template.csv"; a.click();
-    URL.revokeObjectURL(url);
+  const downloadRoleTemplate = async () => {
+    if (!accessToken) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/api/approvals/roles/template`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) throw new Error("Failed to download template");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "roles_template.xlsx"; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    }
   };
 
   const handleRoleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1121,7 +1136,7 @@ function OrganisationPage() {
                 </button>
                 <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer">
                   <i className="ti ti-upload" style={{ fontSize: 14 }} /> Upload structure
-                  <input ref={uploadRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={handleStructureUpload} />
+                  <input ref={uploadRef} type="file" accept=".xlsx" className="hidden" onChange={handleStructureUpload} />
                 </label>
               </div>
 
@@ -1264,14 +1279,29 @@ function OrganisationPage() {
                           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
+                      {entityOptions.length > 0 && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Entity <span className="text-red-500">*</span></label>
+                          <select
+                            value={roleForm.entityNodeId}
+                            onChange={e => setRoleForm(f => ({ ...f, entityNodeId: e.target.value }))}
+                            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">— Select entity —</option>
+                            {entityOptions.map(e => (
+                              <option key={e.id} value={e.id}>{e.name}{e.entity_code ? ` (${e.entity_code})` : ` (${e.code})`}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Cost centre (optional)</label>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Cost centre <span className="text-red-500">*</span></label>
                         <select
                           value={roleForm.costCenterId}
                           onChange={e => setRoleForm(f => ({ ...f, costCenterId: e.target.value }))}
                           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
-                          <option value="">— Cross-functional / none —</option>
+                          <option value="">— Select cost centre —</option>
                           {costCenters.map(cc => (
                             <option key={cc.id} value={cc.id}>{cc.name} ({cc.code})</option>
                           ))}
@@ -1279,34 +1309,32 @@ function OrganisationPage() {
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-2">Capacity</label>
-                        <div className="space-y-2">
+                        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
                           {([
-                            { value: "single",   label: "Single person",    desc: "Only one person can hold this role" },
-                            { value: "unlimited", label: "Multiple persons", desc: "Any number of people can hold this role" },
-                            { value: "custom",   label: "Fixed count",      desc: "A specific maximum number" },
-                          ] as const).map(opt => (
-                            <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${roleForm.capacity === opt.value ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}>
-                              <input type="radio" name="capacity" value={opt.value}
-                                checked={roleForm.capacity === opt.value}
-                                onChange={() => setRoleForm(f => ({ ...f, capacity: opt.value }))}
-                                className="mt-0.5" />
-                              <div>
-                                <div className="text-sm font-medium text-gray-800">{opt.label}</div>
-                                <div className="text-xs text-gray-500">{opt.desc}</div>
-                              </div>
-                            </label>
+                            { value: "single",    label: "Single person" },
+                            { value: "unlimited", label: "Multiple persons" },
+                            { value: "custom",    label: "Fixed count" },
+                          ] as const).map((opt, idx) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setRoleForm(f => ({ ...f, capacity: opt.value }))}
+                              className={`flex-1 px-3 py-2 font-medium transition-colors ${roleForm.capacity === opt.value ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"} ${idx > 0 ? "border-l border-gray-300" : ""}`}
+                            >
+                              {opt.label}
+                            </button>
                           ))}
-                          {roleForm.capacity === "custom" && (
-                            <input
-                              type="number"
-                              min={2}
-                              value={roleForm.customN}
-                              onChange={e => setRoleForm(f => ({ ...f, customN: e.target.value }))}
-                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              placeholder="Max number of persons"
-                            />
-                          )}
                         </div>
+                        {roleForm.capacity === "custom" && (
+                          <input
+                            type="number"
+                            min={2}
+                            value={roleForm.customN}
+                            onChange={e => setRoleForm(f => ({ ...f, customN: e.target.value }))}
+                            className="w-full mt-2 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Max number of persons"
+                          />
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-2 mt-6 justify-end">
@@ -1314,7 +1342,7 @@ function OrganisationPage() {
                         className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
                         Cancel
                       </button>
-                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim()}
+                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim() || !roleForm.costCenterId}
                         className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
                         {savingRole ? "Saving…" : editingRole ? "Save changes" : "Add role"}
                       </button>

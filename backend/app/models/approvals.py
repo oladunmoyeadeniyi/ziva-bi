@@ -134,6 +134,13 @@ class ApprovalRole(Base):
         index=True,
         comment="Which cost centre / department this role belongs to",
     )
+    entity_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("org_structure.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Which legal entity this role belongs to",
+    )
     max_occupants: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, comment="None=unlimited; 1=solo; N=capped"
     )
@@ -163,6 +170,11 @@ class ApprovalRole(Base):
     cost_center: Mapped[Optional["OrgStructureNode"]] = relationship(  # type: ignore[name-defined]
         "OrgStructureNode",
         foreign_keys=[cost_center_id],
+        lazy="select",
+    )
+    entity_node: Mapped[Optional["OrgStructureNode"]] = relationship(  # type: ignore[name-defined]
+        "OrgStructureNode",
+        foreign_keys=[entity_node_id],
         lazy="select",
     )
 

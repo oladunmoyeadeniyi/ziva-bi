@@ -24,6 +24,7 @@ class ApprovalRoleCreate(BaseModel):
     display_order: int = 0
     parent_role_id: uuid.UUID | None = None
     cost_center_id: uuid.UUID | None = None
+    entity_node_id: uuid.UUID | None = None
     max_occupants: int | None = None  # None=unlimited, 1=solo, N=capped
 
 
@@ -35,6 +36,7 @@ class ApprovalRoleUpdate(BaseModel):
     is_active: bool | None = None
     parent_role_id: uuid.UUID | None = None
     cost_center_id: uuid.UUID | None = None
+    entity_node_id: uuid.UUID | None = None
     max_occupants: int | None = None
 
 
@@ -48,6 +50,9 @@ class ApprovalRoleResponse(BaseModel):
     parent_role_id: str | None = None
     cost_center_id: str | None = None
     cost_center_name: str | None = None
+    entity_node_id: str | None = None
+    entity_code: str | None = None
+    entity_name: str | None = None
     max_occupants: int | None = None
 
     @classmethod
@@ -66,6 +71,9 @@ class ApprovalRoleResponse(BaseModel):
             parent_role_id=str(r.parent_role_id) if r.parent_role_id else None,
             cost_center_id=str(r.cost_center_id) if r.cost_center_id else None,
             cost_center_name=cc_name,
+            entity_node_id=str(r.entity_node_id) if r.entity_node_id else None,
+            entity_code=r.entity_node.entity_code if (hasattr(r, "entity_node") and r.entity_node) else None,
+            entity_name=r.entity_node.name if (hasattr(r, "entity_node") and r.entity_node) else None,
             max_occupants=r.max_occupants,
         )
 
@@ -76,6 +84,14 @@ class RoleBulkUploadResult(BaseModel):
     updated: int = 0
     skipped: int = 0
     errors: list[dict] = []
+
+
+class EntityOption(BaseModel):
+    """Lightweight entity node returned for role form dropdowns."""
+    id: str
+    name: str
+    code: str
+    entity_code: str | None = None
 
 
 # ── Approval Policy ───────────────────────────────────────────────────────────
@@ -203,4 +219,296 @@ class ApprovalPolicyResponse(BaseModel):
             finance_amount_threshold_l2=p.finance_amount_threshold_l2,
             finance_amount_threshold_l3=p.finance_amount_threshold_l3,
             is_active=p.is_active,
-            threshol
+            thresholds=[ApprovalRoleThresholdResponse.from_orm(t) for t in (p.thresholds or [])],
+            created_at=p.created_at,
+            updated_at=p.updated_at,
+        )
+
+
+# ── Approval Chain Preview ────────────────────────────────────────────────────
+
+class ChainPreviewStep(BaseModel):
+    """One step in the computed chain preview returned to the submission form."""
+    level: int
+    name: str
+    email: str
+    role_label: str
+    chain_type: str  # "management" | "finance"
+    is_delegated: bool
+    error: str | None = None
+
+
+# ── Approval Delegation ───────────────────────────────────────────────────────
+
+class ApprovalDelegationCreate(BaseModel):
+    """Create a new approval delegation."""
+    delegate_id: str
+    start_date: date
+    end_date: date | None = None
+    reason: str | None = None
+
+    @field_validator("delegate_id")
+    @classmethod
+    def validate_delegate(cls, v: str) -> str:
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError("delegate_id must be a valid UUID.")
+        return v
+
+
+class ApprovalDelegationUpdate(BaseModel):
+    """Update or revoke a delegation."""
+    end_date: date | None = None
+    is_active: bool | None = None
+    reason: str | None = None
+
+
+class ApprovalDelegationResponse(BaseModel):
+    """Delegation record as returned by the API."""
+    id: str
+    delegator_id: str
+    delegator_name: str
+    delegate_id: str
+    delegate_name: str
+    start_date: date
+    end_date: date | None
+    is_active: bool
+    reason: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_orm(cls, d: object, delegator_name: str, delegate_name: str) -> "ApprovalDelegationResponse":
+        from app.models.approvals import ApprovalDelegation
+        assert isinstance(d, ApprovalDelegation)
+        return cls(
+            id=str(d.id),
+            delegator_id=str(d.delegator_id),
+            delegator_name=delegator_name,
+            delegate_id=str(d.delegate_id),
+            delegate_name=delegate_name,
+            start_date=d.start_date,
+            end_date=d.end_date,
+            is_active=d.is_active,
+            reason=d.reason,
+            created_at=d.created_at,
+        )
+
+
+# ── Approval Matrix ───────────────────────────────────────────────────────────
+
+class ApprovalMatrixCreate(BaseModel):
+    """Payload to create or update a tenant's approval matrix."""
+
+    levels: int
+    level1_role: str
+    level2_role: str | None = None
+    level3_role: str | None = None
+    amount_threshold_l2: Decimal | None = None
+    amount_threshold_l3: Decimal | None = None
+
+    @field_validator("levels")
+    @classmethod
+    def validate_levels(cls, v: int) -> int:
+        if v not in (1, 2, 3):
+            raise ValueError("Levels must be 1, 2, or 3.")
+        return v
+
+    @field_validator("level1_role")
+    @classmethod
+    def validate_l1_role(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Level 1 role label is required.")
+        return v
+
+
+class ApprovalMatrixResponse(BaseModel):
+    """Tenant's approval matrix as returned by the API."""
+
+    id: str
+    tenant_id: str
+    levels: int
+    level1_role: str
+    level2_role: str | None
+    level3_role: str | None
+    amount_threshold_l2: Decimal | None
+    amount_threshold_l3: Decimal | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm(cls, m: Any) -> "ApprovalMatrixResponse":
+        """Build from an ApprovalMatrix ORM instance."""
+        return cls(
+            id=str(m.id),
+            tenant_id=str(m.tenant_id),
+            levels=m.levels,
+            level1_role=m.level1_role,
+            level2_role=m.level2_role,
+            level3_role=m.level3_role,
+            amount_threshold_l2=m.amount_threshold_l2,
+            amount_threshold_l3=m.amount_threshold_l3,
+            created_at=m.created_at,
+            updated_at=m.updated_at,
+        )
+
+
+# ── Submit with Approvers ─────────────────────────────────────────────────────
+
+class SubmitWithApproversRequest(BaseModel):
+    """
+    Payload for the expense submit endpoint.
+
+    With ApprovalPolicy (routing engine):
+      - org_tree / direct_to_hod: no fields needed — system auto-routes.
+      - requestor_selects: provide selected_approver_id (must be above in hierarchy).
+
+    Legacy (no policy configured, fallback to ApprovalMatrix):
+      - Provide level1_approver_id (and level2/3 as applicable).
+
+    For resubmissions, all fields are optional — the backend reuses previous approver IDs.
+    """
+
+    # New routing engine field
+    selected_approver_id: uuid.UUID | None = None
+
+    # Legacy matrix fields (kept for backward compat)
+    level1_approver_id: uuid.UUID | None = None
+    level2_approver_id: uuid.UUID | None = None
+    level3_approver_id: uuid.UUID | None = None
+
+
+# ── Approval Queue ────────────────────────────────────────────────────────────
+
+class ApprovalQueueItem(BaseModel):
+    """One row in the approver's pending-action queue or rejected history."""
+
+    approval_id: str
+    report_id: str
+    report_number: str
+    employee_name: str
+    report_date: date
+    total_amount: Decimal
+    level: int
+    level_label: str
+    created_at: datetime
+    rejection_comment: str | None = None
+
+
+# ── Approval Record ───────────────────────────────────────────────────────────
+
+class ApprovalRecordResponse(BaseModel):
+    """One expense_approval row as returned in the report detail."""
+
+    id: str
+    level: int
+    level_label: str
+    approver_id: str
+    approver_name: str
+    status: str
+    comment: str | None
+    visible_to_requestor: bool
+    response_comment: str | None
+    actioned_at: datetime | None
+    created_at: datetime
+
+
+# ── Approve / Reject ──────────────────────────────────────────────────────────
+
+class ApproveRequest(BaseModel):
+    """Optional comment and response when approving."""
+
+    comment: str | None = None
+    # Response sent back to the referring approver when approving after a refer-back
+    response_comment: str | None = None
+
+
+class RejectRequest(BaseModel):
+    """Rejection comment is mandatory."""
+
+    comment: str
+
+    @field_validator("comment")
+    @classmethod
+    def validate_comment(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Rejection comment is required.")
+        return v
+
+
+# ── Refer Back ────────────────────────────────────────────────────────────────
+
+class ReferBackRequest(BaseModel):
+    """
+    Payload for the refer-back action.
+
+    target_type = "requestor": sends the report back to the employee for revision.
+      The resubmission will resume from the referring approver's level.
+    target_type = "approver": activates one or more lower approval levels for consultation.
+      target_levels (list) allows referring to multiple levels simultaneously — they are
+      visited sequentially in ascending order. After all complete, control returns to the
+      referring level.
+    visible_to_requestor: when true and target_type = "requestor", the requestor can see
+      the referral comment. When false, they see "Pending internal review".
+    comment is always required.
+    """
+
+    target_type: str
+    target_levels: list[int] | None = None
+    visible_to_requestor: bool = False
+    comment: str
+
+    @field_validator("target_type")
+    @classmethod
+    def validate_target_type(cls, v: str) -> str:
+        if v not in ("approver", "requestor"):
+            raise ValueError('target_type must be "approver" or "requestor".')
+        return v
+
+    @field_validator("comment")
+    @classmethod
+    def validate_comment(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Comment is required.")
+        return v
+
+
+# ── Audit Trail ───────────────────────────────────────────────────────────────
+
+class AuditLogEntry(BaseModel):
+    """One audit log entry for the expense report timeline."""
+
+    id: str
+    event_type: str
+    user_id: str | None
+    actor_name: str
+    log_metadata: dict
+    created_at: datetime
+
+
+# ── Snapshot ─────────────────────────────────────────────────────────────────
+
+class SnapshotResponse(BaseModel):
+    """A submitted expense report snapshot at a specific version."""
+
+    id: str
+    report_id: str
+    version: int
+    submitted_at: datetime
+    snapshot_data: dict
+    created_at: datetime
+
+
+# ── Tenant User (for approver dropdowns) ─────────────────────────────────────
+
+class TenantUserResponse(BaseModel):
+    """Minimal user record returned for approver selection dropdowns."""
+
+    id: str
+    full_name: str
+    email: str

@@ -83,7 +83,7 @@ from app.services.periods import (
     parse_fy_start_year,
 )
 from app.models.expenses import TenantExpenseConfig
-from app.models.master_data import ChartOfAccount, Employee, TenantDimension
+from app.models.master_data import ChartOfAccount, Employee, TenantDimension, TenantPermissionMatrix, UserFunctionalScope
 from app.models.setup import (
     AccountingPeriod,
     CloseChecklistItem,
@@ -143,6 +143,9 @@ from app.schemas.setup import (
     PeriodGraceOverrideUpdate,
     ProgressResponse,
     ReopenRequest,
+    FunctionalScopeItem,
+    FunctionalScopeResponse,
+    FunctionalScopeUpdate,
     RoleAssignmentCreate,
     RoleAssignmentResponse,
     RoleAssignmentUpdate,
@@ -705,6 +708,32 @@ async def patch_org(
 
 
 # ── Org Structure ─────────────────────────────────────────────────────────────
+
+
+
+@router.get("/entity-options", response_model=list[dict])
+async def list_entity_options(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """
+    Return all Legal entity nodes for the tenant as lightweight dropdown options.
+    Used by the approval-role form to associate roles with a specific entity.
+    Response: [{id, name, code, entity_code}]
+    """
+    tenant_id = _require_tenant(current_user)
+    result = await db.execute(
+        select(OrgStructureNode).where(
+            OrgStructureNode.tenant_id == tenant_id,
+            OrgStructureNode.node_type == "Legal entity",
+            OrgStructureNode.is_active.is_(True),
+        ).order_by(OrgStructureNode.name)
+    )
+    nodes = result.scalars().all()
+    return [
+        {"id": str(n.id), "name": n.name, "code": n.code, "entity_code": n.entity_code}
+        for n in nodes
+    ]
 
 @router.get("/org-structure", response_model=OrgStructureTreeResponse)
 async def get_org_structure(
@@ -3064,25 +3093,49 @@ async def patch_tax(
 
 # ── Roles & Permissions ───────────────────────────────────────────────────────
 
+_MATRIX_SECTIONS = [
+    "Organisation", "Module activation", "Chart of accounts", "Dimensions",
+    "Employees", "Currencies & FX", "Tax & statutory", "Roles & permissions",
+    "Approval workflows", "Document rules", "Module setup",
+]
+
+_MATRIX_DEFAULTS: dict[tuple[str, str], str] = {
+    (sec, "consultant"):       "full"
+    for sec in _MATRIX_SECTIONS
+} | {
+    (sec, "power_admin"):      "read_only"
+    for sec in _MATRIX_SECTIONS
+} | {
+    (sec, "functional_admin"): "read_only"
+    for sec in _MATRIX_SECTIONS
+}
+
+
 @router.get("/roles/matrix", response_model=PermissionMatrixResponse)
 async def get_roles_matrix(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PermissionMatrixResponse:
-    """Return the permission matrix for all sections × role tiers."""
+    """Return the permission matrix (DB overrides + hardcoded defaults)."""
     _require_admin(current_user)
-    _require_tenant(current_user)
+    tenant_id = _require_tenant(current_user)
 
-    sections = [
-        "Organisation", "Module activation", "Chart of accounts", "Dimensions",
-        "Employees", "Currencies & FX", "Tax & statutory", "Roles & permissions",
-        "Approval workflows", "Document rules", "Module setup",
-    ]
+    rows = (await db.execute(
+        select(TenantPermissionMatrix).where(TenantPermissionMatrix.tenant_id == tenant_id)
+    )).scalars().all()
+
+    overrides: dict[tuple[str, str], str] = {
+        (r.section, r.role_tier): r.access_level for r in rows
+    }
+
     cells = []
-    for sec in sections:
-        cells.append({"section": sec, "role_tier": "consultant", "access_level": "full"})
-        cells.append({"section": sec, "role_tier": "power_admin", "access_level": "full"})
-        cells.append({"section": sec, "role_tier": "functional_admin", "access_level": "read_only"})
+    for sec in _MATRIX_SECTIONS:
+        for tier in ("consultant", "power_admin", "functional_admin"):
+            cells.append({
+                "section": sec,
+                "role_tier": tier,
+                "access_level": overrides.get((sec, tier), _MATRIX_DEFAULTS[(sec, tier)]),
+            })
 
     return PermissionMatrixResponse(cells=cells)
 
@@ -3093,10 +3146,46 @@ async def patch_roles_matrix(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PermissionMatrixResponse:
-    """Update permission matrix cells."""
-    _require_admin(current_user)
-    _require_tenant(current_user)
-    return PermissionMatrixResponse(cells=data.cells)
+    """Upsert permission matrix cells. Super admin (consultant) only."""
+    if not current_user.is_super_admin:
+        raise HTTPException(status_code=403, detail="Only ZivaBI Consultants can modify the permission matrix.")
+    tenant_id = _require_tenant(current_user)
+
+    for cell in data.cells:
+        existing = (await db.execute(
+            select(TenantPermissionMatrix).where(
+                TenantPermissionMatrix.tenant_id == tenant_id,
+                TenantPermissionMatrix.section == cell.section,
+                TenantPermissionMatrix.role_tier == cell.role_tier,
+            )
+        )).scalar_one_or_none()
+
+        if existing:
+            existing.access_level = cell.access_level
+        else:
+            db.add(TenantPermissionMatrix(
+                tenant_id=tenant_id,
+                section=cell.section,
+                role_tier=cell.role_tier,
+                access_level=cell.access_level,
+            ))
+
+    await db.commit()
+
+    # Return the full matrix after save
+    rows = (await db.execute(
+        select(TenantPermissionMatrix).where(TenantPermissionMatrix.tenant_id == tenant_id)
+    )).scalars().all()
+    overrides = {(r.section, r.role_tier): r.access_level for r in rows}
+    cells_out = []
+    for sec in _MATRIX_SECTIONS:
+        for tier in ("consultant", "power_admin", "functional_admin"):
+            cells_out.append({
+                "section": sec,
+                "role_tier": tier,
+                "access_level": overrides.get((sec, tier), _MATRIX_DEFAULTS[(sec, tier)]),
+            })
+    return PermissionMatrixResponse(cells=cells_out)
 
 
 @router.get("/roles/assignments", response_model=list[RoleAssignmentResponse])
@@ -3116,6 +3205,7 @@ async def get_role_assignments(
     return [
         RoleAssignmentResponse(
             id=str(ut.id),
+            user_id=str(u.id),
             user_tenant_id=str(ut.id),
             full_name=u.full_name,
             email=u.email,
@@ -3150,7 +3240,7 @@ async def create_role_assignment(
     await db.commit()
     await db.refresh(ut)
     return RoleAssignmentResponse(
-        id=str(ut.id), user_tenant_id=str(ut.id),
+        id=str(ut.id), user_id=str(u.id), user_tenant_id=str(ut.id),
         full_name=u.full_name, email=u.email,
         role_tier=ut.role_tier, is_active=ut.is_active,
     )
@@ -3181,9 +3271,68 @@ async def update_role_assignment(
     await db.commit()
     await db.refresh(ut)
     return RoleAssignmentResponse(
-        id=str(ut.id), user_tenant_id=str(ut.id),
+        id=str(ut.id), user_id=str(u.id), user_tenant_id=str(ut.id),
         full_name=u.full_name, email=u.email,
         role_tier=ut.role_tier, is_active=ut.is_active,
+    )
+
+
+@router.get("/roles/assignments/{assignment_id}/scope", response_model=FunctionalScopeResponse)
+async def get_functional_scope(
+    assignment_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FunctionalScopeResponse:
+    """Return the list of sections granted to a functional admin."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    rows = (await db.execute(
+        select(UserFunctionalScope).where(
+            UserFunctionalScope.tenant_id == tenant_id,
+            UserFunctionalScope.user_tenant_id == assignment_id,
+        )
+    )).scalars().all()
+
+    return FunctionalScopeResponse(
+        user_tenant_id=str(assignment_id),
+        sections=[{"section": r.section, "access_level": r.access_level} for r in rows],
+    )
+
+
+@router.patch("/roles/assignments/{assignment_id}/scope", response_model=FunctionalScopeResponse)
+async def patch_functional_scope(
+    assignment_id: uuid.UUID,
+    data: FunctionalScopeUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FunctionalScopeResponse:
+    """Replace all scope sections for a functional admin (full replace, not merge)."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    # Delete existing scope for this user
+    await db.execute(
+        delete(UserFunctionalScope).where(
+            UserFunctionalScope.tenant_id == tenant_id,
+            UserFunctionalScope.user_tenant_id == assignment_id,
+        )
+    )
+
+    # Insert new scope rows with individual access levels
+    for item in data.sections:
+        db.add(UserFunctionalScope(
+            tenant_id=tenant_id,
+            user_tenant_id=assignment_id,
+            section=item.section,
+            access_level=item.access_level,
+        ))
+
+    await db.commit()
+
+    return FunctionalScopeResponse(
+        user_tenant_id=str(assignment_id),
+        sections=[{"section": i.section, "access_level": i.access_level} for i in data.sections],
     )
 
 
