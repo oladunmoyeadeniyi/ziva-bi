@@ -408,22 +408,6 @@ async def list_approval_roles(
         .order_by(ApprovalRole.display_order, ApprovalRole.name)
     )).scalars().all()
 
-    # Seed defaults on first visit
-    if not rows:
-        for name, desc, order in DEFAULT_ROLES:
-            role = ApprovalRole(
-                tenant_id=current_user.tenant_id,
-                name=name, description=desc, display_order=order,
-            )
-            db.add(role)
-        await db.commit()
-        rows = (await db.execute(
-            select(ApprovalRole)
-            .options(selectinload(ApprovalRole.cost_center), selectinload(ApprovalRole.entity_node))
-            .where(ApprovalRole.tenant_id == current_user.tenant_id)
-            .order_by(ApprovalRole.display_order)
-        )).scalars().all()
-
     return [ApprovalRoleResponse.from_orm(r) for r in rows]
 
 
