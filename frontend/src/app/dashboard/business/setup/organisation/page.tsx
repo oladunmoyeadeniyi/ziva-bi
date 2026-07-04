@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
@@ -560,6 +560,22 @@ function OrganisationPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
+  const pathname = usePathname();
+
+  const changeTab = (t: Tab) => {
+    setTab(t);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set("tab", t);
+    p.delete("view"); // reset sub-tab when switching main tab
+    router.replace(`${pathname}?${p.toString()}`);
+  };
+
+  const changeStructureView = (v: "edit" | "chart") => {
+    setStructureView(v);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set("view", v);
+    router.replace(`${pathname}?${p.toString()}`);
+  };
   const initialTab = (searchParams.get("tab") as Tab) || "identity";
   const [tab, setTab] = useState<Tab>(initialTab);
   const [isLoading, setIsLoading] = useState(true);
@@ -800,7 +816,8 @@ function OrganisationPage() {
   }, [nodes]);
 
   // People view state
-  const [structureView, setStructureView] = useState<"edit" | "chart">("edit");
+  const initialView = (searchParams.get("view") as "edit" | "chart") || "edit";
+  const [structureView, setStructureView] = useState<"edit" | "chart">(initialView);
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [loadingRoles, setLoadingRoles] = useState(false);
   const [costCenters, setCostCenters] = useState<CostCenterOption[]>([]);
@@ -1028,10 +1045,10 @@ function OrganisationPage() {
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 mb-4">
-        <TabBtn tab="identity" active={tab === "identity"} onClick={setTab} label="Identity" />
-        <TabBtn tab="structure" active={tab === "structure"} onClick={setTab} label="Structure" />
-        <TabBtn tab="branding" active={tab === "branding"} onClick={setTab} label="Branding" />
-        <TabBtn tab="config" active={tab === "config"} onClick={setTab} label="Configuration" />
+        <TabBtn tab="identity" active={tab === "identity"} onClick={changeTab} label="Identity" />
+        <TabBtn tab="structure" active={tab === "structure"} onClick={changeTab} label="Structure" />
+        <TabBtn tab="branding" active={tab === "branding"} onClick={changeTab} label="Branding" />
+        <TabBtn tab="config" active={tab === "config"} onClick={changeTab} label="Configuration" />
       </div>
 
       {/* ── Identity tab ─────────────────────────────────────────────────────── */}
@@ -1208,7 +1225,7 @@ function OrganisationPage() {
           {/* Sub-tab toggle */}
           <div className="flex items-center gap-0 border-b border-gray-200 mb-3">
             {(["edit", "chart"] as const).map(v => (
-              <button key={v} type="button" onClick={() => setStructureView(v)}
+              <button key={v} type="button" onClick={() => changeStructureView(v)}
                 className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${structureView === v ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
                 {v === "edit" ? "Org Structure" : "Role Hierarchy"}
               </button>
