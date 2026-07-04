@@ -358,25 +358,6 @@ const RC = "#e2e8f0"; // connector colour
 const RW = 2;
 const RH = 28;
 
-function CapacityBadge({ max }: { max: number | null }) {
-  if (max === 1) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 8 }}>
-        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#64748b" }} />
-        <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>Single occupant</span>
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 8 }}>
-      {[0, 1, 2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#94a3b8" }} />)}
-      <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>
-        {max ? `Up to ${max} persons` : "Multiple persons"}
-      </span>
-    </div>
-  );
-}
-
 function RoleChartNode({
   node,
   onAddChild,
@@ -402,14 +383,24 @@ function RoleChartNode({
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
-  const c = roleColor(node);
   const isDragging  = draggingId === node.id;
   const isDropTarget = dropTargetId === node.id && draggingId !== node.id;
+
+  const boxBg = isDropTarget
+    ? "#dbeafe"
+    : node.designation === "head_of_entity"     ? "#dbeafe"
+    : node.designation === "head_of_department" ? "#ede9fe"
+    : "#ffffff";
+
+  const borderColor = isDropTarget                                      ? "#3b82f6"
+    : node.designation === "head_of_entity"     ? "#3b82f6"
+    : node.designation === "head_of_department" ? "#7c3aed"
+    : "#94a3b8";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
 
-      {/* ── Card ── */}
+      {/* ── Organogram box ── */}
       <div
         draggable
         onDragStart={(e) => { e.stopPropagation(); onDragStart(node.id); }}
@@ -418,125 +409,65 @@ function RoleChartNode({
         onDrop={(e)      => { e.preventDefault();  e.stopPropagation(); onDrop(node.id); }}
         onDragEnd={onDragEnd}
         style={{
-          background: "#fff",
-          border: isDropTarget ? "2.5px solid #3b82f6" : `1.5px solid ${c.light}`,
-          borderRadius: 12,
-          minWidth: 190,
-          maxWidth: 240,
+          background: boxBg,
+          border: `1.5px solid ${borderColor}`,
+          borderRadius: 3,
+          width: 172,
           textAlign: "center",
-          boxShadow: isDropTarget ? "0 0 0 3px rgba(59,130,246,0.18)" : "0 2px 12px rgba(0,0,0,0.07)",
-          overflow: "hidden",
-          opacity: isDragging ? 0.42 : 1,
+          padding: "10px 12px 8px",
+          opacity: isDragging ? 0.4 : 1,
           cursor: draggingId ? "copy" : "grab",
-          transition: "border-color 0.12s, box-shadow 0.12s, opacity 0.12s",
+          boxShadow: isDropTarget
+            ? "0 0 0 3px rgba(59,130,246,0.18)"
+            : "0 1px 4px rgba(0,0,0,0.08)",
+          transition: "border-color 0.1s, box-shadow 0.1s, opacity 0.1s",
+          position: "relative",
         }}>
-        {/* Colour accent bar at top */}
-        <div style={{ height: 6, background: c.accent }} />
 
-        <div style={{ padding: "14px 16px 12px", position: "relative" }}>
-          {/* Collapse toggle */}
-          {hasChildren && (
-            <button type="button" onClick={() => setExpanded(v => !v)}
-              style={{ position: "absolute", top: 10, right: 10, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 2, lineHeight: 1 }}>
-              <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 11 }} />
-            </button>
-          )}
+        {/* Collapse toggle */}
+        {hasChildren && (
+          <button type="button" onClick={() => setExpanded(v => !v)}
+            style={{ position: "absolute", top: 4, right: 4, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 2, lineHeight: 1 }}>
+            <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 10 }} />
+          </button>
+        )}
 
-          {/* Role icon */}
+        {/* Role name */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", letterSpacing: 0.4, textTransform: "uppercase", lineHeight: 1.4 }}>
+          {node.name}
+        </div>
+
+        {/* Designation */}
+        {node.designation && (
           <div style={{
-            width: 40, height: 40, borderRadius: "50%",
-            background: c.light,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            margin: "0 auto 10px",
+            fontSize: 9, fontWeight: 600, marginTop: 3, letterSpacing: 0.3,
+            color: node.designation === "head_of_entity" ? "#1d4ed8" : "#6d28d9",
           }}>
-            <i className="ti ti-user-star" style={{ fontSize: 18, color: c.accent }} />
+            {node.designation === "head_of_entity" ? "HEAD OF ENTITY" : "HEAD OF DEPT"}
           </div>
+        )}
 
-          {/* Role name */}
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, letterSpacing: 0.1 }}>
-            {node.name}
+        {/* Cost centre */}
+        {node.cost_center_name && (
+          <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
+            {node.cost_center_name}
           </div>
+        )}
 
-          {/* Cost centre tag */}
-          {node.cost_center_name && (
-            <div style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              marginTop: 5, padding: "2px 8px",
-              background: c.light, borderRadius: 20,
-              fontSize: 10, fontWeight: 600, color: c.accent,
-            }}>
-              <i className="ti ti-building" style={{ fontSize: 9 }} />
-              {node.cost_center_name}
-            </div>
-          )}
-
-          {/* Designation badge */}
-          {node.designation && (
-            <div style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              marginTop: 5, padding: "2px 8px",
-              background: node.designation === "head_of_entity" ? "#fef3c7" : "#ede9fe",
-              borderRadius: 20,
-              fontSize: 10, fontWeight: 700,
-              color: node.designation === "head_of_entity" ? "#b45309" : "#6d28d9",
-            }}>
-              <i className={`ti ti-${node.designation === "head_of_entity" ? "crown" : "award"}`} style={{ fontSize: 9 }} />
-              {node.designation === "head_of_entity" ? "Head of Entity" : "Head of Department"}
-            </div>
-          )}
-
-          {/* Capacity */}
-          <CapacityBadge max={node.max_occupants} />
-
-          {/* Description */}
-          {node.description && (
-            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6, lineHeight: 1.4 }}>
-              {node.description}
-            </div>
-          )}
-
-          {/* Action row */}
-          <div style={{ display: "flex", gap: 6, marginTop: 12, justifyContent: "center" }}>
-            <button
-              type="button"
-              onClick={() => onAddChild(node.id)}
-              title="Add sub-role"
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                fontSize: 10, fontWeight: 600, color: c.accent,
-                background: c.light, border: "none", borderRadius: 6,
-                padding: "4px 9px", cursor: "pointer",
-              }}
-            >
-              <i className="ti ti-plus" style={{ fontSize: 10 }} /> Sub-role
-            </button>
-            <button
-              type="button"
-              onClick={() => onEdit(node)}
-              title="Edit role"
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                fontSize: 10, fontWeight: 600, color: "#64748b",
-                background: "#f1f5f9", border: "none", borderRadius: 6,
-                padding: "4px 9px", cursor: "pointer",
-              }}
-            >
-              <i className="ti ti-pencil" style={{ fontSize: 10 }} />
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(node.id, node.name)}
-              title="Remove role"
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                fontSize: 10, fontWeight: 600, color: "#ef4444",
-                background: "#fee2e2", border: "none", borderRadius: 6,
-                padding: "4px 9px", cursor: "pointer",
-              }}
-            >
-              <i className="ti ti-trash" style={{ fontSize: 10 }} />
-            </button>
-          </div>
+        {/* Action row */}
+        <div style={{ display: "flex", gap: 4, marginTop: 8, justifyContent: "center" }}>
+          <button type="button" onClick={() => onAddChild(node.id)} title="Add sub-role"
+            style={{ fontSize: 10, fontWeight: 600, color: "#3b82f6", background: "none", border: "1px solid #bfdbfe", borderRadius: 3, padding: "2px 7px", cursor: "pointer" }}>
+            + Sub-role
+          </button>
+          <button type="button" onClick={() => onEdit(node)} title="Edit"
+            style={{ fontSize: 10, color: "#64748b", background: "none", border: "1px solid #e2e8f0", borderRadius: 3, padding: "2px 6px", cursor: "pointer" }}>
+            <i className="ti ti-pencil" style={{ fontSize: 10 }} />
+          </button>
+          <button type="button" onClick={() => onDelete(node.id, node.name)} title="Delete"
+            style={{ fontSize: 10, color: "#ef4444", background: "none", border: "1px solid #fecaca", borderRadius: 3, padding: "2px 6px", cursor: "pointer" }}>
+            <i className="ti ti-trash" style={{ fontSize: 10 }} />
+          </button>
         </div>
       </div>
 
