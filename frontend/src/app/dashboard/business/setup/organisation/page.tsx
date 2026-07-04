@@ -142,7 +142,7 @@ const INDUSTRIES = [
   "Hospitality", "Retail", "Multinational", "Other",
 ];
 const GROUP_STRUCTURES = ["Standalone", "Subsidiary", "Parent / Holding company", "Branch"];
-const NODE_TYPES = ["Legal entity", "Division / Business unit", "Department", "Cost center"];
+const NODE_TYPES = ["Company", "Legal entity", "Division / Business unit", "Department", "Cost center"];
 
 const PRESET_THEMES: Omit<BrandingTheme, "id">[] = [
   { name: "Corporate Blue",  primary: "#2563EB", secondary: "#64748B", accent: "#F59E0B", sidebar: "#1E293B", font_family: "Inter",          font_size: "default", button_style: "rounded", card_radius: "medium", email_header_bg: "#1E293B", email_sender_name: "", logo_url: "", favicon_url: "" },
@@ -199,6 +199,7 @@ function SectionHeading({ title }: { title: string }) {
 // ── Tree node renderer ──────────────────────────────────────────────────────────
 
 const NODE_TYPE_ICON: Record<string, string> = {
+  "Company":               "building-skyscraper",
   "Legal entity":          "building",
   "Division / Business unit": "folders",
   "Department":            "folder",
@@ -239,7 +240,7 @@ function TreeNode({
             {node.cost_center_code}
           </span>
         )}
-        {node.node_type === "Legal entity" && node.entity_code && (
+        {(node.node_type === "Legal entity" || node.node_type === "Company") && node.entity_code && (
           <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-mono">
             {node.entity_code}
           </span>
@@ -1500,7 +1501,7 @@ function OrganisationPage() {
                       <Input value={newNode.cost_center_code} onChange={e => setNewNode(n => ({ ...n, cost_center_code: e.target.value }))} placeholder="Must match dimension value code" />
                     </Field>
                   )}
-                  {newNode.node_type === "Legal entity" && (
+                  {(newNode.node_type === "Legal entity" || newNode.node_type === "Company") && (
                     <Field label="Entity code (optional)">
                       <Input
                         value={newNode.entity_code}
@@ -1562,7 +1563,7 @@ function OrganisationPage() {
                       <Input value={editForm.cost_center_code} onChange={e => setEditForm(f => ({ ...f, cost_center_code: e.target.value }))} />
                     </Field>
                   )}
-                  {editForm.node_type === "Legal entity" && (
+                  {(editForm.node_type === "Legal entity" || editForm.node_type === "Company") && (
                     <Field label="Entity code (optional)">
                       <Input value={editForm.entity_code} onChange={e => setEditForm(f => ({ ...f, entity_code: e.target.value }))} placeholder="e.g. N22341" />
                     </Field>
