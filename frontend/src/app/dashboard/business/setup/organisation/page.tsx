@@ -279,109 +279,187 @@ function TreeNode({
   );
 }
 
-// ── People View tree ──────────────────────────────────────────────────────────
+// ── People View — visual org chart ───────────────────────────────────────────
 
-const NODE_TYPE_BORDER: Record<string, string> = {
-  "Legal entity":             "border-blue-300 bg-blue-50",
-  "Division / Business unit": "border-violet-300 bg-violet-50",
-  "Department":               "border-amber-300 bg-amber-50",
-  "Cost center":              "border-emerald-300 bg-emerald-50",
+const NODE_COLORS: Record<string, { bg: string; border: string; badgeBg: string; badgeText: string }> = {
+  "Legal entity":             { bg: "#eff6ff", border: "#93c5fd", badgeBg: "#1d4ed8", badgeText: "#fff" },
+  "Division / Business unit": { bg: "#f5f3ff", border: "#c4b5fd", badgeBg: "#7c3aed", badgeText: "#fff" },
+  "Department":               { bg: "#fffbeb", border: "#fcd34d", badgeBg: "#92400e", badgeText: "#fff" },
+  "Cost center":              { bg: "#f0fdf4", border: "#86efac", badgeBg: "#15803d", badgeText: "#fff" },
 };
 
-const NODE_TYPE_BADGE: Record<string, string> = {
-  "Legal entity":             "bg-blue-100 text-blue-700",
-  "Division / Business unit": "bg-violet-100 text-violet-700",
-  "Department":               "bg-amber-100 text-amber-700",
-  "Cost center":              "bg-emerald-100 text-emerald-700",
-};
+const LINE_COLOR = "#d1d5db";
+const LINE_W     = 2;
+const V_GAP      = 20; // px of vertical connector between parent and children row
 
 function OrgChartNode({
   node,
-  depth = 0,
   employeesByCC,
   ccCodeToId,
 }: {
   node: OrgNode;
-  depth?: number;
   employeesByCC: Record<string, ChartEmployee[]>;
   ccCodeToId: Record<string, string>;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const hasChildren = node.children && node.children.length > 0;
-  const borderCls = NODE_TYPE_BORDER[node.node_type] ?? "border-gray-200 bg-gray-50";
-  const badgeCls  = NODE_TYPE_BADGE[node.node_type]  ?? "bg-gray-100 text-gray-600";
+  const hasChildren = (node.children?.length ?? 0) > 0;
 
-  const ccEmployees: ChartEmployee[] = [];
-  if (node.node_type === "Cost center" && node.cost_center_code) {
-    const ccId = ccCodeToId[node.cost_center_code];
-    if (ccId) ccEmployees.push(...(employeesByCC[ccId] ?? []));
-  }
+  const c = NODE_COLORS[node.node_type] ?? { bg: "#f9fafb", border: "#e5e7eb", badgeBg: "#374151", badgeText: "#fff" };
+
+  const ccId = node.node_type === "Cost center" && node.cost_center_code
+    ? ccCodeToId[node.cost_center_code]
+    : null;
+  const ccEmployees = ccId ? (employeesByCC[ccId] ?? []) : [];
 
   return (
-    <div style={{ marginLeft: depth * 20 }} className="mb-2">
-      <div className={`border rounded-lg overflow-hidden ${borderCls}`}>
-        {/* Node header */}
-        <div className="flex items-center gap-2 px-3 py-2">
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+
+      {/* ── Node box ── */}
+      <div style={{
+        background: c.bg,
+        border: `${LINE_W}px solid ${c.border}`,
+        borderRadius: 10,
+        padding: "8px 14px",
+        minWidth: 155,
+        maxWidth: 210,
+        textAlign: "center",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
+        position: "relative",
+      }}>
+        {/* collapse toggle */}
+        {(hasChildren || ccEmployees.length > 0) && (
           <button
             type="button"
             onClick={() => setExpanded(v => !v)}
-            className={`shrink-0 text-gray-400 hover:text-gray-600 transition-transform ${!hasChildren && ccEmployees.length === 0 ? "invisible" : ""}`}
+            style={{
+              position: "absolute", top: 5, right: 6,
+              background: "none", border: "none", cursor: "pointer",
+              color: "#9ca3af", lineHeight: 1, padding: 2,
+            }}
           >
-            <i className={`ti ti-chevron-${expanded ? "down" : "right"}`} style={{ fontSize: 12 }} />
+            <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 10 }} />
           </button>
-          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${badgeCls}`}>{node.node_type}</span>
-          <span className="text-sm font-semibold text-gray-800 truncate">{node.name}</span>
-          <span className="text-xs text-gray-400 font-mono ml-1 shrink-0">{node.code}</span>
-          {node.cost_center_code && (
-            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-mono shrink-0 ml-1">
-              {node.cost_center_code}
-            </span>
-          )}
-          {node.node_type === "Cost center" && (
-            <span className="ml-auto text-[10px] text-gray-400 shrink-0">
-              {ccEmployees.length} {ccEmployees.length === 1 ? "person" : "people"}
-            </span>
-          )}
+        )}
+
+        {/* type badge */}
+        <div style={{
+          display: "inline-block",
+          background: c.badgeBg, color: c.badgeText,
+          fontSize: 8, fontWeight: 700,
+          padding: "1px 6px", borderRadius: 3,
+          textTransform: "uppercase", letterSpacing: 0.5,
+          marginBottom: 5,
+        }}>
+          {node.node_type}
         </div>
 
-        {/* Employees — only shown on Cost center nodes when expanded */}
-        {expanded && node.node_type === "Cost center" && (
-          <div className="border-t border-emerald-200 bg-white divide-y divide-gray-50">
-            {ccEmployees.length === 0 ? (
-              <p className="px-4 py-2 text-[11px] text-gray-400 italic">No employees assigned</p>
-            ) : (
-              ccEmployees.map(emp => (
-                <div key={emp.id} className="flex items-center gap-2 px-4 py-1.5">
-                  <div className="w-5 h-5 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                    <i className="ti ti-user" style={{ fontSize: 9, color: "#9ca3af" }} />
-                  </div>
-                  <span className="text-xs text-gray-700">
+        {/* name */}
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", lineHeight: 1.3 }}>
+          {node.name}
+        </div>
+
+        {/* code */}
+        <div style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace", marginTop: 2 }}>
+          {node.code}{node.cost_center_code ? ` · ${node.cost_center_code}` : ""}
+        </div>
+
+        {/* employees inside cost center box */}
+        {expanded && ccEmployees.length > 0 && (
+          <div style={{ marginTop: 8, borderTop: `1px solid ${c.border}`, paddingTop: 6, textAlign: "left" }}>
+            {ccEmployees.map(emp => (
+              <div key={emp.id} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
+                <div style={{
+                  width: 18, height: 18, borderRadius: "50%",
+                  background: "#e5e7eb",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  flexShrink: 0,
+                }}>
+                  <i className="ti ti-user" style={{ fontSize: 9, color: "#6b7280" }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 11, color: "#374151", fontWeight: 500,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
                     {emp.preferred_name ?? emp.first_name} {emp.last_name}
-                  </span>
-                  {emp.approval_role_name ? (
-                    <span className="ml-auto text-[10px] font-medium bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded shrink-0">
-                      <i className="ti ti-shield-check mr-0.5" style={{ fontSize: 9 }} />{emp.approval_role_name}
-                    </span>
-                  ) : (
-                    <span className="ml-auto text-[10px] text-gray-300 shrink-0">no role</span>
+                  </div>
+                  {emp.approval_role_name && (
+                    <div style={{
+                      fontSize: 9, fontWeight: 600,
+                      color: "#4338ca", background: "#e0e7ff",
+                      padding: "1px 5px", borderRadius: 3,
+                      display: "inline-block", marginTop: 1,
+                    }}>
+                      {emp.approval_role_name}
+                    </div>
                   )}
                 </div>
-              ))
-            )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* empty cost-center hint */}
+        {node.node_type === "Cost center" && ccEmployees.length === 0 && (
+          <div style={{ fontSize: 10, color: "#d1d5db", marginTop: 5, fontStyle: "italic" }}>
+            No employees
           </div>
         )}
       </div>
 
-      {/* Children */}
-      {expanded && node.children?.map(child => (
-        <OrgChartNode
-          key={child.id}
-          node={child}
-          depth={depth + 1}
-          employeesByCC={employeesByCC}
-          ccCodeToId={ccCodeToId}
-        />
-      ))}
+      {/* ── Connector lines + children ── */}
+      {expanded && hasChildren && (
+        <>
+          {/* vertical line from box down to children row */}
+          <div style={{ width: LINE_W, height: V_GAP, background: LINE_COLOR }} />
+
+          {/* children row */}
+          <div style={{ display: "flex", alignItems: "flex-start" }}>
+            {node.children!.map((child, i) => {
+              const isFirst  = i === 0;
+              const isLast   = i === node.children!.length - 1;
+              const isOnly   = node.children!.length === 1;
+
+              return (
+                <div
+                  key={child.id}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center",
+                    position: "relative",
+                    padding: "0 14px",
+                  }}
+                >
+                  {/* horizontal segment — left half (all except first child) */}
+                  {!isOnly && !isFirst && (
+                    <div style={{
+                      position: "absolute", top: 0,
+                      left: 0, right: "50%",
+                      height: LINE_W, background: LINE_COLOR,
+                    }} />
+                  )}
+                  {/* horizontal segment — right half (all except last child) */}
+                  {!isOnly && !isLast && (
+                    <div style={{
+                      position: "absolute", top: 0,
+                      left: "50%", right: 0,
+                      height: LINE_W, background: LINE_COLOR,
+                    }} />
+                  )}
+
+                  {/* vertical line from horizontal bar down to child box */}
+                  <div style={{ width: LINE_W, height: V_GAP, background: LINE_COLOR }} />
+
+                  <OrgChartNode
+                    node={child}
+                    employeesByCC={employeesByCC}
+                    ccCodeToId={ccCodeToId}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -967,16 +1045,35 @@ function OrganisationPage() {
                   <p>No org structure yet. Switch to Edit structure to add nodes.</p>
                 </div>
               ) : (
-                <div>
-                  {nodes.map(n => (
-                    <OrgChartNode
-                      key={n.id}
-                      node={n}
-                      employeesByCC={employeesByCC}
-                      ccCodeToId={ccCodeToId}
-                    />
-                  ))}
-                </div>
+                <>
+                  {/* scrollable chart canvas */}
+                  <div style={{
+                    overflowX: "auto", overflowY: "visible",
+                    paddingBottom: 24, paddingTop: 8,
+                  }}>
+                    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", minWidth: "100%", gap: 0 }}>
+                      {nodes.map(n => (
+                        <OrgChartNode
+                          key={n.id}
+                          node={n}
+                          employeesByCC={employeesByCC}
+                          ccCodeToId={ccCodeToId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* footer summary */}
+                  {chartEmployees.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-4 flex-wrap text-xs text-gray-500">
+                      <span><i className="ti ti-users mr-1" /><strong className="text-gray-700">{chartEmployees.length}</strong> active employees</span>
+                      <span><i className="ti ti-building mr-1" /><strong className="text-gray-700">{chartCostCenters.length}</strong> cost centers</span>
+                      {chartEmployees.filter(e => e.approval_role_id).length > 0 && (
+                        <span><i className="ti ti-shield-check mr-1 text-indigo-500" /><strong className="text-gray-700">{chartEmployees.filter(e => e.approval_role_id).length}</strong> with approval roles</span>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1546,62 +1643,4 @@ function OrganisationPage() {
                   setOrg(o => ({ ...o, branding: newBranding }));
                   await save({ branding: newBranding });
                   setBrandingTab("themes");
-                }} disabled={saving} loading={saving}>
-                  {saving ? "Saving…" : "Save & apply"}
-                </Button>
-              </div>
-            </div>
-          )}
-
-        </div>
-      )}
-
-      {/* ── Configuration tab ────────────────────────────────────────────────── */}
-      {tab === "config" && (
-        <div className="space-y-0">
-
-          {/* ── FINANCIAL FEATURES ── */}
-          <div className="space-y-0 max-w-2xl">
-
-            {/* Dimensions */}
-            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Analytical dimensions <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Tag transactions with additional context — cost center, project, brand, or region — to slice and filter reports beyond just the GL account.</p>
-                {config.use_dimensions && (
-                  <p className="text-xs text-blue-600 mt-1.5">Dimensions page is now visible in the sidebar. Configure dimension types and values there before uploading your Chart of Accounts.</p>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_dimensions}
-                  onChange={e => setConfig(c => ({ ...c, use_dimensions: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_dimensions ? "bg-blue-600" : "bg-gray-300"}`} />
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${config.use_dimensions ? "translate-x-4" : ""}`} />
-              </label>
-            </div>
-
-            {/* Multi-currency */}
-            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Multi-currency <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Enable if your organisation transacts in foreign currencies. Unlocks the Currencies & FX setup page.</p>
-                {config.use_multi_currency && (
-                  <div className="mt-2 grid grid-cols-2 gap-3">
-                    <Field label="FX rate source">
-                      <Select value={config.fx_rate_source ?? "Manual entry"} onChange={e => setConfig(c => ({ ...c, fx_rate_source: e.target.value }))}>
-                        {["Manual entry","Central bank feed","Custom API"].map(o => <option key={o}>{o}</option>)}
-                      </Select>
-                    </Field>
-                    <Field label="Rate update frequency">
-                      <Select value={config.fx_update_frequency ?? "Daily"} onChange={e => setConfig(c => ({ ...c, fx_update_frequency: e.target.value }))}>
-                        {["Daily","Weekly","Monthly"].map(o => <option key={o}>{o}</option>)}
-                      </Select>
-                    </Field>
-                  </div>
-                )}
-                {config.use_multi_currency && (
-                  <p className="text-xs text-blue-600 mt-1.5">Currencies & FX page is now visible in the sidebar.</p>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={con
+                }} disabled={saving} loadin
