@@ -97,6 +97,11 @@ class ApprovalRole(Base):
     (Expense, AP, AR, Payroll, etc.). Each module's approval config references
     these roles by name. Roles are tenant-scoped and ordered for display.
 
+    parent_role_id: self-referential FK that builds the org-chart hierarchy
+      (e.g. "Chief Accountant" reports to "Finance Manager").
+    max_occupants:  None = unlimited headcount; 1 = solo role (GM, CFO, etc.);
+      any positive integer = fixed cap.
+
     Examples: "Line Manager", "Department Head", "Finance Director", "CFO", "Board".
     """
 
@@ -113,10 +118,4 @@ class ApprovalRole(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-    _
+    display_order: Mapped[int] = mapped_colum

@@ -442,6 +442,8 @@ async def create_approval_role(
         name=data.name.strip(),
         description=data.description,
         display_order=data.display_order,
+        parent_role_id=data.parent_role_id,
+        max_occupants=data.max_occupants,
     )
     db.add(role)
     await db.commit()
@@ -476,6 +478,10 @@ async def update_approval_role(
         role.display_order = data.display_order
     if data.is_active is not None:
         role.is_active = data.is_active
+    if data.parent_role_id is not None:
+        role.parent_role_id = data.parent_role_id
+    if "max_occupants" in data.model_fields_set:
+        role.max_occupants = data.max_occupants  # allows setting to None (unlimited)
     await db.commit()
     await db.refresh(role)
     return ApprovalRoleResponse.from_orm(role)
@@ -1835,11 +1841,4 @@ async def refer_back(
         if first_approver and referring_approver:
             _send_referred_approver_email(
                 to_email=first_approver.email,
-                report_number=report.report_number,
-                referring_approver_name=referring_approver.full_name,
-                referring_level=approval.level,
-                comment=data.comment,
-            )
-
-    await db.flush()
-    return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
+            

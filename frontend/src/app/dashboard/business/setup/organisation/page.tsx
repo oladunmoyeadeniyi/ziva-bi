@@ -281,55 +281,81 @@ function TreeNode({
   );
 }
 
-// ── People View — role-based org chart (employee reporting hierarchy) ─────────
+// ── People View — role hierarchy chart ───────────────────────────────────────
 
-// Colour palette: one colour per cost centre (deterministic hash)
-const EMP_PALETTE = [
-  { bg: "#eff6ff", border: "#bfdbfe", card: "#2563eb", text: "#fff" },
-  { bg: "#f5f3ff", border: "#ddd6fe", card: "#7c3aed", text: "#fff" },
-  { bg: "#f0fdf4", border: "#bbf7d0", card: "#16a34a", text: "#fff" },
-  { bg: "#fce7f3", border: "#fbcfe8", card: "#be185d", text: "#fff" },
-  { bg: "#fff7ed", border: "#fed7aa", card: "#c2410c", text: "#fff" },
-  { bg: "#f0fdfa", border: "#99f6e4", card: "#0f766e", text: "#fff" },
-  { bg: "#fdf4ff", border: "#e9d5ff", card: "#9333ea", text: "#fff" },
-  { bg: "#fefce8", border: "#fef08a", card: "#a16207", text: "#fff" },
+interface OrgRole {
+  id: string;
+  name: string;
+  description: string | null;
+  display_order: number;
+  is_active: boolean;
+  parent_role_id: string | null;
+  max_occupants: number | null; // null=unlimited, 1=solo, N=capped
+}
+
+interface RoleTreeNode extends OrgRole {
+  children: RoleTreeNode[];
+  depth: number;
+}
+
+function buildRoleTree(roles: OrgRole[], parentId: string | null = null, depth = 0): RoleTreeNode[] {
+  return roles
+    .filter(r => r.parent_role_id === parentId)
+    .sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name))
+    .map(r => ({ ...r, depth, children: buildRoleTree(roles, r.id, depth + 1) }));
+}
+
+// Depth-indexed colour palette
+const ROLE_DEPTH_COLORS = [
+  { accent: "#1d4ed8", light: "#dbeafe", mid: "#3b82f6" },
+  { accent: "#0891b2", light: "#cffafe", mid: "#06b6d4" },
+  { accent: "#059669", light: "#d1fae5", mid: "#10b981" },
+  { accent: "#d97706", light: "#fef3c7", mid: "#f59e0b" },
+  { accent: "#7c3aed", light: "#ede9fe", mid: "#8b5cf6" },
+  { accent: "#be185d", light: "#fce7f3", mid: "#ec4899" },
 ];
 
-function empPalette(seed: string) {
-  let h = 5381;
-  for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) & 0x7fffffff;
-  return EMP_PALETTE[Math.abs(h) % EMP_PALETTE.length];
+function roleColor(depth: number) {
+  return ROLE_DEPTH_COLORS[depth % ROLE_DEPTH_COLORS.length];
 }
 
-function empInitials(e: ChartEmployee) {
-  const fn = e.preferred_name ?? e.first_name;
-  return `${fn[0] ?? ""}${e.last_name[0] ?? ""}`.toUpperCase();
-}
+const RC = "#e2e8f0"; // connector colour
+const RW = 2;
+const RH = 28;
 
-interface EmpTreeNode extends ChartEmployee {
-  children: EmpTreeNode[];
-}
-
-function buildEmpTree(employees: ChartEmployee[]): EmpTreeNode[] {
-  const map = new Map<string, EmpTreeNode>(employees.map(e => [e.id, { ...e, children: [] }]));
-  const roots: EmpTreeNode[] = [];
-  for (const node of map.values()) {
-    const mgr = node.line_manager_id ? map.get(node.line_manager_id) : undefined;
-    if (mgr) mgr.children.push(node);
-    else roots.push(node);
+function CapacityBadge({ max }: { max: number | null }) {
+  if (max === 1) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 8 }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#64748b" }} />
+        <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>Single occupant</span>
+      </div>
+    );
   }
-  return roots;
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 8 }}>
+      {[0, 1, 2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#94a3b8" }} />)}
+      <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>
+        {max ? `Up to ${max} persons` : "Multiple persons"}
+      </span>
+    </div>
+  );
 }
 
-const CL = "#e2e8f0"; // connector line colour
-const CW = 2;         // connector width px
-const CH = 28;        // connector height px
-
-
-function EmployeeChartNode({ node }: { node: EmpTreeNode }) {
+function RoleChartNode({
+  node,
+  onAddChild,
+  onDelete,
+  onEdit,
+}: {
+  node: RoleTreeNode;
+  onAddChild: (parentId: string) => void;
+  onDelete: (id: string, name: string) => void;
+  onEdit: (role: OrgRole) => void;
+}) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
-  const pal = empPalette(node.cost_center_name ?? node.id);
+  const c = roleColor(node.depth);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -337,76 +363,100 @@ function EmployeeChartNode({ node }: { node: EmpTreeNode }) {
       {/* ── Card ── */}
       <div style={{
         background: "#fff",
-        border: `2px solid ${pal.border}`,
-        borderRadius: 14,
-        padding: "16px 18px 14px",
-        minWidth: 185,
+        border: `1.5px solid ${c.light}`,
+        borderRadius: 12,
+        minWidth: 190,
         maxWidth: 240,
         textAlign: "center",
-        boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
-        position: "relative",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.07)",
+        overflow: "hidden",
       }}>
-        {/* collapse toggle */}
-        {hasChildren && (
-          <button type="button" onClick={() => setExpanded(v => !v)}
-            style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 2, lineHeight: 1 }}>
-            <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 12 }} />
-          </button>
-        )}
+        {/* Colour accent bar at top */}
+        <div style={{ height: 6, background: c.accent }} />
 
-        {/* Avatar with initials */}
-        <div style={{
-          width: 48, height: 48, borderRadius: "50%",
-          background: pal.card,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          margin: "0 auto 10px",
-          fontSize: 16, fontWeight: 800, color: pal.text,
-          letterSpacing: 0.5,
-          boxShadow: `0 3px 8px ${pal.border}`,
-        }}>
-          {empInitials(node)}
-        </div>
+        <div style={{ padding: "14px 16px 12px", position: "relative" }}>
+          {/* Collapse toggle */}
+          {hasChildren && (
+            <button type="button" onClick={() => setExpanded(v => !v)}
+              style={{ position: "absolute", top: 10, right: 10, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 2, lineHeight: 1 }}>
+              <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 11 }} />
+            </button>
+          )}
 
-        {/* Person name */}
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, marginBottom: 6 }}>
-          {node.preferred_name ?? node.first_name} {node.last_name}
-        </div>
-
-        {/* Role pill */}
-        {node.approval_role_name ? (
+          {/* Role icon */}
           <div style={{
-            display: "inline-block",
-            background: pal.card, color: pal.text,
-            fontSize: 10, fontWeight: 700,
-            padding: "3px 11px", borderRadius: 20,
-            letterSpacing: 0.4,
+            width: 40, height: 40, borderRadius: "50%",
+            background: c.light,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            margin: "0 auto 10px",
           }}>
-            {node.approval_role_name}
+            <i className="ti ti-user-star" style={{ fontSize: 18, color: c.accent }} />
           </div>
-        ) : (
-          <div style={{
-            display: "inline-block",
-            background: "#f1f5f9", color: "#94a3b8",
-            fontSize: 10, fontWeight: 600,
-            padding: "3px 10px", borderRadius: 20,
-          }}>
-            No role assigned
-          </div>
-        )}
 
-        {/* Cost centre label */}
-        {node.cost_center_name && (
-          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 7, display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
-            <i className="ti ti-building" style={{ fontSize: 10 }} />
-            {node.cost_center_name}
+          {/* Role name */}
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, letterSpacing: 0.1 }}>
+            {node.name}
           </div>
-        )}
+
+          {/* Capacity */}
+          <CapacityBadge max={node.max_occupants} />
+
+          {/* Description */}
+          {node.description && (
+            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6, lineHeight: 1.4 }}>
+              {node.description}
+            </div>
+          )}
+
+          {/* Action row */}
+          <div style={{ display: "flex", gap: 6, marginTop: 12, justifyContent: "center" }}>
+            <button
+              type="button"
+              onClick={() => onAddChild(node.id)}
+              title="Add sub-role"
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                fontSize: 10, fontWeight: 600, color: c.accent,
+                background: c.light, border: "none", borderRadius: 6,
+                padding: "4px 9px", cursor: "pointer",
+              }}
+            >
+              <i className="ti ti-plus" style={{ fontSize: 10 }} /> Sub-role
+            </button>
+            <button
+              type="button"
+              onClick={() => onEdit(node)}
+              title="Edit role"
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                fontSize: 10, fontWeight: 600, color: "#64748b",
+                background: "#f1f5f9", border: "none", borderRadius: 6,
+                padding: "4px 9px", cursor: "pointer",
+              }}
+            >
+              <i className="ti ti-pencil" style={{ fontSize: 10 }} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(node.id, node.name)}
+              title="Remove role"
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                fontSize: 10, fontWeight: 600, color: "#ef4444",
+                background: "#fee2e2", border: "none", borderRadius: 6,
+                padding: "4px 9px", cursor: "pointer",
+              }}
+            >
+              <i className="ti ti-trash" style={{ fontSize: 10 }} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ── Connector + children ── */}
       {expanded && hasChildren && (
         <>
-          <div style={{ width: CW, height: CH, background: CL }} />
+          <div style={{ width: RW, height: RH, background: RC }} />
           <div style={{ display: "flex", alignItems: "flex-start" }}>
             {node.children.map((child, i) => {
               const isFirst = i === 0;
@@ -414,10 +464,10 @@ function EmployeeChartNode({ node }: { node: EmpTreeNode }) {
               const isOnly  = node.children.length === 1;
               return (
                 <div key={child.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative", padding: "0 18px" }}>
-                  {!isOnly && !isFirst && <div style={{ position: "absolute", top: 0, left: 0, right: "50%", height: CW, background: CL }} />}
-                  {!isOnly && !isLast  && <div style={{ position: "absolute", top: 0, left: "50%", right: 0, height: CW, background: CL }} />}
-                  <div style={{ width: CW, height: CH, background: CL }} />
-                  <EmployeeChartNode node={child} />
+                  {!isOnly && !isFirst && <div style={{ position: "absolute", top: 0, left: 0, right: "50%", height: RW, background: RC }} />}
+                  {!isOnly && !isLast  && <div style={{ position: "absolute", top: 0, left: "50%", right: 0, height: RW, background: RC }} />}
+                  <div style={{ width: RW, height: RH, background: RC }} />
+                  <RoleChartNode node={child} onAddChild={onAddChild} onDelete={onDelete} onEdit={onEdit} />
                 </div>
               );
             })}
@@ -676,20 +726,79 @@ function OrganisationPage() {
 
   // People view state
   const [structureView, setStructureView] = useState<"edit" | "chart">("edit");
-  const [chartEmployees, setChartEmployees] = useState<ChartEmployee[]>([]);
-  const [loadingChart, setLoadingChart] = useState(false);
+  const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
+  const [loadingRoles, setLoadingRoles] = useState(false);
+
+  // Add/edit modal state
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
+  const [roleParentId, setRoleParentId] = useState<string | null>(null);
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2" });
+  const [savingRole, setSavingRole] = useState(false);
+  const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
+
+  const loadRoles = async () => {
+    if (!accessToken) return;
+    const data = await apiFetch<OrgRole[]>("/api/approvals/roles", { token: accessToken }).catch(() => [] as OrgRole[]);
+    setOrgRoles(data);
+  };
 
   useEffect(() => {
     if (tab !== "structure" || structureView !== "chart" || !accessToken) return;
-    setLoadingChart(true);
-    apiFetch<ChartEmployee[]>("/api/hr/employees?active_only=true", { token: accessToken })
-      .then(setChartEmployees)
-      .catch(() => setChartEmployees([]))
-      .finally(() => setLoadingChart(false));
+    setLoadingRoles(true);
+    loadRoles().finally(() => setLoadingRoles(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, structureView, accessToken]);
 
-  // Build employee reporting tree from line_manager_id relationships
-  const empTree = useMemo(() => buildEmpTree(chartEmployees), [chartEmployees]);
+  const roleTree = useMemo(() => buildRoleTree(orgRoles), [orgRoles]);
+
+  const openAddRole = (parentId: string | null) => {
+    setEditingRole(null);
+    setRoleParentId(parentId);
+    setRoleForm({ name: "", description: "", capacity: "single", customN: "2" });
+    setShowRoleModal(true);
+  };
+
+  const openEditRole = (role: OrgRole) => {
+    setEditingRole(role);
+    setRoleParentId(role.parent_role_id);
+    const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2) });
+    setShowRoleModal(true);
+  };
+
+  const saveRole = async () => {
+    if (!roleForm.name.trim() || !accessToken) return;
+    setSavingRole(true);
+    const maxOcc = roleForm.capacity === "single" ? 1 : roleForm.capacity === "unlimited" ? null : parseInt(roleForm.customN) || null;
+    try {
+      if (editingRole) {
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc } });
+      } else {
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc } });
+      }
+      await loadRoles();
+      setShowRoleModal(false);
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    } finally {
+      setSavingRole(false);
+    }
+  };
+
+  const deleteRole = async (id: string, name: string) => {
+    if (!confirm(`Remove role "${name}"? Any sub-roles will be detached (not deleted).`)) return;
+    if (!accessToken) return;
+    setDeletingRoleId(id);
+    try {
+      await apiFetch(`/api/approvals/roles/${id}`, { method: "DELETE", token: accessToken });
+      await loadRoles();
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    } finally {
+      setDeletingRoleId(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -969,61 +1078,131 @@ function OrganisationPage() {
           {/* ── People view sub-tab ───────────────────────────────────────── */}
           {structureView === "chart" && (
             <>
-              {/* Header row */}
-              <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-gray-800">Reporting hierarchy</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Based on line manager assignments. Each card shows the employee's role and the person occupying it.</p>
+                  <p className="text-sm font-semibold text-gray-800">Role hierarchy</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Build your organisation's role structure. Each card is a position — set its capacity and reporting line.</p>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" /> Colour = cost centre
-                </div>
+                <button
+                  type="button"
+                  onClick={() => openAddRole(null)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  <i className="ti ti-plus" style={{ fontSize: 14 }} /> Add top-level role
+                </button>
               </div>
 
-              {loadingChart ? (
-                <div className="flex flex-col items-center gap-6 py-8">
-                  {[1, 2].map(i => (
-                    <div key={i} className="flex flex-col items-center gap-4">
-                      <div className="h-28 w-48 bg-gray-100 rounded-xl animate-pulse" />
-                      <div className="flex gap-6">
-                        {[1, 2, 3].map(j => <div key={j} className="h-28 w-44 bg-gray-100 rounded-xl animate-pulse" />)}
-                      </div>
-                    </div>
-                  ))}
+              {loadingRoles ? (
+                <div className="flex items-start justify-center gap-10 py-10">
+                  {[1, 2, 3].map(i => <div key={i} className="h-40 w-44 bg-gray-100 rounded-xl animate-pulse" />)}
                 </div>
-              ) : chartEmployees.length === 0 ? (
-                <div className="text-center py-14 text-sm text-gray-400">
-                  <i className="ti ti-users-group block mb-3" style={{ fontSize: 36, color: "#d1d5db" }} />
-                  <p className="font-medium text-gray-500">No employees yet</p>
-                  <p className="text-xs mt-1">Add employees and assign line managers to see the reporting chart.</p>
+              ) : orgRoles.length === 0 ? (
+                <div className="text-center py-16 text-sm text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
+                  <i className="ti ti-sitemap block mb-3" style={{ fontSize: 40, color: "#d1d5db" }} />
+                  <p className="font-semibold text-gray-600 text-base mb-1">No roles yet</p>
+                  <p className="text-xs mb-4">Start by adding your top-level role (e.g. General Manager, CEO)</p>
+                  <button type="button" onClick={() => openAddRole(null)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                    <i className="ti ti-plus" style={{ fontSize: 13 }} /> Add first role
+                  </button>
                 </div>
               ) : (
                 <>
-                  {/* Scrollable canvas */}
-                  <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 32, paddingTop: 8 }}>
-                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "0 16px" }}>
-                      {empTree.map(root => (
-                        <EmployeeChartNode key={root.id} node={root} />
+                  <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 32, paddingTop: 4 }}>
+                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0" }}>
+                      {roleTree.map(root => (
+                        <RoleChartNode
+                          key={root.id}
+                          node={root}
+                          onAddChild={openAddRole}
+                          onDelete={deleteRole}
+                          onEdit={openEditRole}
+                        />
                       ))}
                     </div>
                   </div>
-
-                  {/* Footer stats */}
                   <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-5 flex-wrap text-xs text-gray-500">
-                    <span>
-                      <i className="ti ti-users mr-1.5" />
-                      <strong className="text-gray-700">{chartEmployees.length}</strong> active employees
-                    </span>
-                    <span>
-                      <i className="ti ti-shield-check mr-1.5 text-indigo-400" />
-                      <strong className="text-gray-700">{chartEmployees.filter(e => e.approval_role_id).length}</strong> with roles assigned
-                    </span>
-                    <span>
-                      <i className="ti ti-chart-tree-map mr-1.5 text-emerald-400" />
-                      <strong className="text-gray-700">{new Set(chartEmployees.map(e => e.cost_center_id).filter(Boolean)).size}</strong> cost centres
-                    </span>
+                    <span><i className="ti ti-user-star mr-1.5 text-blue-400" /><strong className="text-gray-700">{orgRoles.length}</strong> roles defined</span>
+                    <span><i className="ti ti-user mr-1.5 text-emerald-400" /><strong className="text-gray-700">{orgRoles.filter(r => r.max_occupants === 1).length}</strong> single-occupant</span>
+                    <span><i className="ti ti-users mr-1.5 text-violet-400" /><strong className="text-gray-700">{orgRoles.filter(r => r.max_occupants !== 1).length}</strong> multi-occupant</span>
                   </div>
                 </>
+              )}
+
+              {/* Add / Edit role modal */}
+              {showRoleModal && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+                    <h3 className="text-base font-semibold mb-4">
+                      {editingRole ? "Edit role" : roleParentId ? "Add sub-role" : "Add top-level role"}
+                    </h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Role name <span className="text-red-500">*</span></label>
+                        <input
+                          type="text"
+                          value={roleForm.name}
+                          onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
+                          placeholder="e.g. General Manager"
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Description (optional)</label>
+                        <input
+                          type="text"
+                          value={roleForm.description}
+                          onChange={e => setRoleForm(f => ({ ...f, description: e.target.value }))}
+                          placeholder="Brief description of this role"
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">Capacity</label>
+                        <div className="space-y-2">
+                          {([
+                            { value: "single",   label: "Single person",    desc: "Only one person can hold this role" },
+                            { value: "unlimited", label: "Multiple persons", desc: "Any number of people can hold this role" },
+                            { value: "custom",   label: "Fixed count",      desc: "A specific maximum number" },
+                          ] as const).map(opt => (
+                            <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${roleForm.capacity === opt.value ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}>
+                              <input type="radio" name="capacity" value={opt.value}
+                                checked={roleForm.capacity === opt.value}
+                                onChange={() => setRoleForm(f => ({ ...f, capacity: opt.value }))}
+                                className="mt-0.5" />
+                              <div>
+                                <div className="text-sm font-medium text-gray-800">{opt.label}</div>
+                                <div className="text-xs text-gray-500">{opt.desc}</div>
+                              </div>
+                            </label>
+                          ))}
+                          {roleForm.capacity === "custom" && (
+                            <input
+                              type="number"
+                              min={2}
+                              value={roleForm.customN}
+                              onChange={e => setRoleForm(f => ({ ...f, customN: e.target.value }))}
+                              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="Max number of persons"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-6 justify-end">
+                      <button type="button" onClick={() => setShowRoleModal(false)}
+                        className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
+                        Cancel
+                      </button>
+                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim()}
+                        className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
+                        {savingRole ? "Saving…" : editingRole ? "Save changes" : "Add role"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </>
           )}
@@ -1461,166 +1640,4 @@ function OrganisationPage() {
                       return;
                     }
                     const existing = org.branding?.themes ?? [];
-                    const idx = existing.findIndex(t => t.id === editTheme.id);
-                    const updated = idx >= 0
-                      ? existing.map((t, i) => i === idx ? editTheme : t)
-                      : [...existing, editTheme];
-                    const newBranding: BrandingConfig = {
-                      active_theme_id: org.branding?.active_theme_id ?? editTheme.id,
-                      themes: updated,
-                    };
-                    setOrg(o => ({ ...o, branding: newBranding }));
-                    await save({ branding: newBranding });
-                    setBrandingTab("themes");
-                  }} disabled={saving} loading={saving}>
-                    {saving ? "Saving…" : "Save theme"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ── PREVIEW sub-tab ── */}
-          {brandingTab === "preview" && (
-            <div className="space-y-4">
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                {/* Browser chrome */}
-                <div className="bg-gray-100 border-b border-gray-200 px-3 py-2 flex items-center justify-between">
-                  <p className="text-xs text-gray-500">Portal preview</p>
-                  <div className="flex gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
-                  </div>
-                </div>
-                {/* Portal simulation */}
-                <div className="flex" style={{ height: 340 }}>
-                  {/* Sidebar */}
-                  <div className="w-36 flex-shrink-0 py-4"
-                    style={{ background: editTheme.sidebar }}>
-                    <div className="px-3 pb-3 mb-2" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.1)" }}>
-                      <p className="text-xs font-medium text-white">ZivaBI</p>
-                    </div>
-                    <div className="px-0">
-                      <p className="text-xs px-3 mb-1 mt-2" style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: "0.05em" }}>COMMON DATA</p>
-                      <div className="px-3 py-1.5 mb-0.5" style={{ background: "rgba(255,255,255,0.12)" }}>
-                        <p className="text-xs font-medium text-white">Organisation</p>
-                      </div>
-                      <div className="px-3 py-1.5">
-                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Modules</p>
-                      </div>
-                      <p className="text-xs px-3 mb-1 mt-2" style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: "0.05em" }}>FINANCIALS</p>
-                      <div className="px-3 py-1.5">
-                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Dimensions</p>
-                      </div>
-                      <div className="px-3 py-1.5">
-                        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>Chart of accounts</p>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Main content */}
-                  <div className="flex-1 p-4 overflow-auto bg-gray-50">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">Organisation</p>
-                        <p className="text-xs text-gray-500">Configure your company identity</p>
-                      </div>
-                      <button
-                        type="button"
-                        style={{
-                          background: editTheme.primary,
-                          color: getButtonTextColor(editTheme.primary),
-                          borderRadius: editTheme.button_style === "rounded" ? 6 : editTheme.button_style === "pill" ? 999 : 2,
-                          border: "none",
-                          padding: "6px 14px",
-                          fontSize: 12,
-                          cursor: "default",
-                        }}
-                      >Save changes</button>
-                    </div>
-                    <div className="bg-white border border-gray-200 p-3 mb-3"
-                      style={{ borderRadius: editTheme.card_radius === "sharp" ? 2 : editTheme.card_radius === "medium" ? 8 : 16 }}>
-                      <p className="text-xs font-medium text-gray-500 mb-2" style={{ letterSpacing: "0.05em" }}>LEGAL & REGISTRATION</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Legal name</p>
-                          <div className="border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-800">
-                            {org.legal_name || "Acme Corporation"}
-                          </div>
-                        </div>
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">RC number</p>
-                          <div className="border border-gray-200 rounded px-2 py-1.5 text-xs text-gray-800">RC1234567</div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="p-2.5 rounded bg-gray-100">
-                        <p className="text-xs text-gray-500">Employees</p>
-                        <p className="text-base font-medium text-gray-900">24</p>
-                      </div>
-                      <div className="p-2.5 rounded bg-gray-100">
-                        <p className="text-xs text-gray-500">Modules</p>
-                        <p className="text-base font-medium text-gray-900">3</p>
-                      </div>
-                      <div className="p-2.5 rounded" style={{ background: editTheme.accent + "33" }}>
-                        <p className="text-xs" style={{ color: editTheme.accent }}>Pending</p>
-                        <p className="text-base font-medium text-gray-900">7</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-3 bg-blue-50 border border-blue-100 rounded-md">
-                <p className="text-xs text-blue-700">This is a simulated preview. Full live theming across all pages is planned for a future milestone.</p>
-              </div>
-
-              <div className="flex justify-between">
-                <Button variant="secondary" onClick={() => setBrandingTab("controls")}>
-                  Back to edit
-                </Button>
-                <Button variant="primary" onClick={async () => {
-                  const existing = org.branding?.themes ?? [];
-                  const idx = existing.findIndex(t => t.id === editTheme.id);
-                  const updated = idx >= 0
-                    ? existing.map((t, i) => i === idx ? editTheme : t)
-                    : [...existing, editTheme];
-                  const newBranding: BrandingConfig = {
-                    active_theme_id: editTheme.id,
-                    themes: updated,
-                  };
-                  setOrg(o => ({ ...o, branding: newBranding }));
-                  await save({ branding: newBranding });
-                  setBrandingTab("themes");
-                }} disabled={saving} loading={saving}>
-                  {saving ? "Saving…" : "Save & apply"}
-                </Button>
-              </div>
-            </div>
-          )}
-
-        </div>
-      )}
-
-      {/* ── Configuration tab ────────────────────────────────────────────────── */}
-      {tab === "config" && (
-        <div className="space-y-0">
-
-          {/* ── FINANCIAL FEATURES ── */}
-          <div className="space-y-0 max-w-2xl">
-
-            {/* Dimensions */}
-            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Analytical dimensions <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
-                <p className="text-xs text-gray-500 mt-0.5">Tag transactions with additional context — cost center, project, brand, or region — to slice and filter reports beyond just the GL account.</p>
-                {config.use_dimensions && (
-                  <p className="text-xs text-blue-600 mt-1.5">Dimensions page is now visible in the sidebar. Configure dimension types and values there before uploading your Chart of Accounts.</p>
-                )}
-              </div>
-              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
-                <input type="checkbox" className="sr-only" checked={config.use_dimensions}
-                  onChange={e => setConfig(c => ({ ...c, use_dimensions: e.target.checked }))} />
-                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_dimensions ? "bg-blue-600" : "bg-gray-300"}`} />
-         
+                    const i

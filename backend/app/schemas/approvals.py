@@ -22,6 +22,8 @@ class ApprovalRoleCreate(BaseModel):
     name: str
     description: str | None = None
     display_order: int = 0
+    parent_role_id: uuid.UUID | None = None
+    max_occupants: int | None = None  # None=unlimited, 1=solo, N=capped
 
 
 class ApprovalRoleUpdate(BaseModel):
@@ -30,6 +32,8 @@ class ApprovalRoleUpdate(BaseModel):
     description: str | None = None
     display_order: int | None = None
     is_active: bool | None = None
+    parent_role_id: uuid.UUID | None = None
+    max_occupants: int | None = None
 
 
 class ApprovalRoleResponse(BaseModel):
@@ -39,6 +43,8 @@ class ApprovalRoleResponse(BaseModel):
     description: str | None
     display_order: int
     is_active: bool
+    parent_role_id: str | None = None
+    max_occupants: int | None = None
 
     @classmethod
     def from_orm(cls, r: object) -> "ApprovalRoleResponse":
@@ -50,6 +56,8 @@ class ApprovalRoleResponse(BaseModel):
             description=r.description,
             display_order=r.display_order,
             is_active=r.is_active,
+            parent_role_id=str(r.parent_role_id) if r.parent_role_id else None,
+            max_occupants=r.max_occupants,
         )
 
 
@@ -193,14 +201,4 @@ class ChainPreviewStep(BaseModel):
     email: str
     role_label: str
     chain_type: str  # "management" | "finance"
-    is_delegated: bool
-    error: str | None = None
-
-
-# ── Approval Delegation ───────────────────────────────────────────────────────
-
-class ApprovalDelegationCreate(BaseModel):
-    """Create a new approval delegation."""
-    delegate_id: str
-    start_date: date
-    end_date: date | No
+    is_d
