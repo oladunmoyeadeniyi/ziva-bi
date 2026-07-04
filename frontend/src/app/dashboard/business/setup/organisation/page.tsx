@@ -103,6 +103,8 @@ interface ChartEmployee {
   last_name: string;
   preferred_name: string | null;
   cost_center_id: string | null;
+  cost_center_name: string | null;
+  line_manager_id: string | null;
   approval_role_id: string | null;
   approval_role_name: string | null;
 }
@@ -279,181 +281,143 @@ function TreeNode({
   );
 }
 
-// ── People View — visual org chart ───────────────────────────────────────────
+// ── People View — role-based org chart (employee reporting hierarchy) ─────────
 
-const NODE_COLORS: Record<string, { bg: string; border: string; badgeBg: string; badgeText: string }> = {
-  "Legal entity":             { bg: "#eff6ff", border: "#93c5fd", badgeBg: "#1d4ed8", badgeText: "#fff" },
-  "Division / Business unit": { bg: "#f5f3ff", border: "#c4b5fd", badgeBg: "#7c3aed", badgeText: "#fff" },
-  "Department":               { bg: "#fffbeb", border: "#fcd34d", badgeBg: "#92400e", badgeText: "#fff" },
-  "Cost center":              { bg: "#f0fdf4", border: "#86efac", badgeBg: "#15803d", badgeText: "#fff" },
-};
+// Colour palette: one colour per cost centre (deterministic hash)
+const EMP_PALETTE = [
+  { bg: "#eff6ff", border: "#bfdbfe", card: "#2563eb", text: "#fff" },
+  { bg: "#f5f3ff", border: "#ddd6fe", card: "#7c3aed", text: "#fff" },
+  { bg: "#f0fdf4", border: "#bbf7d0", card: "#16a34a", text: "#fff" },
+  { bg: "#fce7f3", border: "#fbcfe8", card: "#be185d", text: "#fff" },
+  { bg: "#fff7ed", border: "#fed7aa", card: "#c2410c", text: "#fff" },
+  { bg: "#f0fdfa", border: "#99f6e4", card: "#0f766e", text: "#fff" },
+  { bg: "#fdf4ff", border: "#e9d5ff", card: "#9333ea", text: "#fff" },
+  { bg: "#fefce8", border: "#fef08a", card: "#a16207", text: "#fff" },
+];
 
-const LINE_COLOR = "#d1d5db";
-const LINE_W     = 2;
-const V_GAP      = 20; // px of vertical connector between parent and children row
+function empPalette(seed: string) {
+  let h = 5381;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) & 0x7fffffff;
+  return EMP_PALETTE[Math.abs(h) % EMP_PALETTE.length];
+}
 
-function OrgChartNode({
-  node,
-  employeesByCC,
-  ccCodeToId,
-}: {
-  node: OrgNode;
-  employeesByCC: Record<string, ChartEmployee[]>;
-  ccCodeToId: Record<string, string>;
-}) {
+function empInitials(e: ChartEmployee) {
+  const fn = e.preferred_name ?? e.first_name;
+  return `${fn[0] ?? ""}${e.last_name[0] ?? ""}`.toUpperCase();
+}
+
+interface EmpTreeNode extends ChartEmployee {
+  children: EmpTreeNode[];
+}
+
+function buildEmpTree(employees: ChartEmployee[]): EmpTreeNode[] {
+  const map = new Map<string, EmpTreeNode>(employees.map(e => [e.id, { ...e, children: [] }]));
+  const roots: EmpTreeNode[] = [];
+  for (const node of map.values()) {
+    const mgr = node.line_manager_id ? map.get(node.line_manager_id) : undefined;
+    if (mgr) mgr.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+const CL = "#e2e8f0"; // connector line colour
+const CW = 2;         // connector width px
+const CH = 28;        // connector height px
+
+
+function EmployeeChartNode({ node }: { node: EmpTreeNode }) {
   const [expanded, setExpanded] = useState(true);
-  const hasChildren = (node.children?.length ?? 0) > 0;
-
-  const c = NODE_COLORS[node.node_type] ?? { bg: "#f9fafb", border: "#e5e7eb", badgeBg: "#374151", badgeText: "#fff" };
-
-  const ccId = node.node_type === "Cost center" && node.cost_center_code
-    ? ccCodeToId[node.cost_center_code]
-    : null;
-  const ccEmployees = ccId ? (employeesByCC[ccId] ?? []) : [];
+  const hasChildren = node.children.length > 0;
+  const pal = empPalette(node.cost_center_name ?? node.id);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
 
-      {/* ── Node box ── */}
+      {/* ── Card ── */}
       <div style={{
-        background: c.bg,
-        border: `${LINE_W}px solid ${c.border}`,
-        borderRadius: 10,
-        padding: "8px 14px",
-        minWidth: 155,
-        maxWidth: 210,
+        background: "#fff",
+        border: `2px solid ${pal.border}`,
+        borderRadius: 14,
+        padding: "16px 18px 14px",
+        minWidth: 185,
+        maxWidth: 240,
         textAlign: "center",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
+        boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
         position: "relative",
       }}>
         {/* collapse toggle */}
-        {(hasChildren || ccEmployees.length > 0) && (
-          <button
-            type="button"
-            onClick={() => setExpanded(v => !v)}
-            style={{
-              position: "absolute", top: 5, right: 6,
-              background: "none", border: "none", cursor: "pointer",
-              color: "#9ca3af", lineHeight: 1, padding: 2,
-            }}
-          >
-            <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 10 }} />
+        {hasChildren && (
+          <button type="button" onClick={() => setExpanded(v => !v)}
+            style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 2, lineHeight: 1 }}>
+            <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 12 }} />
           </button>
         )}
 
-        {/* type badge */}
+        {/* Avatar with initials */}
         <div style={{
-          display: "inline-block",
-          background: c.badgeBg, color: c.badgeText,
-          fontSize: 8, fontWeight: 700,
-          padding: "1px 6px", borderRadius: 3,
-          textTransform: "uppercase", letterSpacing: 0.5,
-          marginBottom: 5,
+          width: 48, height: 48, borderRadius: "50%",
+          background: pal.card,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 10px",
+          fontSize: 16, fontWeight: 800, color: pal.text,
+          letterSpacing: 0.5,
+          boxShadow: `0 3px 8px ${pal.border}`,
         }}>
-          {node.node_type}
+          {empInitials(node)}
         </div>
 
-        {/* name */}
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", lineHeight: 1.3 }}>
-          {node.name}
+        {/* Person name */}
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", lineHeight: 1.3, marginBottom: 6 }}>
+          {node.preferred_name ?? node.first_name} {node.last_name}
         </div>
 
-        {/* code */}
-        <div style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace", marginTop: 2 }}>
-          {node.code}{node.cost_center_code ? ` · ${node.cost_center_code}` : ""}
-        </div>
-
-        {/* employees inside cost center box */}
-        {expanded && ccEmployees.length > 0 && (
-          <div style={{ marginTop: 8, borderTop: `1px solid ${c.border}`, paddingTop: 6, textAlign: "left" }}>
-            {ccEmployees.map(emp => (
-              <div key={emp.id} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
-                <div style={{
-                  width: 18, height: 18, borderRadius: "50%",
-                  background: "#e5e7eb",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  flexShrink: 0,
-                }}>
-                  <i className="ti ti-user" style={{ fontSize: 9, color: "#6b7280" }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 11, color: "#374151", fontWeight: 500,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>
-                    {emp.preferred_name ?? emp.first_name} {emp.last_name}
-                  </div>
-                  {emp.approval_role_name && (
-                    <div style={{
-                      fontSize: 9, fontWeight: 600,
-                      color: "#4338ca", background: "#e0e7ff",
-                      padding: "1px 5px", borderRadius: 3,
-                      display: "inline-block", marginTop: 1,
-                    }}>
-                      {emp.approval_role_name}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+        {/* Role pill */}
+        {node.approval_role_name ? (
+          <div style={{
+            display: "inline-block",
+            background: pal.card, color: pal.text,
+            fontSize: 10, fontWeight: 700,
+            padding: "3px 11px", borderRadius: 20,
+            letterSpacing: 0.4,
+          }}>
+            {node.approval_role_name}
+          </div>
+        ) : (
+          <div style={{
+            display: "inline-block",
+            background: "#f1f5f9", color: "#94a3b8",
+            fontSize: 10, fontWeight: 600,
+            padding: "3px 10px", borderRadius: 20,
+          }}>
+            No role assigned
           </div>
         )}
 
-        {/* empty cost-center hint */}
-        {node.node_type === "Cost center" && ccEmployees.length === 0 && (
-          <div style={{ fontSize: 10, color: "#d1d5db", marginTop: 5, fontStyle: "italic" }}>
-            No employees
+        {/* Cost centre label */}
+        {node.cost_center_name && (
+          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 7, display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
+            <i className="ti ti-building" style={{ fontSize: 10 }} />
+            {node.cost_center_name}
           </div>
         )}
       </div>
 
-      {/* ── Connector lines + children ── */}
+      {/* ── Connector + children ── */}
       {expanded && hasChildren && (
         <>
-          {/* vertical line from box down to children row */}
-          <div style={{ width: LINE_W, height: V_GAP, background: LINE_COLOR }} />
-
-          {/* children row */}
+          <div style={{ width: CW, height: CH, background: CL }} />
           <div style={{ display: "flex", alignItems: "flex-start" }}>
-            {node.children!.map((child, i) => {
-              const isFirst  = i === 0;
-              const isLast   = i === node.children!.length - 1;
-              const isOnly   = node.children!.length === 1;
-
+            {node.children.map((child, i) => {
+              const isFirst = i === 0;
+              const isLast  = i === node.children.length - 1;
+              const isOnly  = node.children.length === 1;
               return (
-                <div
-                  key={child.id}
-                  style={{
-                    display: "flex", flexDirection: "column", alignItems: "center",
-                    position: "relative",
-                    padding: "0 14px",
-                  }}
-                >
-                  {/* horizontal segment — left half (all except first child) */}
-                  {!isOnly && !isFirst && (
-                    <div style={{
-                      position: "absolute", top: 0,
-                      left: 0, right: "50%",
-                      height: LINE_W, background: LINE_COLOR,
-                    }} />
-                  )}
-                  {/* horizontal segment — right half (all except last child) */}
-                  {!isOnly && !isLast && (
-                    <div style={{
-                      position: "absolute", top: 0,
-                      left: "50%", right: 0,
-                      height: LINE_W, background: LINE_COLOR,
-                    }} />
-                  )}
-
-                  {/* vertical line from horizontal bar down to child box */}
-                  <div style={{ width: LINE_W, height: V_GAP, background: LINE_COLOR }} />
-
-                  <OrgChartNode
-                    node={child}
-                    employeesByCC={employeesByCC}
-                    ccCodeToId={ccCodeToId}
-                  />
+                <div key={child.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative", padding: "0 18px" }}>
+                  {!isOnly && !isFirst && <div style={{ position: "absolute", top: 0, left: 0, right: "50%", height: CW, background: CL }} />}
+                  {!isOnly && !isLast  && <div style={{ position: "absolute", top: 0, left: "50%", right: 0, height: CW, background: CL }} />}
+                  <div style={{ width: CW, height: CH, background: CL }} />
+                  <EmployeeChartNode node={child} />
                 </div>
               );
             })}
@@ -713,36 +677,19 @@ function OrganisationPage() {
   // People view state
   const [structureView, setStructureView] = useState<"edit" | "chart">("edit");
   const [chartEmployees, setChartEmployees] = useState<ChartEmployee[]>([]);
-  const [chartCostCenters, setChartCostCenters] = useState<{ id: string; code: string; name: string }[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
 
   useEffect(() => {
     if (tab !== "structure" || structureView !== "chart" || !accessToken) return;
     setLoadingChart(true);
-    Promise.all([
-      apiFetch<ChartEmployee[]>("/api/hr/employees?active_only=true", { token: accessToken }).catch(() => [] as ChartEmployee[]),
-      apiFetch<{ id: string; code: string; name: string }[]>("/api/hr/cost-centers/options", { token: accessToken }).catch(() => []),
-    ]).then(([emps, ccs]) => {
-      setChartEmployees(emps);
-      setChartCostCenters(ccs);
-    }).finally(() => setLoadingChart(false));
+    apiFetch<ChartEmployee[]>("/api/hr/employees?active_only=true", { token: accessToken })
+      .then(setChartEmployees)
+      .catch(() => setChartEmployees([]))
+      .finally(() => setLoadingChart(false));
   }, [tab, structureView, accessToken]);
 
-  // Derived maps for OrgChartNode lookups
-  const ccCodeToId = useMemo(
-    () => Object.fromEntries(chartCostCenters.map(cc => [cc.code, cc.id])),
-    [chartCostCenters]
-  );
-  const employeesByCC = useMemo(() => {
-    const map: Record<string, ChartEmployee[]> = {};
-    for (const emp of chartEmployees) {
-      if (emp.cost_center_id) {
-        if (!map[emp.cost_center_id]) map[emp.cost_center_id] = [];
-        map[emp.cost_center_id].push(emp);
-      }
-    }
-    return map;
-  }, [chartEmployees]);
+  // Build employee reporting tree from line_manager_id relationships
+  const empTree = useMemo(() => buildEmpTree(chartEmployees), [chartEmployees]);
 
   if (isLoading) {
     return (
@@ -1022,57 +969,60 @@ function OrganisationPage() {
           {/* ── People view sub-tab ───────────────────────────────────────── */}
           {structureView === "chart" && (
             <>
-              {/* Legend */}
-              <div className="flex items-center gap-3 mb-4 flex-wrap">
-                {[
-                  { label: "Legal entity",             cls: "bg-blue-100 text-blue-700" },
-                  { label: "Division / Business unit", cls: "bg-violet-100 text-violet-700" },
-                  { label: "Department",               cls: "bg-amber-100 text-amber-700" },
-                  { label: "Cost center",              cls: "bg-emerald-100 text-emerald-700" },
-                  { label: "Approval role",            cls: "bg-indigo-100 text-indigo-700" },
-                ].map(({ label, cls }) => (
-                  <span key={label} className={`text-[10px] font-semibold px-2 py-0.5 rounded ${cls}`}>{label}</span>
-                ))}
+              {/* Header row */}
+              <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Reporting hierarchy</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Based on line manager assignments. Each card shows the employee's role and the person occupying it.</p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" /> Colour = cost centre
+                </div>
               </div>
 
               {loadingChart ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map(i => <div key={i} className="h-14 bg-gray-100 rounded-lg animate-pulse" />)}
+                <div className="flex flex-col items-center gap-6 py-8">
+                  {[1, 2].map(i => (
+                    <div key={i} className="flex flex-col items-center gap-4">
+                      <div className="h-28 w-48 bg-gray-100 rounded-xl animate-pulse" />
+                      <div className="flex gap-6">
+                        {[1, 2, 3].map(j => <div key={j} className="h-28 w-44 bg-gray-100 rounded-xl animate-pulse" />)}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ) : nodes.length === 0 ? (
-                <div className="text-center py-12 text-sm text-gray-400">
-                  <i className="ti ti-sitemap block mb-2" style={{ fontSize: 28 }} />
-                  <p>No org structure yet. Switch to Edit structure to add nodes.</p>
+              ) : chartEmployees.length === 0 ? (
+                <div className="text-center py-14 text-sm text-gray-400">
+                  <i className="ti ti-users-group block mb-3" style={{ fontSize: 36, color: "#d1d5db" }} />
+                  <p className="font-medium text-gray-500">No employees yet</p>
+                  <p className="text-xs mt-1">Add employees and assign line managers to see the reporting chart.</p>
                 </div>
               ) : (
                 <>
-                  {/* scrollable chart canvas */}
-                  <div style={{
-                    overflowX: "auto", overflowY: "visible",
-                    paddingBottom: 24, paddingTop: 8,
-                  }}>
-                    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", minWidth: "100%", gap: 0 }}>
-                      {nodes.map(n => (
-                        <OrgChartNode
-                          key={n.id}
-                          node={n}
-                          employeesByCC={employeesByCC}
-                          ccCodeToId={ccCodeToId}
-                        />
+                  {/* Scrollable canvas */}
+                  <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 32, paddingTop: 8 }}>
+                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "0 16px" }}>
+                      {empTree.map(root => (
+                        <EmployeeChartNode key={root.id} node={root} />
                       ))}
                     </div>
                   </div>
 
-                  {/* footer summary */}
-                  {chartEmployees.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-4 flex-wrap text-xs text-gray-500">
-                      <span><i className="ti ti-users mr-1" /><strong className="text-gray-700">{chartEmployees.length}</strong> active employees</span>
-                      <span><i className="ti ti-building mr-1" /><strong className="text-gray-700">{chartCostCenters.length}</strong> cost centers</span>
-                      {chartEmployees.filter(e => e.approval_role_id).length > 0 && (
-                        <span><i className="ti ti-shield-check mr-1 text-indigo-500" /><strong className="text-gray-700">{chartEmployees.filter(e => e.approval_role_id).length}</strong> with approval roles</span>
-                      )}
-                    </div>
-                  )}
+                  {/* Footer stats */}
+                  <div className="mt-4 pt-4 border-t border-gray-100 flex items-center gap-5 flex-wrap text-xs text-gray-500">
+                    <span>
+                      <i className="ti ti-users mr-1.5" />
+                      <strong className="text-gray-700">{chartEmployees.length}</strong> active employees
+                    </span>
+                    <span>
+                      <i className="ti ti-shield-check mr-1.5 text-indigo-400" />
+                      <strong className="text-gray-700">{chartEmployees.filter(e => e.approval_role_id).length}</strong> with roles assigned
+                    </span>
+                    <span>
+                      <i className="ti ti-chart-tree-map mr-1.5 text-emerald-400" />
+                      <strong className="text-gray-700">{new Set(chartEmployees.map(e => e.cost_center_id).filter(Boolean)).size}</strong> cost centres
+                    </span>
+                  </div>
                 </>
               )}
             </>
@@ -1643,4 +1593,34 @@ function OrganisationPage() {
                   setOrg(o => ({ ...o, branding: newBranding }));
                   await save({ branding: newBranding });
                   setBrandingTab("themes");
-                }} disabled={saving} loadin
+                }} disabled={saving} loading={saving}>
+                  {saving ? "Saving…" : "Save & apply"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* ── Configuration tab ────────────────────────────────────────────────── */}
+      {tab === "config" && (
+        <div className="space-y-0">
+
+          {/* ── FINANCIAL FEATURES ── */}
+          <div className="space-y-0 max-w-2xl">
+
+            {/* Dimensions */}
+            <div className="flex items-start justify-between gap-4 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">Analytical dimensions <span className="text-xs bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded ml-1">Recommended</span></p>
+                <p className="text-xs text-gray-500 mt-0.5">Tag transactions with additional context — cost center, project, brand, or region — to slice and filter reports beyond just the GL account.</p>
+                {config.use_dimensions && (
+                  <p className="text-xs text-blue-600 mt-1.5">Dimensions page is now visible in the sidebar. Configure dimension types and values there before uploading your Chart of Accounts.</p>
+                )}
+              </div>
+              <label className="relative w-9 h-5 cursor-pointer flex-shrink-0 mt-0.5">
+                <input type="checkbox" className="sr-only" checked={config.use_dimensions}
+                  onChange={e => setConfig(c => ({ ...c, use_dimensions: e.target.checked }))} />
+                <span className={`absolute inset-0 rounded-full transition-colors ${config.use_dimensions ? "bg-blue-600" : "bg-gray-300"}`} />
+         
