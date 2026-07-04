@@ -540,6 +540,7 @@ async def download_roles_template(
         import openpyxl
         from openpyxl.worksheet.datavalidation import DataValidation
         from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.comments import Comment
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
     except Exception as _exc:
@@ -547,7 +548,7 @@ async def download_roles_template(
 
     tenant_id = _require_tenant(current_user)
 
-    # Fetch dropdown data
+    # Fetch dropdown data + existing roles
     cc_nodes = (await db.execute(
         select(OrgStructureNode).where(
             OrgStructureNode.tenant_id == tenant_id,
@@ -558,13 +559,34 @@ async def download_roles_template(
     entity_nodes = (await db.execute(
         select(OrgStructureNode).where(
             OrgStructureNode.tenant_id == tenant_id,
-            OrgStructureNode.node_type == "Legal entity",
+            OrgStructureNode.node_type.in_(["Legal entity", "Parent company"]),
             OrgStructureNode.is_active.is_(True),
         ).order_by(OrgStructureNode.name)
+    )).scalars().all()
+    existing_roles = (await db.execute(
+        select(ApprovalRole).where(
+            ApprovalRole.tenant_id == tenant_id,
+            ApprovalRole.is_active.is_(True),
+        ).order_by(ApprovalRole.display_order, ApprovalRole.name)
     )).scalars().all()
 
     cc_codes = [n.cost_center_code or n.code for n in cc_nodes if (n.cost_center_code or n.code)]
     entity_codes = [n.entity_code or n.code for n in entity_nodes if (n.entity_code or n.code)]
+
+    # Build reverse lookups for pre-populating existing roles
+    cc_id_to_code: dict = {n.id: (n.cost_center_code or n.code) for n in cc_nodes}
+    ent_id_to_code: dict = {n.id: (n.entity_code or n.code) for n in entity_nodes}
+    role_id_to_name: dict = {r.id: r.name for r in existing_roles}
+
+    def _cap_label(max_occ: int | None) -> str:
+        if max_occ is None: return "unlimited"
+        if max_occ == 1:    return "single"
+        return str(max_occ)
+
+    def _desig_label(d: str | None) -> str:
+        if d == "head_of_entity":     return "Head of Entity"
+        if d == "head_of_department": return "Head of Department"
+        return ""
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -582,14 +604,32 @@ async def download_roles_template(
     ws_ent.sheet_state = "hidden"
 
     # ── Headers ───────────────────────────────────────────────────────────────
-    headers = ["Role Name *", "Parent Role", "Entity Code *", "Cost Center *", "Capacity", "Designation", "Description"]
+    headers = [
+        "Role Name *",
+        "Parent Role",
+        "Entity Code *",
+        "Cost Center *",
+        "Capacity *",
+        "Designation *",
+        "Description",
+    ]
+    header_comments = [
+        "REQUIRED\nThe unique name for this role.\nExample: General Manager",
+        "OPTIONAL\nThe name of the parent role this role reports to.\nMust match an existing role name exactly.\nExample: General Manager",
+        "REQUIRED\nThe entity code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N200",
+        "REQUIRED\nThe cost center code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N22341AD",
+        "REQUIRED\nHow many people can hold this role at once.\nOptions: single | unlimited | 2 | 3 … 10\nExample: single",
+        "REQUIRED\nThe leadership designation for this role.\nOptions: Head of Entity | Head of Department | (leave blank for Regular)\nExample: Head of Entity",
+        "OPTIONAL\nA brief description of this role's responsibilities.\nExample: Oversees all finance and accounting operations",
+    ]
     header_fill = PatternFill("solid", fgColor="1D4ED8")
     header_font = Font(bold=True, color="FFFFFF", size=11)
-    for col, h in enumerate(headers, start=1):
+    for col, (h, note) in enumerate(zip(headers, header_comments), start=1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
+        cell.comment = Comment(note, "ZivaBI")
 
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 28
@@ -600,15 +640,22 @@ async def download_roles_template(
     ws.column_dimensions["G"].width = 36
     ws.freeze_panes = "A2"
 
-    # ── Sample rows ───────────────────────────────────────────────────────────
-    samples = [
-        ["General Manager", "", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "single", "Head of Entity", "Top of the org"],
-        ["Finance Director", "General Manager", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "single", "Head of Department", "Heads Finance"],
-        ["Chief Accountant", "Finance Director", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "unlimited", "", ""],
-    ]
-    for r, row in enumerate(samples, start=2):
-        for c, val in enumerate(row, start=1):
-            ws.cell(row=r, column=c, value=val)
+    # ── Pre-populate with existing tenant roles ───────────────────────────────
+    for row_idx, role in enumerate(existing_roles, start=2):
+        parent_name = role_id_to_name.get(role.parent_role_id, "") if role.parent_role_id else ""
+        entity_code = ent_id_to_code.get(role.entity_node_id, "") if role.entity_node_id else ""
+        cc_code     = cc_id_to_code.get(role.cost_center_id, "") if role.cost_center_id else ""
+        row_data = [
+            role.name,
+            parent_name,
+            entity_code,
+            cc_code,
+            _cap_label(role.max_occupants),
+            _desig_label(role.designation if hasattr(role, "designation") else None),
+            role.description or "",
+        ]
+        for col_idx, val in enumerate(row_data, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=val)
 
     # ── Data validation ───────────────────────────────────────────────────────
     max_row = 1000
