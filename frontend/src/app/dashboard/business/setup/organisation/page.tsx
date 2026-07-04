@@ -297,6 +297,7 @@ interface OrgRole {
   entity_node_id: string | null;
   entity_code: string | null;
   entity_name: string | null;
+  designation: string | null;
 }
 
 interface CostCenterOption {
@@ -466,6 +467,21 @@ function RoleChartNode({
             }}>
               <i className="ti ti-building" style={{ fontSize: 9 }} />
               {node.cost_center_name}
+            </div>
+          )}
+
+          {/* Designation badge */}
+          {node.designation && (
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              marginTop: 5, padding: "2px 8px",
+              background: node.designation === "head_of_entity" ? "#fef3c7" : "#ede9fe",
+              borderRadius: 20,
+              fontSize: 10, fontWeight: 700,
+              color: node.designation === "head_of_entity" ? "#b45309" : "#6d28d9",
+            }}>
+              <i className={`ti ti-${node.designation === "head_of_entity" ? "crown" : "award"}`} style={{ fontSize: 9 }} />
+              {node.designation === "head_of_entity" ? "Head of Entity" : "Head of Department"}
             </div>
           )}
 
@@ -827,7 +843,7 @@ function OrganisationPage() {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "" });
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "unlimited" as "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
   // Drag-and-drop state
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
@@ -919,7 +935,7 @@ function OrganisationPage() {
   const openAddRole = (parentId: string | null) => {
     setEditingRole(null);
     setRoleParentId(parentId);
-    setRoleForm({ name: "", description: "", capacity: "single", customN: "2", costCenterId: "", entityNodeId: "" });
+    setRoleForm({ name: "", description: "", capacity: "single", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
     setShowRoleModal(true);
   };
 
@@ -927,7 +943,7 @@ function OrganisationPage() {
     setEditingRole(role);
     setRoleParentId(role.parent_role_id);
     const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
-    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "" });
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "" });
     setShowRoleModal(true);
   };
 
@@ -938,9 +954,9 @@ function OrganisationPage() {
     const ccId = roleForm.costCenterId || null;
     try {
       if (editingRole) {
-        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null } });
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: roleForm.designation || null } });
       } else {
-        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null } });
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: roleForm.designation || null } });
       }
       await loadRoles();
       setShowRoleModal(false);
@@ -1534,6 +1550,31 @@ function OrganisationPage() {
                             placeholder="Max number of persons"
                           />
                         )}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">Designation <span className="text-gray-400">(optional)</span></label>
+                        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                          {([
+                            { value: "",                   label: "Regular" },
+                            { value: "head_of_department", label: "Head of Dept" },
+                            { value: "head_of_entity",     label: "Head of Entity" },
+                          ] as const).map((opt, idx) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setRoleForm(f => ({ ...f, designation: opt.value }))}
+                              className={`flex-1 px-3 py-2 font-medium transition-colors ${
+                                roleForm.designation === opt.value
+                                  ? opt.value === "head_of_entity" ? "bg-amber-500 text-white"
+                                  : opt.value === "head_of_department" ? "bg-violet-600 text-white"
+                                  : "bg-gray-500 text-white"
+                                  : "bg-white text-gray-600 hover:bg-gray-50"
+                              } ${idx > 0 ? "border-l border-gray-300" : ""}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                     <div className="flex gap-2 mt-6 justify-end">

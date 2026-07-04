@@ -438,6 +438,7 @@ async def create_approval_role(
         cost_center_id=data.cost_center_id,
         entity_node_id=data.entity_node_id,
         max_occupants=data.max_occupants,
+        designation=data.designation,
     )
     db.add(role)
     await db.commit()
@@ -486,6 +487,8 @@ async def update_approval_role(
         role.cost_center_id = data.cost_center_id  # allows clearing to None
     if "entity_node_id" in data.model_fields_set:
         role.entity_node_id = data.entity_node_id  # allows clearing to None
+    if "designation" in data.model_fields_set:
+        role.designation = data.designation
     await db.commit()
     # reload with cost_center eagerly
     role = (await db.execute(
@@ -577,7 +580,7 @@ async def download_roles_template(
     ws_ent.sheet_state = "hidden"
 
     # ── Headers ───────────────────────────────────────────────────────────────
-    headers = ["Role Name *", "Parent Role", "Entity Code *", "Cost Center *", "Capacity", "Description"]
+    headers = ["Role Name *", "Parent Role", "Entity Code *", "Cost Center *", "Capacity", "Designation", "Description"]
     header_fill = PatternFill("solid", fgColor="1D4ED8")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     for col, h in enumerate(headers, start=1):
@@ -591,14 +594,15 @@ async def download_roles_template(
     ws.column_dimensions["C"].width = 18
     ws.column_dimensions["D"].width = 22
     ws.column_dimensions["E"].width = 16
-    ws.column_dimensions["F"].width = 36
+    ws.column_dimensions["F"].width = 24
+    ws.column_dimensions["G"].width = 36
     ws.freeze_panes = "A2"
 
     # ── Sample rows ───────────────────────────────────────────────────────────
     samples = [
-        ["General Manager", "", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "single", "Top of the org"],
-        ["Finance Director", "General Manager", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "single", "Heads Finance"],
-        ["Chief Accountant", "Finance Director", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "unlimited", ""],
+        ["General Manager", "", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "single", "Head of Entity", "Top of the org"],
+        ["Finance Director", "General Manager", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "single", "Head of Department", "Heads Finance"],
+        ["Chief Accountant", "Finance Director", entity_codes[0] if entity_codes else "", cc_codes[0] if cc_codes else "", "unlimited", "", ""],
     ]
     for r, row in enumerate(samples, start=2):
         for c, val in enumerate(row, start=1):
@@ -630,6 +634,17 @@ async def download_roles_template(
         )
         ws.add_data_validation(dv_cc)
         dv_cc.sqref = f"D2:D{max_row}"
+
+    dv_desig = DataValidation(
+        type="list",
+        formula1='"Head of Entity,Head of Department,"',
+        allow_blank=True,
+        showErrorMessage=True,
+        error="Select: Head of Entity, Head of Department, or leave blank.",
+        errorTitle="Invalid Designation",
+    )
+    ws.add_data_validation(dv_desig)
+    dv_desig.sqref = f"F2:F{max_row}"
 
     cap_list = '"single,unlimited,2,3,4,5,6,7,8,9,10"'
     dv_cap = DataValidation(
@@ -749,6 +764,8 @@ async def bulk_upload_roles(
         cc_name = _col(row, "CostCenter", "Cost Center", "costcenter")
         entity_code_raw = _col(row, "EntityCode", "Entity Code", "entitycode")
         capacity_raw = _col(row, "Capacity", "MaxOccupants", "max_occupants")
+        _desig = _col(row, "Designation", "designation").lower().replace(" ", "_")
+        designation_raw: str | None = _desig if _desig in ("head_of_department", "head_of_entity") else None
         description = _col(row, "Description", "Desc")
 
         # Resolve cost center (by name or code)
@@ -788,6 +805,7 @@ async def bulk_upload_roles(
             existing.description = description or existing.description
             existing.cost_center_id = cc_id if cc_id is not None else existing.cost_center_id
             existing.entity_node_id = entity_node_id if entity_node_id is not None else existing.entity_node_id
+            existing.designation = designation_raw
             existing.max_occupants = max_occupants
             upserted.append((role_name, existing))
             result.updated += 1
@@ -799,6 +817,7 @@ async def bulk_upload_roles(
                 cost_center_id=cc_id,
                 entity_node_id=entity_node_id,
                 max_occupants=max_occupants,
+                designation=designation_raw,
                 display_order=0,
             )
             db.add(new_role)

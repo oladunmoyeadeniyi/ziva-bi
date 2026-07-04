@@ -26,6 +26,7 @@ class ApprovalRoleCreate(BaseModel):
     cost_center_id: uuid.UUID | None = None
     entity_node_id: uuid.UUID | None = None
     max_occupants: int | None = None  # None=unlimited, 1=solo, N=capped
+    designation: str | None = None  # head_of_department | head_of_entity | None
 
 
 class ApprovalRoleUpdate(BaseModel):
@@ -38,6 +39,7 @@ class ApprovalRoleUpdate(BaseModel):
     cost_center_id: uuid.UUID | None = None
     entity_node_id: uuid.UUID | None = None
     max_occupants: int | None = None
+    designation: str | None = None
 
 
 class ApprovalRoleResponse(BaseModel):
@@ -54,6 +56,7 @@ class ApprovalRoleResponse(BaseModel):
     entity_code: str | None = None
     entity_name: str | None = None
     max_occupants: int | None = None
+    designation: str | None = None
 
     @classmethod
     def from_orm(cls, r: object) -> "ApprovalRoleResponse":
@@ -75,6 +78,7 @@ class ApprovalRoleResponse(BaseModel):
             entity_code=r.entity_node.entity_code if (hasattr(r, "entity_node") and r.entity_node) else None,
             entity_name=r.entity_node.name if (hasattr(r, "entity_node") and r.entity_node) else None,
             max_occupants=r.max_occupants,
+            designation=r.designation if hasattr(r, "designation") else None,
         )
 
 

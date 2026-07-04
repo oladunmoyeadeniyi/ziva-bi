@@ -144,6 +144,9 @@ class ApprovalRole(Base):
     max_occupants: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, comment="None=unlimited; 1=solo; N=capped"
     )
+    designation: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, comment="NULL=regular; head_of_department; head_of_entity"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
