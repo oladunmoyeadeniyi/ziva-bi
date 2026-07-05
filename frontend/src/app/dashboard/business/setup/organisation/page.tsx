@@ -313,6 +313,8 @@ interface OrgRole {
   area: string | null;
   sub_area: string | null;
   employment_type: string | null;
+  permission_tier: string | null;
+  occupants: { id: string; full_name: string; initials: string; employee_code: string | null }[];
 }
 
 interface CostCenterOption {
@@ -517,6 +519,30 @@ function RoleChartNode({
             border: `1px ${borderStyle} ${borderColor}`,
           }}>
             {emp === "contract" ? "Contract" : "Outsourced"}
+          </div>
+        )}
+
+        {/* Occupant avatars */}
+        {node.occupants && node.occupants.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, justifyContent: "center", marginTop: 6 }}>
+            {node.occupants.slice(0, 5).map(occ => (
+              <div key={occ.id} title={occ.full_name}
+                style={{
+                  width: 22, height: 22, borderRadius: "50%",
+                  background: "#1d4ed8", color: "#fff",
+                  fontSize: 8, fontWeight: 700, display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                  border: "1.5px solid #fff", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                  flexShrink: 0, cursor: "default",
+                }}>
+                {occ.initials}
+              </div>
+            ))}
+            {node.occupants.length > 5 && (
+              <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#94a3b8", color: "#fff", fontSize: 8, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #fff", boxShadow: "0 1px 3px rgba(0,0,0,0.15)", flexShrink: 0 }}>
+                +{node.occupants.length - 5}
+              </div>
+            )}
           </div>
         )}
 

@@ -158,6 +158,10 @@ class ApprovalRole(Base):
         String(20), nullable=True, default="permanent",
         comment="permanent (default) | contract | outsourced"
     )
+    permission_tier: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True,
+        comment="NULL=no special tier; power_admin; functional_admin — every occupant inherits this tier (union rule)",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -398,9 +398,11 @@ async def list_approval_roles(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[ApprovalRoleResponse]:
-    """Return all approver roles for the current tenant, ordered by display_order."""
+    """Return all approver roles for the current tenant with occupant employees."""
     if not current_user.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant context required.")
+    from app.models.master_data import Employee
+    from app.schemas.approvals import RoleOccupant
     rows = (await db.execute(
         select(ApprovalRole)
         .options(selectinload(ApprovalRole.cost_center), selectinload(ApprovalRole.entity_node))
@@ -408,7 +410,33 @@ async def list_approval_roles(
         .order_by(ApprovalRole.display_order, ApprovalRole.name)
     )).scalars().all()
 
-    return [ApprovalRoleResponse.from_orm(r) for r in rows]
+    # Fetch all employees for this tenant that have an approval_role_id
+    role_ids = [r.id for r in rows]
+    occupant_rows = (await db.execute(
+        select(Employee).where(
+            Employee.tenant_id == current_user.tenant_id,
+            Employee.approval_role_id.in_(role_ids),
+            Employee.is_active.is_(True),
+        )
+    )).scalars().all()
+
+    # Group occupants by role_id
+    from collections import defaultdict
+    occ_by_role: dict = defaultdict(list)
+    for emp in occupant_rows:
+        full_name = f"{emp.first_name} {emp.last_name}".strip()
+        parts = full_name.split()
+        initials = "".join(p[0].upper() for p in parts if p)[:2]
+        occ_by_role[str(emp.approval_role_id)].append(
+            RoleOccupant(
+                id=str(emp.id),
+                full_name=full_name,
+                initials=initials,
+                employee_code=emp.employee_code,
+            )
+        )
+
+    return [ApprovalRoleResponse.from_orm(r, occ_by_role.get(str(r.id), [])) for r in rows]
 
 
 @router.post("/roles", response_model=ApprovalRoleResponse, status_code=201)
@@ -547,6 +575,43 @@ async def delete_approval_role(
     await db.delete(role)
     await db.commit()
 
+
+@router.patch("/roles/{role_id}/permission-tier", response_model=ApprovalRoleResponse)
+async def set_role_permission_tier(
+    role_id: uuid.UUID,
+    body: dict,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalRoleResponse:
+    """
+    Set or clear the permission_tier on an org role.
+
+    Body: { "permission_tier": "power_admin" | "functional_admin" | null }
+
+    Every employee who holds this role will inherit the tier at their next login
+    (union with any directly-assigned tier on their UserTenant record).
+    """
+    block_if_readonly_impersonation(current_user)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required.")
+    role = (await db.execute(
+        select(ApprovalRole)
+        .options(selectinload(ApprovalRole.cost_center), selectinload(ApprovalRole.entity_node))
+        .where(
+            ApprovalRole.id == role_id,
+            ApprovalRole.tenant_id == current_user.tenant_id,
+        )
+    )).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found.")
+
+    tier = body.get("permission_tier")
+    if tier not in (None, "power_admin", "functional_admin"):
+        raise HTTPException(status_code=422, detail="permission_tier must be 'power_admin', 'functional_admin', or null.")
+    role.permission_tier = tier
+    await db.commit()
+    await db.refresh(role)
+    return ApprovalRoleResponse.from_orm(role)
 
 
 @router.get("/roles/template")

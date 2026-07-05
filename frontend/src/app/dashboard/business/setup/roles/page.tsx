@@ -18,7 +18,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 
-type Tab = "tiers" | "assignments";
+type Tab = "tiers" | "org-roles" | "assignments";
 
 interface Assignment {
   id: string;
@@ -94,6 +94,14 @@ const ACCESS_PILL: Record<string, string> = {
   none:      "bg-white     text-gray-500 border border-gray-300 hover:bg-gray-50",
 };
 
+interface OrgRole {
+  id: string;
+  name: string;
+  designation: string | null;
+  permission_tier: string | null;
+  occupants: { id: string; full_name: string; initials: string }[];
+}
+
 function TabBtn({ id, active, onClick, label }: { id: Tab; active: boolean; onClick: (t: Tab) => void; label: string }) {
   return (
     <button type="button" onClick={() => onClick(id)}
@@ -112,6 +120,32 @@ function RolesContent() {
   const isExpired = error === "Invalid or expired token.";
 
   const handleTabChange = (t: Tab) => { setTab(t); setError(null); router.replace(`?tab=${t}`, { scroll: false }); };
+
+  // Org-role permission mapping
+  const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
+  const [orgRolesLoading, setOrgRolesLoading] = useState(false);
+  const [savingOrgTier, setSavingOrgTier] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!accessToken || tab !== "org-roles") return;
+    setOrgRolesLoading(true);
+    apiFetch<OrgRole[]>("/api/approvals/roles", { token: accessToken })
+      .then(setOrgRoles)
+      .catch((e) => setError(e.message))
+      .finally(() => setOrgRolesLoading(false));
+  }, [accessToken, tab]);
+
+  const saveOrgRoleTier = async (roleId: string, tier: string | null) => {
+    if (!accessToken) return;
+    setSavingOrgTier(roleId);
+    try {
+      await apiFetch(`/api/approvals/roles/${roleId}/permission-tier`, {
+        method: "PATCH", token: accessToken, body: { permission_tier: tier },
+      });
+      setOrgRoles(prev => prev.map(r => r.id === roleId ? { ...r, permission_tier: tier } : r));
+    } catch (e) { setError(e instanceof Error ? e.message : "Save failed"); }
+    finally { setSavingOrgTier(null); }
+  };
 
   // Assignments
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -335,6 +369,7 @@ function RolesContent() {
 
       <div className="flex border-b border-gray-200 mb-6 gap-1">
         <TabBtn id="tiers"       active={tab === "tiers"}       onClick={handleTabChange} label="Role tiers" />
+        <TabBtn id="org-roles"   active={tab === "org-roles"}   onClick={handleTabChange} label="Org role mapping" />
         <TabBtn id="assignments" active={tab === "assignments"} onClick={handleTabChange} label="User assignments" />
       </div>
 
@@ -390,6 +425,108 @@ function RolesContent() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── Org role permission mapping ── */}
+      {tab === "org-roles" && !isExpired && (
+        <div className="space-y-4">
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+            Assign a permission tier to an org chart role. Every employee holding that role will automatically
+            inherit the tier at their next login. This is the recommended way to manage permissions in large orgs —
+            role changes propagate instantly without updating individual users.
+          </div>
+
+          {orgRolesLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+          ) : orgRoles.length === 0 ? (
+            <div className="text-center py-12 text-sm text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
+              <i className="ti ti-sitemap block mb-2" style={{ fontSize: 36, color: "#d1d5db" }} />
+              <p className="font-semibold text-gray-600 mb-1">No org roles defined yet</p>
+              <p className="text-xs">Go to Organisation → Structure → Chart to build your role hierarchy first.</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden border border-gray-200 rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Org role</th>
+                    <th className="px-4 py-3 text-left">Current occupants</th>
+                    <th className="px-4 py-3 text-left">Permission tier</th>
+                    <th className="px-4 py-3 text-left w-40">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {orgRoles.map(role => (
+                    <tr key={role.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-900">{role.name}</p>
+                        {role.designation && (
+                          <p className="text-xs text-gray-400 mt-0.5 uppercase tracking-wide">
+                            {role.designation.replace(/_/g, " ")}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {role.occupants.length === 0 ? (
+                          <span className="text-xs text-gray-400 italic">No occupants</span>
+                        ) : (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {role.occupants.slice(0, 4).map(occ => (
+                              <span key={occ.id} title={occ.full_name}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700 border border-gray-200">
+                                <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[8px] font-bold flex items-center justify-center flex-shrink-0">
+                                  {occ.initials}
+                                </span>
+                                {occ.full_name.split(" ")[0]}
+                              </span>
+                            ))}
+                            {role.occupants.length > 4 && (
+                              <span className="text-xs text-gray-400">+{role.occupants.length - 4} more</span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {role.permission_tier ? (
+                          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE[role.permission_tier] ?? ""}`}>
+                            {role.permission_tier === "power_admin" ? "Tenant Power Admin" : "Functional Admin"}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-400 italic">No tier mapped</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          {(["power_admin", "functional_admin"] as const).map(tier => (
+                            <button key={tier} type="button"
+                              disabled={savingOrgTier === role.id}
+                              onClick={() => saveOrgRoleTier(role.id, role.permission_tier === tier ? null : tier)}
+                              className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                role.permission_tier === tier
+                                  ? tier === "power_admin"
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "bg-green-600 text-white border-green-600"
+                                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+                              } disabled:opacity-50`}>
+                              {tier === "power_admin" ? "PA" : "FA"}
+                            </button>
+                          ))}
+                          {role.permission_tier && (
+                            <button type="button" disabled={savingOrgTier === role.id}
+                              onClick={() => saveOrgRoleTier(role.id, null)}
+                              className="px-2 py-1 text-xs rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50">
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

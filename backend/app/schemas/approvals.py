@@ -48,6 +48,14 @@ class ApprovalRoleUpdate(BaseModel):
     employment_type: str | None = None
 
 
+class RoleOccupant(BaseModel):
+    """Slim employee record attached to a role response."""
+    id: str
+    full_name: str
+    initials: str
+    employee_code: str | None = None
+
+
 class ApprovalRoleResponse(BaseModel):
     """Approver role as returned from the API."""
     id: str
@@ -66,9 +74,11 @@ class ApprovalRoleResponse(BaseModel):
     area: str | None = None
     sub_area: str | None = None
     employment_type: str | None = None
+    permission_tier: str | None = None
+    occupants: list[RoleOccupant] = []
 
     @classmethod
-    def from_orm(cls, r: object) -> "ApprovalRoleResponse":
+    def from_orm(cls, r: object, occupants: list[RoleOccupant] | None = None) -> "ApprovalRoleResponse":
         from app.models.approvals import ApprovalRole
         assert isinstance(r, ApprovalRole)
         cc_name = None
@@ -91,6 +101,8 @@ class ApprovalRoleResponse(BaseModel):
             area=r.area if hasattr(r, "area") else None,
             sub_area=r.sub_area if hasattr(r, "sub_area") else None,
             employment_type=r.employment_type if hasattr(r, "employment_type") else "permanent",
+            permission_tier=r.permission_tier if hasattr(r, "permission_tier") else None,
+            occupants=occupants or [],
         )
 
 

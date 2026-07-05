@@ -132,8 +132,19 @@ def _build_access_token(
     is_tenant_admin: bool = False,
     has_non_admin_role: bool = False,
     environment: str = "live",
+    org_role_tier: str | None = None,
 ) -> str:
-    """Assemble the JWT payload and sign it."""
+    """Assemble the JWT payload and sign it.
+
+    effective_tier = union(direct role_tier on UserTenant, org_role_tier from ApprovalRole.permission_tier).
+    Union = most permissive: power_admin > functional_admin > None.
+    """
+    direct_tier = getattr(user_tenant, "role_tier", None)
+    tier_rank = {"power_admin": 2, "functional_admin": 1}
+    effective_tier = max(
+        (direct_tier, org_role_tier),
+        key=lambda t: tier_rank.get(t or "", 0),
+    )
     return create_access_token({
         "sub": str(user.id),
         "user_tenant_id": str(user_tenant.id),
@@ -143,8 +154,8 @@ def _build_access_token(
         "is_super_admin": user.is_super_admin,
         "is_tenant_admin": is_tenant_admin,
         "has_non_admin_role": has_non_admin_role,
-        # M8.2: role tier for implementation portal
-        "role_tier": getattr(user_tenant, "role_tier", None),
+        # Effective tier = union of direct assignment and org-role inheritance
+        "role_tier": effective_tier,
         # M9.0: active tenant environment
         "environment": environment,
     })
@@ -185,6 +196,49 @@ async def _create_session_and_tokens(
     )
     db.add(refresh)
     return session, raw_token, token_hash
+
+
+async def _get_org_role_tier(user_id: uuid.UUID, tenant_id: uuid.UUID | None, db: AsyncSession) -> str | None:
+    """
+    Return the most-permissive permission_tier from all org roles the user's
+    employee record(s) are linked to within this tenant.
+
+    This implements the union (most-permissive) rule for role-based permission inheritance.
+    Returns None if the user has no employee record or their roles have no permission_tier set.
+    """
+    if not tenant_id:
+        return None
+    from app.models.master_data import Employee
+    from app.models.approvals import ApprovalRole as AR
+    # Fetch the user's email so we can find their employee record(s)
+    user_res = await db.execute(select(User).where(User.id == user_id))
+    user_obj = user_res.scalar_one_or_none()
+    if not user_obj or not user_obj.email:
+        return None
+    emp_res = await db.execute(
+        select(Employee).where(
+            Employee.tenant_id == tenant_id,
+            Employee.email == user_obj.email,
+            Employee.approval_role_id.is_not(None),
+        )
+    )
+    employees = emp_res.scalars().all()
+    if not employees:
+        return None
+    role_ids = [e.approval_role_id for e in employees if e.approval_role_id]
+    if not role_ids:
+        return None
+    role_res = await db.execute(
+        select(AR.permission_tier).where(
+            AR.id.in_(role_ids),
+            AR.permission_tier.is_not(None),
+        )
+    )
+    tiers = [t for (t,) in role_res.all() if t]
+    if not tiers:
+        return None
+    tier_rank = {"power_admin": 2, "functional_admin": 1}
+    return max(tiers, key=lambda t: tier_rank.get(t, 0))
 
 
 async def _log_event(
@@ -324,6 +378,7 @@ async def signup(
         is_tenant_admin=admin_flag,
         has_non_admin_role=False,
         environment=getattr(tenant, "environment", "live") if tenant else "live",
+        # signup: no employee record yet, org_role_tier is always None
     )
 
     # ── 7. Audit log ──────────────────────────────────────────────────────────
@@ -455,11 +510,14 @@ async def login(
                 detail="This account is suspended. Contact support.",
             )
         login_env = getattr(_t, "environment", "live") if _t else "live"
+    # Org-role permission inheritance: look up permission_tier from the user's approval role
+    org_tier = await _get_org_role_tier(user.id, user_tenant.tenant_id, db)
     access_token = _build_access_token(
         user, user_tenant, session,
         is_tenant_admin=admin_flag,
         has_non_admin_role=non_admin_flag,
         environment=login_env,
+        org_role_tier=org_tier,
     )
 
     await _log_event("login.success", db, request, user=user, tenant_id=user_tenant.tenant_id)
@@ -571,11 +629,13 @@ async def refresh_token(
                 detail="This account is suspended. Contact support.",
             )
         refresh_env = getattr(_rt, "environment", "live") if _rt else "live"
+    org_tier_refresh = await _get_org_role_tier(user.id, user_tenant.tenant_id, db)
     access_token = _build_access_token(
         user, user_tenant, session,
         is_tenant_admin=admin_flag,
         has_non_admin_role=non_admin_flag,
         environment=refresh_env,
+        org_role_tier=org_tier_refresh,
     )
     await _log_event("token.refreshed", db, request, user=user, tenant_id=user_tenant.tenant_id)
 
@@ -698,55 +758,4 @@ async def switch_environment(
     # ── M9.1: block switch into a suspended tenant ────────────────────────────
     if getattr(target_tenant, "lifecycle_status", None) == "suspended":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="The target environment's tenant is suspended. Contact support.",
-        )
-
-    # ── Verify caller has access to the target tenant ─────────────────────────
-    ut_res = await db.execute(
-        select(UserTenant).where(
-            UserTenant.user_id == current_user.user_id,
-            UserTenant.tenant_id == target_tenant.id,
-            UserTenant.is_active.is_(True),
-        )
-    )
-    target_ut: UserTenant | None = ut_res.scalar_one_or_none()
-    if not target_ut:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to the target environment.",
-        )
-
-    # ── Load the user record ──────────────────────────────────────────────────
-    user_res = await db.execute(select(User).where(User.id == current_user.user_id))
-    user: User = user_res.scalar_one()
-
-    # ── Create a fresh session + refresh token for the target tenant ──────────
-    session, raw_token, _ = await _create_session_and_tokens(target_ut, db, request)
-
-    admin_flag = await _is_tenant_admin(target_ut.id, db)
-    non_admin_flag = await _has_non_admin_roles(target_ut.id, db)
-    access_token = _build_access_token(
-        user, target_ut, session,
-        is_tenant_admin=admin_flag,
-        has_non_admin_role=non_admin_flag,
-        environment=target_tenant.environment,
-    )
-
-    await _log_event(
-        "environment.switched",
-        db, request, user=user,
-        tenant_id=target_tenant.id,
-        metadata={"from": current_env, "to": data.target},
-    )
-
-    return AuthResponse(
-        access_token=access_token,
-        refresh_token=raw_token,
-        user=UserResponse.from_orm_pair(
-            user, target_tenant.id,
-            is_tenant_admin=admin_flag,
-            has_non_admin_role=non_admin_flag,
-            role_tier=getattr(target_ut, "role_tier", None),
-        ),
-    )
+            status_c

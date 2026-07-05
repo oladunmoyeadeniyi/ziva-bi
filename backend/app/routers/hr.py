@@ -233,6 +233,13 @@ async def download_employee_template(
     data_start_fill = PatternFill("solid", fgColor="EFF6FF")  # very light blue data-start hint
     hdr_font = Font(bold=True, size=10)
 
+    # Load org roles for template dropdown
+    from app.models.approvals import ApprovalRole as AR
+    role_names_q = await db.execute(
+        select(AR.name).where(AR.tenant_id == tenant_id, AR.is_active.is_(True)).order_by(AR.display_order, AR.name)
+    )
+    role_names_for_template = [n for (n,) in role_names_q.all()]
+
     headers = [
         ("First Name*", True), ("Last Name*", True), ("Email*", True),
         ("Other Name", False), ("Preferred Name", False),
@@ -240,6 +247,7 @@ async def download_employee_template(
         ("Cost Center Code", False), ("Line Manager Email", False),
         ("Resumption Date (dd/mm/yyyy)", False),
         ("Head of Cost Center (Y/N)", False),
+        ("Org Role", False),
     ]
     # Examples now go in cell comments on header cells, not in a data row
     header_examples = [
@@ -254,6 +262,7 @@ async def download_employee_template(
         "e.g. manager@company.com\nMust match an existing employee email.",
         "e.g. 01/01/2024 (dd/mm/yyyy)",
         "Enter Y if this employee is the head of their cost center.\nLeave blank if not.",
+        f"Select the employee\'s org chart role.\ne.g. {role_names_for_template[0] if role_names_for_template else 'Finance Manager'}",
     ]
 
     # Row 1: headers with cell comments (no inline instruction/example rows per format standard)
@@ -309,6 +318,17 @@ async def download_employee_template(
             )
             ws.add_data_validation(dv_cc)
             dv_cc.sqref = "H2:H10002"
+
+    # Org Role column (L = col 12): dropdown from role names
+    if role_names_for_template:
+        role_formula = '"' + ",".join(role_names_for_template[:50]) + '"'  # DV max ~255 chars
+        from openpyxl.worksheet.datavalidation import DataValidation as DV2
+        role_dv = DV2(
+            type="list", formula1=role_formula,
+            allow_blank=True, showDropDown=False,
+            sqref=f"L2:L5000",
+        )
+        ws.add_data_validation(role_dv)
 
     # Head of Cost Center column (K = col 11): Y or blank
     dv_head = DataValidation(
@@ -741,7 +761,8 @@ async def upload_employees(
     cc_col = col("cost center code")
     mgr_col = col("line manager email")
     res_col = col("resumption date (dd/mm/yyyy)") or col("resumption date")
-    hoc_col = col("head of cost center (y/n)") or col("head of cost center")  # new column
+    hoc_col = col("head of cost center (y/n)") or col("head of cost center")
+    org_role_col = col("org role")
 
     if fn_col is None or ln_col is None or em_col is None:
         raise HTTPException(
@@ -752,6 +773,13 @@ async def upload_employees(
     # Load cost center nodes from org_structure (single source of truth).
     cc_result = await db.execute(_cc_nodes_query(tenant_id))
     cc_by_code = {_cc_node_code(n).lower(): n for n in cc_result.scalars().all() if _cc_node_code(n)}
+
+    # Load org roles for this tenant (name lookup, case-insensitive)
+    from app.models.approvals import ApprovalRole as AR
+    ar_result = await db.execute(
+        select(AR).where(AR.tenant_id == tenant_id, AR.is_active.is_(True))
+    )
+    roles_by_name: dict[str, AR] = {r.name.lower().strip(): r for r in ar_result.scalars().all()}
 
     # Fetch registration date floor for resumption date validation.
     from app.models.setup import TenantOrgConfig
@@ -801,6 +829,7 @@ async def upload_employees(
         cc_code = get(cc_col)
         mgr_email = get(mgr_col)
         res_str = get(res_col)
+        org_role_name = get(org_role_col)
 
         cost_center_id = None
         if cc_code:
@@ -848,6 +877,15 @@ async def upload_employees(
             )
         )
         emp_obj = existing_result.scalar_one_or_none()
+        # Resolve org role
+        org_role_id = None
+        if org_role_name:
+            matched_role = roles_by_name.get(org_role_name.lower().strip())
+            if matched_role:
+                org_role_id = matched_role.id
+            else:
+                errors.append({"row": i, "reason": f"Org Role '{org_role_name}' not found. Check spelling or create the role first."})
+
         if emp_obj:
             emp_obj.first_name = first_name
             emp_obj.last_name = last_name
@@ -858,6 +896,10 @@ async def upload_employees(
                 emp_obj.cost_center_id = cost_center_id
             if resumption_date:
                 emp_obj.resumption_date = resumption_date
+            if org_role_id is not None:
+                emp_obj.approval_role_id = org_role_id
+            elif org_role_name == "":
+                pass  # blank = leave existing role unchanged
             updated += 1
         else:
             auto_generated = False
@@ -876,6 +918,7 @@ async def upload_employees(
                 employee_code_auto_generated=auto_generated,
                 cost_center_id=cost_center_id,
                 resumption_date=resumption_date,
+                approval_role_id=org_role_id,
             )
             db.add(emp_obj)
             imported += 1
