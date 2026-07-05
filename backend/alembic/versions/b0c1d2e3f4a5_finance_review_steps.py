@@ -1,7 +1,7 @@
 """finance_review_steps table
 
-Revision ID: a7b8c9d0e1f2
-Revises: z6a7b8c9d0e1
+Revision ID: b0c1d2e3f4a5
+Revises: 5d5e730f42ac
 Create Date: 2026-07-05
 
 Adds the finance_review_steps table which replaces the legacy
@@ -18,8 +18,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "a7b8c9d0e1f2"
-down_revision = "z6a7b8c9d0e1"
+revision = "b0c1d2e3f4a5"
+down_revision = "5d5e730f42ac"
 branch_labels = None
 depends_on = None
 
