@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-06-30 (UI Polish Phase 2 close-out — see §5, §9, §10)
+> Last updated: 2026-06-30 (M9.3b User Impersonation close-out — see §5, §9, §10)
 
 ---
 
@@ -293,6 +293,31 @@ Brief: `docs/BRIEF_ui_polish_phase2.md`. Closes the remaining five audit finding
 
 ---
 
+### M9.3b — User Impersonation (committed `1a60a1c`, 2026-06-30)
+
+Brief: `docs/BRIEF_impersonation.md` (spec: `docs/IMPERSONATION_DESIGN.md`). Extends the existing M9.3a tenant context-switch ("Enter tenant") with a deeper, user-identity-level impersonation layer. Design doc distinction: M9.3a keeps `sub = SA's own user_id`; M9.3b replaces `sub` with the **target user's** user_id so the backend sees exactly that user's permissions for every request.
+
+**Backend (15 files, 655 insertions):**
+- New `impersonation_sessions` table (`migration 5d5e730f42ac`) — append-only audit log with `impersonator_id`, `impersonator_role`, `target_user_id`, `target_tenant_id`, `environment`, `entry_point`, `started_at`, `ended_at`. FK indexes on all three ID columns.
+- Two new JWT claims: `is_user_impersonation: bool`, `impersonation_session_id: UUID | None`. Decoded into `CurrentUser` dataclass.
+- `POST /api/platform/tenants/{tenant_id}/users/{user_id}/impersonate` — guards (SA only, target must be active on tenant), derives target user's roles, creates `ImpersonationSession` record, mints token with target's full identity, logs `"platform.user.impersonation.started"`.
+- `POST /api/platform/impersonation/{session_id}/end` — sets `ended_at`, logs `"platform.user.impersonation.ended"`. Called with the original SA token (restored by frontend before the call).
+- `is_restricted_impersonation(current_user, settings)` helper — returns True for user-level impersonation + live environment + non-owner impersonator. Hook for M15 sensitive field masking; no actual masking yet (payroll/HR unbuilt).
+- `OWNER_USER_ID` env var in `config.py` + `.env.example` — when set, this SA's live impersonation sessions are unrestricted (no masking).
+- `EmployeeListItem.user_id: str | None` added to HR schema; `list_employees` now does a batch email→user_id lookup against the `users` table to populate it (None when employee has no portal account).
+
+**Frontend:**
+- `ImpersonationState.mode` extended: `"implementation" | "support" | "user"`. Added `sessionId` and `targetUser` fields (only set when `mode === "user"`).
+- `startUserImpersonation(targetUserId, entryPoint, tenantContext?)` + `exitUserImpersonation()` in `AuthContext`. Original SA token stored in `_originalSAToken` state; restored on exit. `exitUserImpersonation` calls the backend end-session endpoint (best-effort — non-fatal if it fails).
+- New `ImpersonationUserBanner` component (`frontend/src/components/ImpersonationUserBanner.tsx`) — indigo styling (distinct from existing amber/blue tenant banner), non-dismissable, shows "You are viewing as [Full Name] — [Role]" + Exit button. Stacks below the tenant-context banner when both are active.
+- `hideWorkspace = !!impersonation && impersonation.mode !== "user"` — WORKSPACE + ACCOUNT sidebar groups hidden in `"implementation"`/`"support"` mode (SA doing admin work, not acting as a user), visible in `"user"` mode (SA sees exactly what the target user sees). Fixes the sidebar bug visible in the screenshot.
+- Entry point 1: tenant detail page (`/platform/tenants/[id]`) → user list → indigo "Impersonate" button per active-user row. Calls `startUserImpersonation(userId, "user_list", { tenantId, tenantName, environment })` then navigates to `/dashboard/business`.
+- Entry point 2: employees page (`/settings/employees`) → list → indigo "Impersonate" button per row where `emp.user_id` is set (employee has portal account). Calls `startUserImpersonation(emp.user_id, "employee_list")`.
+
+**Independently verified 2026-06-30:** all 15 files in scope, none outside. JWT fields confirmed in `security.py` + `CurrentUser`. Both endpoints confirmed in `platform.py`. Migration creates `impersonation_sessions` with three FK indexes; downgrade drops them. `hideWorkspace` condition confirmed wired to both sidebar groups. Both entry points confirmed. `is_restricted_impersonation` at `middleware/auth.py:79`. `tsc --noEmit` + `ruff check` clean.
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -372,6 +397,7 @@ Architectural invariants that are durable decisions (the WHY):
 3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
 4. ~~UI Polish Milestone~~ — **Fully shipped 2026-06-30.** Phase 1 (commit `0d55ea8`, findings A/B/C) and Phase 2 (commit `300b22d`, findings D–H) both done and independently verified — see §5 for both entries.
 5. ~~Default-CoA feature~~ — **Shipped 2026-06-30, commit `7965f33`** — see §5 "Default-CoA Templates." Core DB-level facts verified; live endpoint/UI smoke test still outstanding (not blocking, but do it before treating this as fully closed).
+6. ~~M9.3b — User Impersonation~~ — **Shipped 2026-06-30, commit `1a60a1c`** — see §5 "M9.3b User Impersonation."
 
 ### Next feature work
 6. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.

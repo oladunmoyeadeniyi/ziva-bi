@@ -27,6 +27,9 @@ class ApprovalRoleCreate(BaseModel):
     entity_node_id: uuid.UUID | None = None
     max_occupants: int | None = None  # None=unlimited, 1=solo, N=capped
     designation: str | None = None  # head_of_department | head_of_entity | None
+    area: str | None = None  # free-text geographic area / location (= parent's territory)
+    sub_area: str | None = None  # granular sub-territory (e.g. Lagos Mainland within Lagos Region)
+    employment_type: str | None = "permanent"  # permanent | contract | outsourced
 
 
 class ApprovalRoleUpdate(BaseModel):
@@ -40,6 +43,9 @@ class ApprovalRoleUpdate(BaseModel):
     entity_node_id: uuid.UUID | None = None
     max_occupants: int | None = None
     designation: str | None = None
+    area: str | None = None
+    sub_area: str | None = None
+    employment_type: str | None = None
 
 
 class ApprovalRoleResponse(BaseModel):
@@ -57,6 +63,9 @@ class ApprovalRoleResponse(BaseModel):
     entity_name: str | None = None
     max_occupants: int | None = None
     designation: str | None = None
+    area: str | None = None
+    sub_area: str | None = None
+    employment_type: str | None = None
 
     @classmethod
     def from_orm(cls, r: object) -> "ApprovalRoleResponse":
@@ -79,6 +88,9 @@ class ApprovalRoleResponse(BaseModel):
             entity_name=r.entity_node.name if (hasattr(r, "entity_node") and r.entity_node) else None,
             max_occupants=r.max_occupants,
             designation=r.designation if hasattr(r, "designation") else None,
+            area=r.area if hasattr(r, "area") else None,
+            sub_area=r.sub_area if hasattr(r, "sub_area") else None,
+            employment_type=r.employment_type if hasattr(r, "employment_type") else "permanent",
         )
 
 

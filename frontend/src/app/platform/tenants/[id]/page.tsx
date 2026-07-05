@@ -11,7 +11,7 @@
  * — see PromotionReviewDialog). All API errors surfaced inline.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
@@ -109,6 +109,23 @@ export default function TenantDetailPage() {
 
   // User-level impersonation (M9.3b)
   const [impersonatingUserId, setImpersonatingUserId] = useState<string | null>(null);
+
+  // User list filter/sort — persisted to localStorage
+  const lsKey = `ziva_td_users_${id}`;
+  const lsRead = (field: string, def: string) => { try { return JSON.parse(localStorage.getItem(lsKey) ?? "{}")[field] ?? def; } catch { return def; } };
+  const lsSave = (patch: Record<string, string>) => { try { const cur = JSON.parse(localStorage.getItem(lsKey) ?? "{}"); localStorage.setItem(lsKey, JSON.stringify({ ...cur, ...patch })); } catch {} };
+
+  const [userSearch, _setUserSearch] = useState(() => lsRead("search", ""));
+  const [userStatusF, _setUserStatusF] = useState<"all" | "active" | "inactive">(() => lsRead("status", "all") as "all" | "active" | "inactive");
+  const [userSortCol, _setUserSortCol] = useState<"name" | "email" | "active">(() => lsRead("sortCol", "name") as "name" | "email" | "active");
+  const [userSortDir, _setUserSortDir] = useState<"asc" | "desc">(() => lsRead("sortDir", "asc") as "asc" | "desc");
+
+  const setUserSearch   = (v: string) => { _setUserSearch(v);   lsSave({ search: v }); };
+  const setUserStatusF  = (v: "all" | "active" | "inactive") => { _setUserStatusF(v); lsSave({ status: v }); };
+  const toggleUserSort  = (col: "name" | "email" | "active") => {
+    if (userSortCol === col) { const d = userSortDir === "asc" ? "desc" : "asc"; _setUserSortDir(d); lsSave({ sortDir: d }); }
+    else { _setUserSortCol(col); _setUserSortDir("asc"); lsSave({ sortCol: col, sortDir: "asc" }); }
+  };
 
   // Test/live environment management (M9.0.1: promotion is the single mechanism
   // for both "create live" and "update live" — see PromotionReviewDialog below).
@@ -215,6 +232,23 @@ export default function TenantDetailPage() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const displayedTenantUsers = useMemo(() => {
+    if (!tenant) return [];
+    let list = tenant.users;
+    if (userSearch.trim()) {
+      const q = userSearch.toLowerCase();
+      list = list.filter(u => u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+    }
+    if (userStatusF === "active")   list = list.filter(u => u.is_active);
+    if (userStatusF === "inactive") list = list.filter(u => !u.is_active);
+    return [...list].sort((a, b) => {
+      const av = userSortCol === "name" ? a.full_name : userSortCol === "email" ? a.email : (a.is_active ? "1" : "0");
+      const bv = userSortCol === "name" ? b.full_name : userSortCol === "email" ? b.email : (b.is_active ? "1" : "0");
+      return userSortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+  }, [tenant, userSearch, userStatusF, userSortCol, userSortDir]);
+
   if (loading) {
     return (
       <div className="p-8">
@@ -263,6 +297,8 @@ export default function TenantDetailPage() {
 
   const doEnter = async (env?: "live" | "test") => {
     if (!tenant) return;
+    // Save current page so "Exit to platform" banner returns here instead of /platform root.
+    try { sessionStorage.setItem("ziva_impl_return_url", window.location.pathname); } catch {}
     setEntering(true);
     setActionMsg(null);
     try {
@@ -590,23 +626,65 @@ export default function TenantDetailPage() {
 
       {/* ── Users ────────────────────────────────────────────────────────────── */}
       <section className="border border-gray-200 rounded-xl bg-white overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Users</h2>
-          <span className="text-xs text-gray-400">{tenant.users.length} total</span>
+          <span className="text-xs text-gray-400">{displayedTenantUsers.length} of {tenant.users.length}</span>
         </div>
-        {tenant.users.length === 0 ? (
-          <p className="px-5 py-4 text-sm text-gray-400 italic">No users on this tenant.</p>
+
+        {/* Filter bar */}
+        <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-2 items-center">
+          <input
+            type="text"
+            value={userSearch}
+            onChange={e => setUserSearch(e.target.value)}
+            placeholder="Search name or email…"
+            className="flex-1 min-w-40 px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden text-xs">
+            {(["all", "active", "inactive"] as const).map((v, i) => (
+              <button key={v} type="button" onClick={() => setUserStatusF(v)}
+                className={`px-3 py-1.5 font-medium transition-colors ${userStatusF === v ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"} ${i > 0 ? "border-l border-gray-300" : ""}`}>
+                {v === "all" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}
+              </button>
+            ))}
+          </div>
+          {(userSearch || userStatusF !== "all") && (
+            <button type="button" onClick={() => { setUserSearch(""); setUserStatusF("all"); }}
+              className="px-2 py-1.5 text-xs text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">Clear</button>
+          )}
+        </div>
+
+        {displayedTenantUsers.length === 0 ? (
+          <p className="px-5 py-4 text-sm text-gray-400 italic">No users match the current filters.</p>
         ) : (
           <table className="w-full text-xs">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                {["Name", "Email", "Role tier", "Active", ""].map((h) => (
-                  <th key={h} className="text-left py-2.5 px-4 font-medium text-gray-500">{h}</th>
+                {(
+                  [
+                    { key: "name",   label: "Name" },
+                    { key: "email",  label: "Email" },
+                    { key: null,     label: "Role tier" },
+                    { key: "active", label: "Active" },
+                    { key: null,     label: "" },
+                  ] as { key: "name" | "email" | "active" | null; label: string }[]
+                ).map(({ key, label }) => (
+                  <th key={label || "action"}
+                    onClick={key ? () => toggleUserSort(key) : undefined}
+                    className={`text-left py-2.5 px-4 font-medium text-gray-500 ${key ? "cursor-pointer select-none hover:text-gray-700" : ""}`}
+                  >
+                    {label}
+                    {key && (
+                      <span className="ml-1">
+                        {userSortCol === key ? (userSortDir === "asc" ? "↑" : "↓") : <span className="text-gray-300">↕</span>}
+                      </span>
+                    )}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {tenant.users.map((u) => (
+              {displayedTenantUsers.map((u) => (
                 <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="py-2.5 px-4 font-medium text-gray-800">{u.full_name}</td>
                   <td className="py-2.5 px-4 text-gray-500">{u.email}</td>

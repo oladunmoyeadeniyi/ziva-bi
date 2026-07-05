@@ -271,32 +271,135 @@ async def create_test_environment(
 # (status machine), not pure config, so they are also deferred.
 _DEFERRED_SECTIONS = {"chart_of_accounts", "dimensions", "periods"}
 
-@router.post("/promote", response_model=PromoteResponse, deprecated=True)
+@router.post("/promote", response_model=PromoteResponse)
 async def promote(
     data: PromoteRequest,
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PromoteResponse:
     """
-    DEPRECATED (M9.0.1) — superseded by the unified platform promotion engine.
+    Copy selected config sections from the test tenant to the live parent.
 
-    org_config / tax / fx promotion now happens automatically as part of
-    POST /api/platform/tenants/{tenant_id}/promotion/apply, which also
-    creates the live tenant on a test tenant's first promotion and handles
-    CoA / Dimensions / DimensionValues / GLDimensionRequirements /
-    AccountMappings in the same transaction (see
-    app/routers/platform.py + app/services/promotion_engine.py).
+    Caller must be a consultant on a TEST tenant. Implemented sections:
+      - org_config   — TenantOrgConfig row (all config fields, no transactional data)
+      - tax          — TenantTaxConfig row (VAT/WHT/PAYE JSONB blobs)
+      - fx           — TenantFxConfig row (currencies, FX rates, revaluation rules)
 
-    Kept as a 410 stub (not removed/404) so any client still calling this
-    route gets a clear redirect message instead of a confusing not-found.
+    Deferred (flagged, NOT implemented):
+      - chart_of_accounts — internal FK tree requires id remapping
+      - dimensions        — dimension_values → dimensions FK requires id remapping
+      - periods           — operational state machine, not pure config
     """
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail=(
-            "This endpoint is deprecated. Promotion (org_config/tax/fx, and "
-            "creation of the live tenant on first promotion) is now handled by "
-            "the platform promotion engine: POST /api/platform/tenants/{tenant_id}/"
-            "promotion/diff then POST .../promotion/apply (super-admin only)."
+    test_tenant_id = _require_consultant(current_user)
+
+    # ── Verify caller is on a test tenant ────────────────────────────────────
+    test_res = await db.execute(select(Tenant).where(Tenant.id == test_tenant_id))
+    test_tenant: Tenant | None = test_res.scalar_one_or_none()
+    if not test_tenant or getattr(test_tenant, "environment", "live") != "test":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Promote must be called while on a TEST tenant. Switch environment first.",
+        )
+    if not test_tenant.parent_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Test tenant has no live parent configured.",
+        )
+
+    live_tenant_id = test_tenant.parent_tenant_id
+
+    from app.models.setup import TenantFxConfig, TenantOrgConfig, TenantTaxConfig
+
+    promoted: list[str] = []
+    deferred: list[str] = []
+
+    for section in data.sections:
+        if section in _DEFERRED_SECTIONS:
+            deferred.append(section)
+            continue
+
+        if section == "org_config":
+            # Copy TenantOrgConfig test → live (upsert: update live row with test values)
+            test_cfg_res = await db.execute(
+                select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == test_tenant_id)
+            )
+            test_cfg = test_cfg_res.scalar_one_or_none()
+            if test_cfg:
+                live_cfg_res = await db.execute(
+                    select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == live_tenant_id)
+                )
+                live_cfg = live_cfg_res.scalar_one_or_none()
+                from app.services.tenant_clone import _ORG_COPY_FIELDS
+                if live_cfg:
+                    for f in _ORG_COPY_FIELDS:
+                        setattr(live_cfg, f, getattr(test_cfg, f))
+                else:
+                    new_cfg = TenantOrgConfig(tenant_id=live_tenant_id)
+                    for f in _ORG_COPY_FIELDS:
+                        setattr(new_cfg, f, getattr(test_cfg, f))
+                    db.add(new_cfg)
+            promoted.append("org_config")
+
+        elif section == "tax":
+            test_tax_res = await db.execute(
+                select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == test_tenant_id)
+            )
+            test_tax = test_tax_res.scalar_one_or_none()
+            if test_tax:
+                live_tax_res = await db.execute(
+                    select(TenantTaxConfig).where(TenantTaxConfig.tenant_id == live_tenant_id)
+                )
+                live_tax = live_tax_res.scalar_one_or_none()
+                _TAX_COPY_FIELDS = ["vat_config", "wht_config", "paye_config", "other_statutory"]
+                if live_tax:
+                    for f in _TAX_COPY_FIELDS:
+                        setattr(live_tax, f, getattr(test_tax, f))
+                else:
+                    new_tax = TenantTaxConfig(tenant_id=live_tenant_id)
+                    for f in _TAX_COPY_FIELDS:
+                        setattr(new_tax, f, getattr(test_tax, f))
+                    db.add(new_tax)
+            promoted.append("tax")
+
+        elif section == "fx":
+            test_fx_res = await db.execute(
+                select(TenantFxConfig).where(TenantFxConfig.tenant_id == test_tenant_id)
+            )
+            test_fx = test_fx_res.scalar_one_or_none()
+            if test_fx:
+                live_fx_res = await db.execute(
+                    select(TenantFxConfig).where(TenantFxConfig.tenant_id == live_tenant_id)
+                )
+                live_fx = live_fx_res.scalar_one_or_none()
+                # functional_currency, reporting_currency, and enabled_currencies
+                # now live on tenant_org_config — they are copied via _ORG_COPY_FIELDS.
+                _FX_COPY_FIELDS = ["fx_rates", "revaluation_rules"]
+                if live_fx:
+                    for f in _FX_COPY_FIELDS:
+                        setattr(live_fx, f, getattr(test_fx, f))
+                else:
+                    new_fx = TenantFxConfig(tenant_id=live_tenant_id)
+                    for f in _FX_COPY_FIELDS:
+                        setattr(new_fx, f, getattr(test_fx, f))
+                    db.add(new_fx)
+            promoted.append("fx")
+
+    await db.flush()
+
+    # ── Write audit log entry ─────────────────────────────────────────────────
+    db.add(AuditLog(
+        event_type="test.promoted",
+        user_id=current_user.user_id,
+        tenant_id=live_tenant_id,
+        log_metadata={"promoted": promoted, "deferred": deferred, "source_tenant": str(test_tenant_id)},
+    ))
+
+    return PromoteResponse(
+        promoted=promoted,
+        deferred=deferred,
+        message=(
+            f"Promoted: {', '.join(promoted) or 'none'}. "
+            f"Deferred (require id remapping — not yet implemented): {', '.join(deferred) or 'none'}."
         ),
     )
 
@@ -335,11 +438,7 @@ async def list_users(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[TenantUserDetail]:
-    """List all users (active and inactive) in the current tenant.
-
-    employee_code and department are read from the HR employees table (source of
-    truth), not from user profile fields, so they always reflect current HR data.
-    """
+    """List all users (active and inactive) in the current tenant."""
     tenant_id = _require_tenant_admin(current_user)
 
     result = await db.execute(
@@ -350,35 +449,15 @@ async def list_users(
     )
     rows = result.all()
 
-    # Batch-resolve employee_code and cost_center (department) from the HR table
-    # by email match. HR is the source of truth — user profile fields are secondary.
-    from app.models.master_data import Employee
-    from app.models.setup import OrgStructureNode
-    from sqlalchemy.orm import selectinload as _sl
-    emails = [user.email for user, _ in rows]
-    emp_result = await db.execute(
-        select(Employee)
-        .options(_sl(Employee.cost_center))
-        .where(
-            Employee.tenant_id == tenant_id,
-            Employee.email.in_(emails),
-        )
-    )
-    emp_by_email: dict[str, Employee] = {
-        e.email.lower(): e for e in emp_result.scalars().all()
-    }
-
     items = []
     for user, ut in rows:
         roles = await _get_user_roles(user.id, tenant_id, db)
-        emp = emp_by_email.get(user.email.lower())
         items.append(TenantUserDetail(
             id=str(user.id),
             full_name=user.full_name,
             email=user.email,
-            # Prefer HR employee record; fall back to user profile field
-            employee_code=emp.employee_code if emp else user.employee_code,
-            department=(emp.cost_center.name if emp and emp.cost_center else None) or user.department,
+            employee_code=user.employee_code,
+            department=user.department,
             job_title=user.job_title,
             phone=user.phone,
             roles=roles,
@@ -399,21 +478,12 @@ async def get_user(
     user, ut = await _get_tenant_member_or_404(user_id, tenant_id, db)
     roles = await _get_user_roles(user.id, tenant_id, db)
 
-    from app.models.master_data import Employee
-    from sqlalchemy.orm import selectinload as _sl
-    emp_res = await db.execute(
-        select(Employee)
-        .options(_sl(Employee.cost_center))
-        .where(Employee.tenant_id == tenant_id, Employee.email == user.email)
-    )
-    emp = emp_res.scalar_one_or_none()
-
     return TenantUserDetail(
         id=str(user.id),
         full_name=user.full_name,
         email=user.email,
-        employee_code=emp.employee_code if emp else user.employee_code,
-        department=(emp.cost_center.name if emp and emp.cost_center else None) or user.department,
+        employee_code=user.employee_code,
+        department=user.department,
         job_title=user.job_title,
         phone=user.phone,
         roles=roles,
@@ -539,52 +609,6 @@ async def reactivate_user(
         job_title=user.job_title, phone=user.phone,
         roles=roles, is_active=ut.is_active, created_at=ut.created_at,
     )
-
-
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_tenant_user(
-    user_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """
-    Remove a user from this tenant.
-
-    Pre-live: hard-deletes the UserTenant row. If the user has no other tenant
-    memberships, the global User row is also removed. Use this to clean up
-    generic or test accounts created before the employee auto-sync was in place.
-
-    Post-live: deactivates instead (audit safety — never hard-delete a live user).
-
-    Cannot remove yourself.
-    """
-    tenant_id = _require_tenant_admin(current_user)
-
-    if user_id == current_user.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You cannot remove your own account.",
-        )
-
-    user, ut = await _get_tenant_member_or_404(user_id, tenant_id, db)
-
-    tenant_res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    tenant_row = tenant_res.scalar_one_or_none()
-    is_live = tenant_row is not None and tenant_row.lifecycle_status == "live"
-
-    if is_live:
-        ut.is_active = False
-        await db.flush()
-    else:
-        # Hard-delete membership; cascade-remove global User if they belong nowhere else.
-        await db.delete(ut)
-        await db.flush()
-        other_result = await db.execute(
-            select(UserTenant).where(UserTenant.user_id == user.id)
-        )
-        if not other_result.scalar_one_or_none():
-            await db.delete(user)
-        await db.flush()
 
 
 # ── Invitations ───────────────────────────────────────────────────────────────

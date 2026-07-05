@@ -282,6 +282,18 @@ function TreeNode({
   );
 }
 
+// ── Role name helpers ─────────────────────────────────────────────────────────
+
+/** Convert a role title to its initials. "Finance Director" → "FD", "National On Premise Manager" → "NOPM" */
+function toInitials(name: string): string {
+  return name
+    .trim()
+    .split(/[\s\/\-_]+/)
+    .filter(Boolean)
+    .map(w => w[0].toUpperCase())
+    .join("");
+}
+
 // ── People View — role hierarchy chart ───────────────────────────────────────
 
 interface OrgRole {
@@ -298,6 +310,9 @@ interface OrgRole {
   entity_code: string | null;
   entity_name: string | null;
   designation: string | null;
+  area: string | null;
+  sub_area: string | null;
+  employment_type: string | null;
 }
 
 interface CostCenterOption {
@@ -369,6 +384,7 @@ function RoleChartNode({
   onDragEnter,
   onDragEnd,
   onDrop,
+  showFullName,
 }: {
   node: RoleTreeNode;
   onAddChild: (parentId: string) => void;
@@ -380,22 +396,31 @@ function RoleChartNode({
   onDragEnter: (id: string | null) => void;
   onDragEnd: () => void;
   onDrop: (targetId: string | null) => void;
+  showFullName: boolean;
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
   const isDragging  = draggingId === node.id;
   const isDropTarget = dropTargetId === node.id && draggingId !== node.id;
 
+  const emp = node.employment_type ?? "permanent";
+
   const boxBg = isDropTarget
     ? "#dbeafe"
     : node.designation === "head_of_entity"     ? "#dbeafe"
     : node.designation === "head_of_department" ? "#ede9fe"
+    : emp === "contract"   ? "#fffbeb"
+    : emp === "outsourced" ? "#f8fafc"
     : "#ffffff";
 
   const borderColor = isDropTarget                                      ? "#3b82f6"
     : node.designation === "head_of_entity"     ? "#3b82f6"
     : node.designation === "head_of_department" ? "#7c3aed"
+    : emp === "contract"                        ? "#d97706"
+    : emp === "outsourced"                      ? "#94a3b8"
     : "#94a3b8";
+
+  const borderStyle = emp === "contract" ? "dashed" : emp === "outsourced" ? "dotted" : "solid";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -403,6 +428,7 @@ function RoleChartNode({
       {/* ── Organogram box ── */}
       <div
         draggable
+        title={node.name}
         onDragStart={(e) => { e.stopPropagation(); onDragStart(node.id); }}
         onDragOver={(e)  => { e.preventDefault();  e.stopPropagation(); onDragEnter(node.id); }}
         onDragLeave={(e) => { e.stopPropagation(); if (dropTargetId === node.id) onDragEnter(null); }}
@@ -410,7 +436,7 @@ function RoleChartNode({
         onDragEnd={onDragEnd}
         style={{
           background: boxBg,
-          border: `1.5px solid ${borderColor}`,
+          border: `1.5px ${borderStyle} ${borderColor}`,
           borderRadius: 3,
           width: 172,
           textAlign: "center",
@@ -432,9 +458,11 @@ function RoleChartNode({
           </button>
         )}
 
-        {/* Role name */}
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#0f172a", letterSpacing: 0.4, textTransform: "uppercase", lineHeight: 1.4 }}>
-          {node.name}
+        {/* Role name — initials by default, full name when toggled */}
+        <div
+          style={{ fontSize: showFullName ? 10 : 13, fontWeight: 700, color: "#0f172a", letterSpacing: showFullName ? 0.2 : 0.8, textTransform: "uppercase", lineHeight: 1.4 }}
+        >
+          {showFullName ? node.name : toInitials(node.name)}
         </div>
 
         {/* Designation */}
@@ -451,6 +479,27 @@ function RoleChartNode({
         {node.cost_center_name && (
           <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
             {node.cost_center_name}
+          </div>
+        )}
+
+        {/* Area / sub_area */}
+        {(node.area || node.sub_area) && (
+          <div style={{ fontSize: 9, color: "#0369a1", marginTop: 2, fontStyle: "italic" }}>
+            📍 {node.area}{node.area && node.sub_area ? " › " : ""}{node.sub_area}
+          </div>
+        )}
+
+        {/* Employment type badge — only for non-permanent */}
+        {emp !== "permanent" && (
+          <div style={{
+            display: "inline-block", marginTop: 4,
+            fontSize: 8, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase",
+            padding: "1px 5px", borderRadius: 2,
+            background: emp === "contract" ? "#fef3c7" : "#f1f5f9",
+            color: emp === "contract" ? "#92400e" : "#475569",
+            border: `1px ${borderStyle} ${borderColor}`,
+          }}>
+            {emp === "contract" ? "Contract" : "Outsourced"}
           </div>
         )}
 
@@ -489,6 +538,7 @@ function RoleChartNode({
                     node={child} onAddChild={onAddChild} onDelete={onDelete} onEdit={onEdit}
                     draggingId={draggingId} dropTargetId={dropTargetId}
                     onDragStart={onDragStart} onDragEnter={onDragEnter} onDragEnd={onDragEnd} onDrop={onDrop}
+                    showFullName={showFullName}
                   />
                 </div>
               );
@@ -774,12 +824,13 @@ function OrganisationPage() {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "" as "" | "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "" as "" | "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "", area: "", sub_area: "", employment_type: "permanent" });
   // Drag-and-drop state
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
+  const [showFullNames, setShowFullNames] = useState(false); // default: show initials
 
   // Bulk upload state
   const roleUploadRef = useRef<HTMLInputElement>(null);
@@ -867,7 +918,15 @@ function OrganisationPage() {
   const openAddRole = (parentId: string | null) => {
     setEditingRole(null);
     setRoleParentId(parentId);
-    setRoleForm({ name: "", description: "", capacity: "", customN: "2", costCenterId: "", entityNodeId: "", designation: "" });
+    // Cascade area: parent's sub_area becomes this child's area.
+    // e.g. DPM has area="Lagos Region", sub_area="" → DPS inherits area="Lagos Region"
+    //      DPS has area="Lagos Region", sub_area="Lagos Mainland" → Striker inherits area="Lagos Mainland"
+    let inheritedArea = "";
+    if (parentId) {
+      const parent = orgRoles.find(r => r.id === parentId);
+      if (parent) inheritedArea = parent.sub_area || parent.area || "";
+    }
+    setRoleForm({ name: "", description: "", capacity: "", customN: "2", costCenterId: "", entityNodeId: "", designation: "", area: inheritedArea, sub_area: "", employment_type: "permanent" });
     setShowRoleModal(true);
   };
 
@@ -875,20 +934,25 @@ function OrganisationPage() {
     setEditingRole(role);
     setRoleParentId(role.parent_role_id);
     const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
-    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "regular" });
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "regular", area: role.area ?? "", sub_area: role.sub_area ?? "", employment_type: role.employment_type ?? "permanent" });
     setShowRoleModal(true);
   };
 
   const saveRole = async () => {
-    if (!roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation || !accessToken) return;
+    const needsParent = roleForm.designation !== "head_of_entity";
+    if (!roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation || !roleForm.employment_type || (needsParent && !roleParentId) || !accessToken) return;
     setSavingRole(true);
     const maxOcc = roleForm.capacity === "single" ? 1 : (roleForm.capacity === "unlimited" || roleForm.capacity === "") ? null : parseInt(roleForm.customN) || null;
     const ccId = roleForm.costCenterId || null;
+    const desig = (roleForm.designation === "regular" || !roleForm.designation) ? null : roleForm.designation;
+    const empType = roleForm.employment_type || "permanent";
+    const areaVal = roleForm.area.trim() || null;
+    const subAreaVal = roleForm.sub_area.trim() || null;
     try {
       if (editingRole) {
-        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: (roleForm.designation === "regular" || !roleForm.designation) ? null : roleForm.designation } });
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: desig, employment_type: empType, area: areaVal, sub_area: subAreaVal } });
       } else {
-        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: (roleForm.designation === "regular" || !roleForm.designation) ? null : roleForm.designation } });
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: desig, employment_type: empType, area: areaVal, sub_area: subAreaVal } });
       }
       await loadRoles();
       setShowRoleModal(false);
@@ -1244,6 +1308,12 @@ function OrganisationPage() {
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <p className="text-sm font-semibold text-gray-800">Role hierarchy</p>
                 <div className="flex items-center gap-2 flex-wrap">
+                  <button type="button" onClick={() => setShowFullNames(v => !v)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50"
+                    title={showFullNames ? "Switch to initials view" : "Switch to full name view"}>
+                    <i className="ti ti-text-size" style={{ fontSize: 13 }} />
+                    {showFullNames ? "Initials" : "Full names"}
+                  </button>
                   <button type="button" onClick={downloadRoleTemplate}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50">
                     <i className="ti ti-download" style={{ fontSize: 13 }} /> Template
@@ -1267,7 +1337,7 @@ function OrganisationPage() {
                     onClick={() => openAddRole(null)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
                   >
-                    <i className="ti ti-plus" style={{ fontSize: 14 }} /> Add top-level role
+                    <i className="ti ti-plus" style={{ fontSize: 14 }} /> {orgRoles.length === 0 ? "Add top-level role" : "Add role"}
                   </button>
                 </div>
               </div>
@@ -1352,6 +1422,7 @@ function OrganisationPage() {
                           onDragEnter={handleRoleDragEnter}
                           onDragEnd={handleRoleDragEnd}
                           onDrop={handleRoleDrop}
+                          showFullName={showFullNames}
                         />
                       ))}
                     </div>
@@ -1428,6 +1499,23 @@ function OrganisationPage() {
                           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           autoFocus
                         />
+                      </div>
+                      {/* Parent role — required unless Head of Entity */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Parent role{roleForm.designation !== "head_of_entity" && roleForm.designation ? <span className="text-red-500 ml-0.5">*</span> : null}
+                        </label>
+                        {roleParentId ? (
+                          <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-700">
+                            {orgRoles.find(r => r.id === roleParentId)?.name ?? "—"}
+                          </div>
+                        ) : (
+                          <div className={`px-3 py-2 rounded-md text-sm ${roleForm.designation && roleForm.designation !== "head_of_entity" ? "bg-red-50 border border-red-200 text-red-600" : "bg-gray-50 border border-gray-200 text-gray-400 italic"}`}>
+                            {roleForm.designation && roleForm.designation !== "head_of_entity"
+                              ? "⚠ No parent — use '+ Sub-role' on an existing node to set one"
+                              : "Top-level (no parent — only valid for Head of Entity)"}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">Description (optional)</label>
@@ -1521,13 +1609,58 @@ function OrganisationPage() {
                           ))}
                         </div>
                       </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-2">Employment Type <span className="text-red-500">*</span></label>
+                        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                          {([
+                            { value: "permanent",  label: "Permanent" },
+                            { value: "contract",   label: "Contract" },
+                            { value: "outsourced", label: "Outsourced" },
+                          ] as const).map((opt, idx) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setRoleForm(f => ({ ...f, employment_type: opt.value }))}
+                              className={`flex-1 px-3 py-2 font-medium transition-colors ${
+                                roleForm.employment_type === opt.value
+                                  ? opt.value === "contract"   ? "bg-amber-500 text-white"
+                                  : opt.value === "outsourced" ? "bg-slate-500 text-white"
+                                  : "bg-green-600 text-white"
+                                  : "bg-white text-gray-600 hover:bg-gray-50"
+                              } ${idx > 0 ? "border-l border-gray-300" : ""}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Area / Location <span className="text-xs text-gray-400 font-normal">(optional)</span></label>
+                        <input
+                          type="text"
+                          value={roleForm.area}
+                          onChange={e => setRoleForm(f => ({ ...f, area: e.target.value }))}
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="e.g. Lagos Region, On Premise, Key Accounts, Energy Drinks"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Sub Area <span className="text-xs text-gray-400 font-normal">(optional — more specific scope within Area)</span></label>
+                        <input
+                          type="text"
+                          value={roleForm.sub_area}
+                          onChange={e => setRoleForm(f => ({ ...f, sub_area: e.target.value }))}
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="e.g. Lagos Mainland, Modern Trade, SME Segment"
+                        />
+                      </div>
                     </div>
                     <div className="flex gap-2 mt-6 justify-end">
                       <button type="button" onClick={() => setShowRoleModal(false)}
                         className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
                         Cancel
                       </button>
-                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation}
+                      <button type="button" onClick={saveRole} disabled={savingRole || !roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation || !roleForm.employment_type || (roleForm.designation !== "head_of_entity" && !roleParentId)}
                         className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50">
                         {savingRole ? "Saving…" : editingRole ? "Save changes" : "Add role"}
                       </button>

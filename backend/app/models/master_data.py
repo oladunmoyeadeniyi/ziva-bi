@@ -744,4 +744,53 @@ class TenantPermissionMatrix(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    tenan
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    section: Mapped[str] = mapped_column(String(120), nullable=False)
+    role_tier: Mapped[str] = mapped_column(String(50), nullable=False)
+    access_level: Mapped[str] = mapped_column(String(50), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "section", "role_tier",
+                         name="uq_perm_matrix_tenant_section_tier"),
+    )
+
+
+class UserFunctionalScope(Base):
+    """Per-user scope for Functional Admins.
+
+    Each row grants one section to a specific user within a tenant.
+    Absence of rows means no config access. Used to tailor what each
+    functional head (e.g. HR vs. Marketing) can see in the setup portal.
+    """
+
+    __tablename__ = "user_functional_scope"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    section: Mapped[str] = mapped_column(String(120), nullable=False)
+    access_level: Mapped[str] = mapped_column(String(50), nullable=False, default="read_only")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_tenant_id", "section",
+            name="uq_user_functional_scope",
+        ),
+    )

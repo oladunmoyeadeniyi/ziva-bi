@@ -603,4 +603,56 @@ export default function ApprovalWorkflowsPage() {
                                       </label>
                                       <div className="flex items-center gap-1">
                                         <span className="text-gray-400 text-xs">N</span>
-                        
+                                        <input type="number" min="0" step="1000" value={thresh}
+                                          onChange={(e) => setThresh(e.target.value)}
+                                          placeholder="Leave blank to always require"
+                                          className="w-48 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <button type="button" onClick={() => savePolicy("expense")} disabled={savingPolicy}
+                        className="text-sm font-medium bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                        {savingPolicy ? "Saving..." : expensePolicy ? "Update policy" : "Save policy"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-800">Delete role?</p>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-600">
+                <span className="font-medium">{pendingDelete.name}</span> will be permanently removed.
+                Any policies referencing this role will be affected.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-gray-50 flex justify-end gap-2 border-t border-gray-100">
+              <button type="button" onClick={() => setPendingDelete(null)}
+                className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100">Cancel</button>
+              <button type="button" disabled={savingRole} onClick={() => deleteRole(pendingDelete)}
+                className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50">
+                {savingRole ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </PageContainer>
+  );
+}

@@ -1392,4 +1392,18 @@ async def reject_employee_onboarding(
     employee_id: uuid.UUID,
     comment: str,
     current_user: CurrentUser = Depends(require_auth),
-    db: A
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """HR rejects self-onboarding with a comment. Employee stays in pending state."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(Employee).where(Employee.id == employee_id, Employee.tenant_id == tenant_id)
+    )
+    emp = result.scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+
+    logger.info("[ONBOARDING] HR rejected onboarding for employee %s", employee_id)
+    return {"message": "Onboarding rejected.", "comment": comment}

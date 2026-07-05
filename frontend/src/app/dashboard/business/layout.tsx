@@ -266,7 +266,17 @@ export default function BusinessLayout({
       {impersonation && impersonation.mode !== "user" && (
         <ImpersonationBanner
           impersonation={impersonation}
-          onExit={() => { exitImpersonation(); router.push("/platform"); }}
+          onExit={() => {
+            let returnUrl = "/platform";
+            try {
+              const stored = sessionStorage.getItem("ziva_impl_return_url");
+              if (stored) { returnUrl = stored; sessionStorage.removeItem("ziva_impl_return_url"); }
+            } catch {}
+            exitImpersonation();
+            // Use location.replace (not router.push) so the SA guard effect
+            // that fires on impersonation clear cannot race and override the URL.
+            window.location.replace(returnUrl);
+          }}
         />
       )}
 

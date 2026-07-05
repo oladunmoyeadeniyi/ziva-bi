@@ -65,9 +65,17 @@ export default function PlatformTenantsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [search, setSearch] = useState("");
-  const [lifecycleFilter, setLifecycleFilter] = useState("");
-  const [envFilter, setEnvFilter] = useState("live");
+  // Persist filter state across navigation/refresh/login
+  const _lsT = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const _lsW = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
+
+  const [search, _setSearch] = useState(() => _lsT("zt_search", ""));
+  const [lifecycleFilter, _setLifecycle] = useState(() => _lsT("zt_lifecycle", ""));
+  const [envFilter, _setEnv] = useState(() => _lsT("zt_env", "live"));
+
+  const setSearch         = (v: string) => { _setSearch(v);   _lsW("zt_search",   v); };
+  const setLifecycleFilter= (v: string) => { _setLifecycle(v);_lsW("zt_lifecycle", v); };
+  const setEnvFilter      = (v: string) => { _setEnv(v);      _lsW("zt_env",      v); };
 
   const load = useCallback(async () => {
     if (!accessToken) return;
@@ -110,26 +118,50 @@ export default function PlatformTenantsPage() {
           onChange={(e) => setSearch(e.target.value)}
           className={inputCls + " w-56"}
         />
-        <select
-          value={lifecycleFilter}
-          onChange={(e) => setLifecycleFilter(e.target.value)}
-          className={inputCls}
-        >
-          <option value="">All lifecycle states</option>
-          <option value="trial">Trial</option>
-          <option value="in_implementation">In implementation</option>
-          <option value="live">Live</option>
-          <option value="suspended">Suspended</option>
-        </select>
-        <select
-          value={envFilter}
-          onChange={(e) => setEnvFilter(e.target.value)}
-          className={inputCls}
-        >
-          <option value="live">Live tenants</option>
-          <option value="test">Test tenants</option>
-          <option value="all">All environments</option>
-        </select>
+        {/* Lifecycle toggle buttons */}
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          {[
+            { value: "",                 label: "All" },
+            { value: "trial",            label: "Trial" },
+            { value: "in_implementation", label: "In implementation" },
+            { value: "live",             label: "Live" },
+            { value: "suspended",        label: "Suspended" },
+          ].map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setLifecycleFilter(value)}
+              className={`px-4 py-2 font-medium transition-colors ${
+                lifecycleFilter === value
+                  ? "bg-blue-600 text-white"
+                  : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${value !== "" ? "border-l border-gray-300" : ""}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {/* Environment toggle buttons */}
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          {[
+            { value: "all",  label: "All" },
+            { value: "live", label: "Live" },
+            { value: "test", label: "Test" },
+          ].map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setEnvFilter(value)}
+              className={`px-4 py-2 font-medium transition-colors ${
+                envFilter === value
+                  ? "bg-blue-600 text-white"
+                  : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${value !== "all" ? "border-l border-gray-300" : ""}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (

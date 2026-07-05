@@ -533,20 +533,41 @@ class RoleAssignmentCreate(BaseModel):
 
 
 class RoleAssignmentUpdate(BaseModel):
-    """PATCH /api/setup/roles/assignments/{id}."""
+    """PATCH /api/setup/roles/assignments/{id}. Send role_tier=null to remove the tier."""
 
-    role_tier: str
+    role_tier: Optional[str] = None
 
 
 class RoleAssignmentResponse(BaseModel):
     """Single role assignment row."""
 
     id: str
+    user_id: str           # User.id — used to match against CC head_user_id
     user_tenant_id: str
     full_name: str
     email: str
     role_tier: Optional[str]
     is_active: bool
+
+
+class FunctionalScopeItem(BaseModel):
+    """A single section grant with its access level."""
+
+    section: str
+    access_level: str  # 'full' | 'read_only' | 'none'
+
+
+class FunctionalScopeUpdate(BaseModel):
+    """PATCH /api/setup/roles/assignments/{id}/scope — replaces all scope sections."""
+
+    sections: list[FunctionalScopeItem]  # empty list = no access
+
+
+class FunctionalScopeResponse(BaseModel):
+    """GET /api/setup/roles/assignments/{id}/scope."""
+
+    user_tenant_id: str
+    sections: list[FunctionalScopeItem]  # granted sections with their individual access levels
 
 
 # ── Document Rules ────────────────────────────────────────────────────────────

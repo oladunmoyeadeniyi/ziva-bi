@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiFetch } from "@/lib/api";
 import PageHeading from "@/components/PageHeading";
 
 interface CostCenterConfig {
@@ -36,6 +37,45 @@ export default function CostCentersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Filter & sort — persisted to localStorage
+  const _cc = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const _cw = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
+
+  const [ccSearch,    _setCcSearch]    = useState(() => _cc("cc_search", ""));
+  const [headFilter,  _setHeadFilter]  = useState<"all" | "assigned" | "unassigned">(() => _cc("cc_head", "all") as "all" | "assigned" | "unassigned");
+  const [sortCol,     _setSortCol]     = useState<"code" | "name" | "head">(() => _cc("cc_sortcol", "code") as "code" | "name" | "head");
+  const [sortDir,     _setSortDir]     = useState<"asc" | "desc">(() => _cc("cc_sortdir", "asc") as "asc" | "desc");
+
+  const setCcSearch   = (v: string) => { _setCcSearch(v);   _cw("cc_search", v); };
+  const setHeadFilter = (v: "all" | "assigned" | "unassigned") => { _setHeadFilter(v); _cw("cc_head", v); };
+  const toggleSort    = (col: typeof sortCol) => {
+    if (sortCol === col) { const d = sortDir === "asc" ? "desc" : "asc"; _setSortDir(d); _cw("cc_sortdir", d); }
+    else { _setSortCol(col); _setSortDir("asc"); _cw("cc_sortcol", col); _cw("cc_sortdir", "asc"); }
+  };
+
+  const displayedCCs = useMemo(() => {
+    let list = costCenters;
+    if (ccSearch.trim()) {
+      const q = ccSearch.toLowerCase();
+      list = list.filter((cc) =>
+        cc.cost_center_code.toLowerCase().includes(q) ||
+        cc.cost_center_name.toLowerCase().includes(q) ||
+        (cc.head_employee_name ?? "").toLowerCase().includes(q) ||
+        (cc.head_employee_email ?? "").toLowerCase().includes(q)
+      );
+    }
+    if (headFilter === "assigned")   list = list.filter((cc) => !!cc.head_employee_id);
+    if (headFilter === "unassigned") list = list.filter((cc) => !cc.head_employee_id);
+    return [...list].sort((a, b) => {
+      let av = "", bv = "";
+      if (sortCol === "code") { av = a.cost_center_code; bv = b.cost_center_code; }
+      if (sortCol === "name") { av = a.cost_center_name; bv = b.cost_center_name; }
+      if (sortCol === "head") { av = a.head_employee_name ?? ""; bv = b.head_employee_name ?? ""; }
+      const cmp = av.localeCompare(bv);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [costCenters, ccSearch, headFilter, sortCol, sortDir]);
+
   // Set Head modal
   const [modalOpen, setModalOpen] = useState(false);
   const [modalCC, setModalCC] = useState<CostCenterConfig | null>(null);
@@ -46,41 +86,39 @@ export default function CostCentersPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const API = process.env.NEXT_PUBLIC_API_URL ?? "";
-
   const fetchCostCenters = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/hr/cost-centers`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setCostCenters(await res.json());
+      const data = await apiFetch<CostCenterConfig[]>("/api/hr/cost-centers", { token });
+      setCostCenters(data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load cost centers");
     } finally {
       setLoading(false);
     }
-  }, [API, token]);
+  }, [token]);
 
   useEffect(() => {
     fetchCostCenters();
   }, [fetchCostCenters]);
 
   const searchEmployees = useCallback(async (q: string) => {
-    if (!q.trim()) { setEmployees([]); return; }
+    if (!q.trim() || !token) { setEmployees([]); return; }
     setEmpLoading(true);
     try {
-      const res = await fetch(
-        `${API}/api/hr/employees?search=${encodeURIComponent(q)}&limit=20`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const data = await apiFetch<Employee[]>(
+        `/api/hr/employees?search=${encodeURIComponent(q)}&limit=20`,
+        { token }
       );
-      if (res.ok) setEmployees(await res.json());
+      setEmployees(data);
+    } catch {
+      // ignore search errors — just show no results
     } finally {
       setEmpLoading(false);
     }
-  }, [API, token]);
+  }, [token]);
 
   useEffect(() => {
     const t = setTimeout(() => searchEmployees(employeeSearch), 300);
@@ -97,19 +135,14 @@ export default function CostCentersPage() {
   }
 
   async function handleSaveHead() {
-    if (!modalCC) return;
+    if (!modalCC || !token) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const body: Record<string, string | null> = {
-        head_employee_id: selectedEmp ? selectedEmp.id : null,
-      };
-      const res = await fetch(`${API}/api/hr/cost-centers/${modalCC.cost_center_id}/head`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      await apiFetch(`/api/hr/cost-centers/${modalCC.cost_center_id}/head`, {
+        method: "PUT", token,
+        body: { head_employee_id: selectedEmp ? selectedEmp.id : null },
       });
-      if (!res.ok) throw new Error(await res.text());
       setModalOpen(false);
       fetchCostCenters();
     } catch (e: unknown) {
@@ -120,11 +153,11 @@ export default function CostCentersPage() {
   }
 
   async function handleRemoveHead(cc: CostCenterConfig) {
+    if (!token) return;
     try {
-      await fetch(`${API}/api/hr/cost-centers/${cc.cost_center_id}/head`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ head_employee_id: null }),
+      await apiFetch(`/api/hr/cost-centers/${cc.cost_center_id}/head`, {
+        method: "PUT", token,
+        body: { head_employee_id: null },
       });
       fetchCostCenters();
     } catch {}
@@ -152,18 +185,82 @@ export default function CostCentersPage() {
       )}
 
       {!loading && costCenters.length > 0 && (
+        <>
+          {/* Filter bar */}
+          <div className="flex flex-wrap gap-2 mb-4 items-center">
+            <input
+              type="text"
+              value={ccSearch}
+              onChange={(e) => setCcSearch(e.target.value)}
+              placeholder="Search code, name, or head…"
+              className="flex-1 min-w-48 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {/* Head filter toggle */}
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+              {(["all", "assigned", "unassigned"] as const).map((v, i) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setHeadFilter(v)}
+                  className={`px-3 py-2 font-medium transition-colors capitalize ${
+                    headFilter === v ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                  } ${i > 0 ? "border-l border-gray-300" : ""}`}
+                >
+                  {v === "all" ? "All" : v === "assigned" ? "Has Head" : "No Head"}
+                </button>
+              ))}
+            </div>
+            {(ccSearch || headFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => { setCcSearch(""); setHeadFilter("all"); }}
+                className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Clear
+              </button>
+            )}
+            <span className="text-xs text-gray-400 ml-auto">
+              {displayedCCs.length} of {costCenters.length}
+            </span>
+          </div>
+
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Code</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Head</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
+                {(
+                  [
+                    { key: "code", label: "Code" },
+                    { key: "name", label: "Name" },
+                    { key: "head", label: "Head" },
+                    { key: null,   label: "Actions" },
+                  ] as { key: typeof sortCol | null; label: string }[]
+                ).map(({ key, label }) => (
+                  <th
+                    key={label}
+                    onClick={key ? () => toggleSort(key) : undefined}
+                    className={`text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider ${key ? "cursor-pointer select-none hover:text-gray-700" : ""}`}
+                  >
+                    {label}
+                    {key && (
+                      <span className="ml-1">
+                        {sortCol === key
+                          ? (sortDir === "asc" ? "↑" : "↓")
+                          : <span className="text-gray-300">↕</span>}
+                      </span>
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {costCenters.map((cc) => (
+              {displayedCCs.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-10 text-center text-sm text-gray-400 italic">
+                    No cost centers match the current filters.
+                  </td>
+                </tr>
+              ) : displayedCCs.map((cc) => (
                 <tr key={cc.cost_center_id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">
                     {cc.cost_center_code}
@@ -231,6 +328,7 @@ export default function CostCentersPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Set Head Modal */}
@@ -296,4 +394,52 @@ export default function CostCentersPage() {
                     <div className="font-medium text-gray-900">
                       {emp.preferred_name ?? emp.first_name} {emp.last_name}
                     </div>
-            
+                    <div className="text-xs text-gray-400">
+                      {emp.employee_code} · {emp.email}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Selected employee badge */}
+            {selectedEmp && (
+              <div className="flex items-center gap-2 mb-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-blue-900">
+                    {selectedEmp.preferred_name ?? selectedEmp.first_name} {selectedEmp.last_name}
+                  </div>
+                  <div className="text-xs text-blue-600">
+                    {selectedEmp.employee_code} · {selectedEmp.email}
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setSelectedEmp(null); setEmployeeSearch(""); }}
+                  className="text-blue-400 hover:text-blue-600 text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                onClick={() => setModalOpen(false)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveHead}
+                disabled={saving || !selectedEmp}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

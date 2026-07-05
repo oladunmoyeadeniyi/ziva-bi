@@ -421,14 +421,32 @@ async def create_approval_role(
     block_if_readonly_impersonation(current_user)
     if not current_user.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant context required.")
+    # Duplicate check: same role = same name + same cost centre + same entity +
+    # same area + same sub_area + same employment_type.  NULL fields are treated
+    # as equal to NULL (IS NOT DISTINCT FROM semantics via conditional filter).
+    def _eq_or_null(col, val):  # type: ignore[no-untyped-def]
+        return col.is_(None) if val is None else col == val
+
+    emp_val = data.employment_type or "permanent"
     existing = (await db.execute(
         select(ApprovalRole).where(
             ApprovalRole.tenant_id == current_user.tenant_id,
             ApprovalRole.name == data.name.strip(),
+            _eq_or_null(ApprovalRole.cost_center_id, data.cost_center_id),
+            _eq_or_null(ApprovalRole.entity_node_id, data.entity_node_id),
+            _eq_or_null(ApprovalRole.area, data.area),
+            _eq_or_null(ApprovalRole.sub_area, data.sub_area),
+            ApprovalRole.employment_type == emp_val,
         )
     )).scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=409, detail="A role with this name already exists.")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A role with this exact combination of name, cost centre, area, "
+                "sub area, and employment type already exists."
+            ),
+        )
     role = ApprovalRole(
         tenant_id=current_user.tenant_id,
         name=data.name.strip(),
@@ -439,6 +457,9 @@ async def create_approval_role(
         entity_node_id=data.entity_node_id,
         max_occupants=data.max_occupants,
         designation=data.designation,
+        area=data.area,
+        sub_area=data.sub_area,
+        employment_type=data.employment_type or "permanent",
     )
     db.add(role)
     await db.commit()
@@ -479,8 +500,8 @@ async def update_approval_role(
         role.display_order = data.display_order
     if data.is_active is not None:
         role.is_active = data.is_active
-    if data.parent_role_id is not None:
-        role.parent_role_id = data.parent_role_id
+    if "parent_role_id" in data.model_fields_set:
+        role.parent_role_id = data.parent_role_id  # allows clearing to None (drag-to-root)
     if "max_occupants" in data.model_fields_set:
         role.max_occupants = data.max_occupants  # allows setting to None (unlimited)
     if "cost_center_id" in data.model_fields_set:
@@ -489,6 +510,12 @@ async def update_approval_role(
         role.entity_node_id = data.entity_node_id  # allows clearing to None
     if "designation" in data.model_fields_set:
         role.designation = data.designation
+    if "area" in data.model_fields_set:
+        role.area = data.area
+    if "sub_area" in data.model_fields_set:
+        role.sub_area = data.sub_area
+    if "employment_type" in data.model_fields_set:
+        role.employment_type = data.employment_type or "permanent"
     await db.commit()
     # reload with cost_center eagerly
     role = (await db.execute(
@@ -611,15 +638,21 @@ async def download_roles_template(
         "Cost Center *",
         "Capacity *",
         "Designation *",
+        "Employment Type *",
+        "Area / Location",
+        "Sub Area",
         "Description",
     ]
     header_comments = [
         "REQUIRED\nThe unique name for this role.\nExample: General Manager",
-        "OPTIONAL\nThe name of the parent role this role reports to.\nMust match an existing role name exactly.\nExample: General Manager",
+        "OPTIONAL\nThe name of the parent role this role reports to.\nMust match an existing role name exactly.\nTIP: If multiple roles share the same name (e.g. several DPM nodes), fill in 'Area / Location' on this row to match the correct parent.\nExample: General Manager",
         "REQUIRED\nThe entity code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N200",
         "REQUIRED\nThe cost center code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N22341AD",
         "REQUIRED\nHow many people can hold this role at once.\nOptions: single | unlimited | 2 | 3 … 10\nExample: single",
         "REQUIRED\nThe leadership designation for this role.\nOptions: Head of Entity | Head of Department | (leave blank for Regular)\nExample: Head of Entity",
+        "REQUIRED\nType of engagement for this role.\nOptions: Permanent | Contract | Outsourced\nOutsourced staff appear on the org chart but are excluded from payroll.\nExample: Permanent",
+        "OPTIONAL\nThe broader scope this role is responsible for.\nCan be a region, sales channel, product category, customer segment, or any other dimension.\nFor sub-roles: enter the SAME value as the parent's Area — this is how the system finds the right parent when multiple roles share the same title.\nExample: Lagos Region | On Premise | Key Accounts | Energy Drinks",
+        "OPTIONAL\nA more specific scope within the parent's Area.\nCan be a sub-region, sub-channel, or any further breakdown.\nExample: Lagos Mainland | Modern Trade | SME Segment",
         "OPTIONAL\nA brief description of this role's responsibilities.\nExample: Oversees all finance and accounting operations",
     ]
     header_fill = PatternFill("solid", fgColor="1D4ED8")
@@ -637,8 +670,15 @@ async def download_roles_template(
     ws.column_dimensions["D"].width = 22
     ws.column_dimensions["E"].width = 16
     ws.column_dimensions["F"].width = 24
-    ws.column_dimensions["G"].width = 36
+    ws.column_dimensions["G"].width = 20
+    ws.column_dimensions["H"].width = 26
+    ws.column_dimensions["I"].width = 26
+    ws.column_dimensions["J"].width = 36
     ws.freeze_panes = "A2"
+
+    def _emp_label(et: str | None) -> str:
+        mapping = {"contract": "Contract", "outsourced": "Outsourced"}
+        return mapping.get(et or "", "Permanent")
 
     # ── Pre-populate with existing tenant roles ───────────────────────────────
     for row_idx, role in enumerate(existing_roles, start=2):
@@ -652,6 +692,9 @@ async def download_roles_template(
             cc_code,
             _cap_label(role.max_occupants),
             _desig_label(role.designation if hasattr(role, "designation") else None),
+            _emp_label(role.employment_type if hasattr(role, "employment_type") else None),
+            role.area if hasattr(role, "area") and role.area else "",
+            role.sub_area if hasattr(role, "sub_area") and role.sub_area else "",
             role.description or "",
         ]
         for col_idx, val in enumerate(row_data, start=1):
@@ -706,6 +749,17 @@ async def download_roles_template(
     )
     ws.add_data_validation(dv_cap)
     dv_cap.sqref = f"E2:E{max_row}"
+
+    dv_emp = DataValidation(
+        type="list",
+        formula1='"Permanent,Contract,Outsourced"',
+        allow_blank=True,
+        showErrorMessage=True,
+        error="Select: Permanent, Contract, or Outsourced.",
+        errorTitle="Invalid Employment Type",
+    )
+    ws.add_data_validation(dv_emp)
+    dv_emp.sqref = f"G2:G{max_row}"
 
     # ── Stream ────────────────────────────────────────────────────────────────
     try:
@@ -818,6 +872,10 @@ async def bulk_upload_roles(
         capacity_raw = _col(row, "Capacity", "MaxOccupants", "max_occupants")
         _desig = _col(row, "Designation", "designation").lower().replace(" ", "_")
         designation_raw: str | None = _desig if _desig in ("head_of_department", "head_of_entity") else None
+        _emp = _col(row, "EmploymentType", "Employment Type", "employmenttype").lower().strip()
+        employment_type_raw = _emp if _emp in ("contract", "outsourced") else "permanent"
+        area_raw = _col(row, "Area", "Area / Location", "arealocation") or None
+        sub_area_raw = _col(row, "SubArea", "Sub Area", "subarea") or None
         description = _col(row, "Description", "Desc")
 
         # Resolve cost center (by name or code)
@@ -859,6 +917,9 @@ async def bulk_upload_roles(
             existing.entity_node_id = entity_node_id if entity_node_id is not None else existing.entity_node_id
             existing.designation = designation_raw
             existing.max_occupants = max_occupants
+            existing.employment_type = employment_type_raw
+            existing.area = area_raw if area_raw is not None else existing.area
+            existing.sub_area = sub_area_raw if sub_area_raw is not None else existing.sub_area
             upserted.append((role_name, existing))
             result.updated += 1
         else:
@@ -870,6 +931,9 @@ async def bulk_upload_roles(
                 entity_node_id=entity_node_id,
                 max_occupants=max_occupants,
                 designation=designation_raw,
+                employment_type=employment_type_raw,
+                area=area_raw,
+                sub_area=sub_area_raw,
                 display_order=0,
             )
             db.add(new_role)
@@ -880,13 +944,28 @@ async def bulk_upload_roles(
     await db.flush()  # generate PKs so pass-2 can reference them
 
     # ── Pass 2: wire parent_role_id ───────────────────────────────────────────
+    # Build secondary index: (name, area) → role, for disambiguation when
+    # multiple roles share the same title (e.g. several DPM nodes, each with
+    # a different area). A child row that fills in Area will be matched to the
+    # parent whose name AND area both match; falls back to name-only.
+    role_by_name_area: dict[tuple[str, str], ApprovalRole] = {}
+    for r in role_by_name.values():
+        if r.area:
+            role_by_name_area[(r.name.lower(), r.area.lower())] = r
+
     for i, row in enumerate(rows, start=2):
         role_name = _col(row, "RoleName", "Role Name", "name")
         parent_name = _col(row, "ParentRole", "Parent Role", "parentrole")
         if not role_name or not parent_name:
             continue
         child = role_by_name.get(role_name.lower())
-        parent = role_by_name.get(parent_name.lower())
+        # Try (parent_name, child_area) disambiguation first, then name-only
+        child_area = _col(row, "Area", "Area / Location", "arealocation")
+        parent = (
+            role_by_name_area.get((parent_name.lower(), child_area.lower()))
+            if child_area
+            else None
+        ) or role_by_name.get(parent_name.lower())
         if child and parent:
             child.parent_role_id = parent.id
         elif child and not parent:

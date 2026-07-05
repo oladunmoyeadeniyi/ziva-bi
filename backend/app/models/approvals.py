@@ -147,6 +147,17 @@ class ApprovalRole(Base):
     designation: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True, comment="NULL=regular; head_of_department; head_of_entity"
     )
+    area: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True, comment="Scope of responsibility — region, channel, category, segment, or any other dimension (free text)"
+    )
+    sub_area: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True,
+        comment="Granular territory within parent area (e.g. Lagos Mainland within Lagos Region)",
+    )
+    employment_type: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True, default="permanent",
+        comment="permanent (default) | contract | outsourced"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -155,7 +166,9 @@ class ApprovalRole(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_approval_role_tenant_name"),
+        # Uniqueness is enforced in application code across all descriptor fields
+        # (name, cost_center_id, entity_node_id, area, sub_area, employment_type)
+        # so that two roles with the same title but different areas/cost-centres are allowed.
     )
 
     # Self-referential relationship for org chart

@@ -34,7 +34,7 @@ interface AppHeaderProps {
 }
 
 export default function AppHeader({ context }: AppHeaderProps) {
-  const { user, accessToken, logout, impersonation, exitImpersonation } = useAuth();
+  const { user, accessToken, logout, impersonation, exitImpersonation, exitUserImpersonation } = useAuth();
   const router = useRouter();
   const [showMenu, setShowMenu] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
@@ -80,10 +80,23 @@ export default function AppHeader({ context }: AppHeaderProps) {
     router.push("/");
   };
 
-  const handleExit = () => {
+  const handleExit = async () => {
     setShowMenu(false);
-    exitImpersonation();
-    router.push("/platform");
+    if (impersonation?.mode === "user") {
+      // User-level impersonation: restore implementation token and go back to entry point.
+      const returnUrl = impersonation.returnUrl ?? "/platform";
+      await exitUserImpersonation();
+      window.location.replace(returnUrl);
+    } else {
+      // Tenant-context impersonation: read the saved return URL (set when entering tenant).
+      let returnUrl = "/platform";
+      try {
+        const stored = sessionStorage.getItem("ziva_impl_return_url");
+        if (stored) { returnUrl = stored; sessionStorage.removeItem("ziva_impl_return_url"); }
+      } catch {}
+      exitImpersonation();
+      window.location.replace(returnUrl);
+    }
   };
 
   // ── Context line (shown after the name in the trigger button) ─────────────

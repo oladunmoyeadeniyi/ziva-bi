@@ -134,6 +134,7 @@ ruff check app/
 | — | Default-CoA feature (3 starter CoA templates + adoption + smart re-download) — commit `7965f33`; DB-level facts verified, live endpoint/UI smoke test outstanding — see MASTER_CONTEXT §5 | ✅ Done* |
 | — | UI Polish Milestone — Phase 1 (shared Button/PageContainer/PageHeading, findings A/B/C) — commit `0d55ea8`; independently re-verified against shipped code — see MASTER_CONTEXT §5 | ✅ Done |
 | — | UI Polish Milestone — Phase 2 (findings D–H: date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states) — commit `300b22d`; independently re-verified — see MASTER_CONTEXT §5 | ✅ Done |
+| M9.3b | User Impersonation (SA enters a specific user's identity; `sub = target_user_id`; `ImpersonationUserBanner`; 2 entry points; audit log; `is_restricted_impersonation` hook) — commit `1a60a1c`; independently re-verified — see MASTER_CONTEXT §5 | ✅ Done |
 | — | Confirm Currencies & FX / BDC completeness (dedicated tables vs. JSONB) | ⏳ Pending |
 | — | Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings) | ⏳ Pending |
 | M11 | Accounts Payable | ⏳ Pending |

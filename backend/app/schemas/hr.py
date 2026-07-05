@@ -395,4 +395,24 @@ class FinanceReviewConfigResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
- 
+    @classmethod
+    def from_orm(cls, cfg: object) -> "FinanceReviewConfigResponse":
+        from app.models.master_data import FinanceReviewConfig
+        c: FinanceReviewConfig = cfg  # type: ignore[assignment]
+        user_name = None
+        user_email = None
+        if hasattr(c, "reviewer") and c.reviewer:
+            user_name = f"{c.reviewer.first_name} {c.reviewer.last_name}"
+            user_email = c.reviewer.email
+        cc_name = c.cost_center.name if hasattr(c, "cost_center") and c.cost_center else None
+        return cls(
+            id=str(c.id),
+            module=c.module,
+            reviewer_user_id=str(c.reviewer_user_id),
+            reviewer_name=user_name,
+            reviewer_email=user_email,
+            review_level=c.review_level,
+            cost_center_id=str(c.cost_center_id) if c.cost_center_id else None,
+            cost_center_name=cc_name,
+            created_at=c.created_at,
+        )

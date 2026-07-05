@@ -961,4 +961,66 @@ function EmployeesPage() {
                             <span className="font-medium text-gray-800">{tr.from_cost_center_name ?? "—"} → {tr.to_cost_center_name ?? "—"}</span>
                             <span className="text-gray-400">{tr.effective_date}</span>
                           </div>
-            
+                          {tr.notes && <p className="text-gray-500 mt-0.5">{tr.notes}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Invite modal — real CC dropdown ─────────────────────────────────── */}
+      {showInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
+            <h2 className="text-base font-semibold text-gray-900 mb-4">Send self-onboarding invite</h2>
+            {inviteError   && <p className="text-xs text-red-600 mb-3">{inviteError}</p>}
+            {inviteSuccess && <p className="text-xs text-green-600 mb-3">{inviteSuccess}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">First name <span className="text-red-500">*</span></label>
+                <input type="text" value={inviteForm.first_name} onChange={e => setInviteForm(f => ({ ...f, first_name: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Last name <span className="text-red-500">*</span></label>
+                <input type="text" value={inviteForm.last_name} onChange={e => setInviteForm(f => ({ ...f, last_name: e.target.value }))} className={inputCls} />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email <span className="text-red-500">*</span></label>
+                <input type="email" value={inviteForm.email} onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Cost Center</label>
+                <CostCenterSelect value={inviteForm.cost_center_id} onChange={v => setInviteForm(f => ({ ...f, cost_center_id: v }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Start date</label>
+                <input type="date" defaultValue={inviteForm.start_date} onBlur={e => setInviteForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} />
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-5">
+              <Button variant="secondary" onClick={() => { setShowInvite(false); setInviteError(null); }} disabled={inviting}>Cancel</Button>
+              <Button variant="primary" onClick={handleInvite}
+                disabled={inviting || !inviteForm.first_name.trim() || !inviteForm.last_name.trim() || !inviteForm.email.trim()}
+                loading={inviting}>
+                {inviting ? "Sending…" : "Send invite"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </PageContainer>
+  );
+}
+
+export default function EmployeesPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <EmployeesPage />
+    </Suspense>
+  );
+}

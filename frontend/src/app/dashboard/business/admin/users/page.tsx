@@ -8,7 +8,7 @@
  * Invitations tab: send invites, view status, cancel pending.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
@@ -105,6 +105,59 @@ export default function TeamPage() {
   const [deactivateTarget, setDeactivateTarget] = useState<TenantUser | null>(null);
   const [deactivating, setDeactivating] = useState(false);
 
+  // Remove user
+  const [removeTarget, setRemoveTarget] = useState<TenantUser | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  // Sync from employees
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  // Filter & sort — persisted across navigation/refresh/login
+  const _u = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const _w = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch {} };
+
+  const [userSearch, _setUserSearch] = useState(() => _u("tu_search", ""));
+  const [userStatus, _setUserStatus] = useState<"all" | "active" | "inactive">(() => _u("tu_status", "all") as "all" | "active" | "inactive");
+  const [userRole,   _setUserRole]   = useState(() => _u("tu_role", ""));
+  const [sortCol,    _setSortCol]    = useState<"name" | "email" | "department" | "status" | "created">(() => _u("tu_sortcol", "name") as "name" | "email" | "department" | "status" | "created");
+  const [sortDir,    _setSortDir]    = useState<"asc" | "desc">(() => _u("tu_sortdir", "asc") as "asc" | "desc");
+
+  const setUserSearch = (v: string) => { _setUserSearch(v); _w("tu_search", v); };
+  const setUserStatus = (v: "all" | "active" | "inactive") => { _setUserStatus(v); _w("tu_status", v); };
+  const setUserRole   = (v: string) => { _setUserRole(v);   _w("tu_role", v); };
+
+  const toggleSort = (col: typeof sortCol) => {
+    if (sortCol === col) { const d = sortDir === "asc" ? "desc" : "asc"; _setSortDir(d); _w("tu_sortdir", d); }
+    else { _setSortCol(col); _setSortDir("asc"); _w("tu_sortcol", col); _w("tu_sortdir", "asc"); }
+  };
+
+  const displayedUsers = useMemo(() => {
+    let list = users;
+    if (userSearch.trim()) {
+      const q = userSearch.toLowerCase();
+      list = list.filter((u) =>
+        u.full_name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        (u.department ?? "").toLowerCase().includes(q) ||
+        (u.employee_code ?? "").toLowerCase().includes(q)
+      );
+    }
+    if (userStatus === "active")   list = list.filter((u) => u.is_active);
+    if (userStatus === "inactive") list = list.filter((u) => !u.is_active);
+    if (userRole) list = list.filter((u) => u.roles.includes(userRole));
+    return [...list].sort((a, b) => {
+      let av = "", bv = "";
+      if (sortCol === "name")       { av = a.full_name;            bv = b.full_name; }
+      if (sortCol === "email")      { av = a.email;                bv = b.email; }
+      if (sortCol === "department") { av = a.department ?? "";     bv = b.department ?? ""; }
+      if (sortCol === "status")     { av = a.is_active ? "1" : "0"; bv = b.is_active ? "1" : "0"; }
+      if (sortCol === "created")    { av = a.created_at;           bv = b.created_at; }
+      const cmp = av.localeCompare(bv);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [users, userSearch, userStatus, userRole, sortCol, sortDir]);
+
   // Invitations tab
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [invitesLoading, setInvitesLoading] = useState(false);
@@ -188,6 +241,36 @@ export default function TeamPage() {
     }
   };
 
+  const handleRemove = async () => {
+    if (!removeTarget || !accessToken) return;
+    setRemoving(true);
+    try {
+      await apiFetch(`/api/tenant/users/${removeTarget.id}`, {
+        method: "DELETE", token: accessToken,
+      });
+      setUsers((prev) => prev.filter((u) => u.id !== removeTarget.id));
+      setRemoveTarget(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to remove user.");
+    } finally { setRemoving(false); }
+  };
+
+  const handleSyncEmployees = async () => {
+    if (!accessToken) return;
+    setSyncing(true); setSyncResult(null);
+    try {
+      const res = await apiFetch<{ synced: number }>("/api/hr/employees/sync-portal-accounts", {
+        method: "POST", token: accessToken,
+      });
+      setSyncResult(`✓ Portal accounts ensured for ${res.synced} employees. Refresh to see updates.`);
+      // Reload user list to pick up newly created accounts
+      const updated = await apiFetch<TenantUser[]>("/api/tenant/users", { token: accessToken });
+      setUsers(updated);
+    } catch (err) {
+      setSyncResult(`Error: ${err instanceof Error ? err.message : "Sync failed."}`);
+    } finally { setSyncing(false); }
+  };
+
   const handleInvite = async () => {
     if (!accessToken) return;
     if (!inviteEmail.trim()) { setInviteError("Email is required."); return; }
@@ -240,6 +323,28 @@ export default function TeamPage() {
               <Button variant="secondary" onClick={() => setEditingUser(null)} disabled={rolesSaving}>Cancel</Button>
               <Button variant="primary" onClick={saveRoles} disabled={rolesSaving} loading={rolesSaving}>
                 {rolesSaving ? "Saving…" : "Save Roles"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Remove confirm ───────────────────────────────────────────────── */}
+      {removeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm">
+            <h2 className="text-base font-semibold text-gray-900 mb-2">Remove User?</h2>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>{removeTarget.full_name}</strong> ({removeTarget.email}) will be permanently
+              removed from this tenant.
+            </p>
+            <p className="text-xs text-gray-400 mb-5">
+              Pre-live tenants: the account is deleted entirely. Post-live tenants: deactivated only.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button variant="secondary" onClick={() => setRemoveTarget(null)} disabled={removing}>Cancel</Button>
+              <Button variant="danger" onClick={handleRemove} disabled={removing} loading={removing}>
+                {removing ? "Removing…" : "Remove"}
               </Button>
             </div>
           </div>
@@ -302,12 +407,30 @@ export default function TeamPage() {
         <div>
           <PageHeading title="Team" subtitle="Manage members and invitations" />
         </div>
-        {activeTab === "invitations" && (
-          <Button variant="primary" onClick={() => setShowInviteModal(true)}>
-            + Invite Member
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {activeTab === "users" && (
+            <Button
+              variant="primary"
+              onClick={handleSyncEmployees}
+              disabled={syncing}
+              loading={syncing}
+            >
+              {syncing ? "Syncing…" : "Sync from Employees"}
+            </Button>
+          )}
+          {activeTab === "invitations" && (
+            <Button variant="primary" onClick={() => setShowInviteModal(true)}>
+              + Invite Member
+            </Button>
+          )}
+        </div>
       </div>
+
+      {syncResult && (
+        <Banner variant={syncResult.startsWith("Error") ? "error" : "success"} className="mb-4">
+          {syncResult}
+        </Banner>
+      )}
 
       {inviteSuccess && (
         <Banner variant="success" className="mb-4">
@@ -341,17 +464,97 @@ export default function TeamPage() {
             <Banner variant="error">{usersError}</Banner>
           )}
           {!usersLoading && !usersError && (
+            <>
+              {/* Filter bar */}
+              <div className="flex flex-wrap gap-2 mb-4 items-center">
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Search name, email, department…"
+                  className="flex-1 min-w-48 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {/* Status toggle */}
+                <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                  {(["all", "active", "inactive"] as const).map((v, i) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setUserStatus(v)}
+                      className={`px-3 py-2 font-medium capitalize transition-colors ${
+                        userStatus === v ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                      } ${i > 0 ? "border-l border-gray-300" : ""}`}
+                    >
+                      {v === "all" ? "All" : v.charAt(0).toUpperCase() + v.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                {/* Role filter */}
+                <select
+                  value={userRole}
+                  onChange={(e) => setUserRole(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All roles</option>
+                  {ASSIGNABLE_ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+                {(userSearch || userStatus !== "all" || userRole) && (
+                  <button
+                    type="button"
+                    onClick={() => { setUserSearch(""); setUserStatus("all"); setUserRole(""); }}
+                    className="px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                  >
+                    Clear
+                  </button>
+                )}
+                <span className="text-xs text-gray-400 ml-auto">
+                  {displayedUsers.length} of {users.length} user{users.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    {["Name", "Email", "Employee Code", "Department", "Roles", "Status", "Actions"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    {(
+                      [
+                        { key: "name",       label: "Name" },
+                        { key: "email",      label: "Email" },
+                        { key: null,         label: "Employee Code" },
+                        { key: "department", label: "Department" },
+                        { key: null,         label: "Roles" },
+                        { key: "status",     label: "Status" },
+                        { key: "created",    label: "Joined" },
+                        { key: null,         label: "Actions" },
+                      ] as { key: typeof sortCol | null; label: string }[]
+                    ).map(({ key, label }) => (
+                      <th
+                        key={label}
+                        onClick={key ? () => toggleSort(key) : undefined}
+                        className={`px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${key ? "cursor-pointer select-none hover:text-gray-700" : ""}`}
+                      >
+                        {label}
+                        {key && (
+                          <span className="ml-1">
+                            {sortCol === key
+                              ? (sortDir === "asc" ? "↑" : "↓")
+                              : <span className="text-gray-300">↕</span>}
+                          </span>
+                        )}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {users.map((u) => (
+                  {displayedUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400 italic">
+                        No users match the current filters.
+                      </td>
+                    </tr>
+                  ) : displayedUsers.map((u) => (
                     <tr key={u.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">{u.full_name}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{u.email}</td>
@@ -371,6 +574,7 @@ export default function TeamPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3"><StatusBadge active={u.is_active} /></td>
+                      <td className="px-4 py-3 text-sm text-gray-400 whitespace-nowrap">{formatDate(u.created_at)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <button type="button" onClick={() => openEditRoles(u)}
@@ -378,17 +582,23 @@ export default function TeamPage() {
                             Edit Roles
                           </button>
                           {u.id !== user?.id && (
-                            u.is_active ? (
-                              <button type="button" onClick={() => setDeactivateTarget(u)}
+                            <>
+                              {u.is_active ? (
+                                <button type="button" onClick={() => setDeactivateTarget(u)}
+                                  className="text-xs text-orange-500 hover:text-orange-700 font-medium">
+                                  Deactivate
+                                </button>
+                              ) : (
+                                <button type="button" onClick={() => handleReactivate(u.id)}
+                                  className="text-xs text-green-600 hover:text-green-800 font-medium">
+                                  Reactivate
+                                </button>
+                              )}
+                              <button type="button" onClick={() => setRemoveTarget(u)}
                                 className="text-xs text-red-500 hover:text-red-700 font-medium">
-                                Deactivate
+                                Remove
                               </button>
-                            ) : (
-                              <button type="button" onClick={() => handleReactivate(u.id)}
-                                className="text-xs text-green-600 hover:text-green-800 font-medium">
-                                Reactivate
-                              </button>
-                            )
+                            </>
                           )}
                         </div>
                       </td>
@@ -397,6 +607,7 @@ export default function TeamPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </>
       )}
