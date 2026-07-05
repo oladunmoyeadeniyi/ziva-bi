@@ -385,6 +385,8 @@ function RoleChartNode({
   onDragEnd,
   onDrop,
   showFullName,
+  expandedIds,
+  onToggleExpand,
 }: {
   node: RoleTreeNode;
   onAddChild: (parentId: string) => void;
@@ -397,8 +399,10 @@ function RoleChartNode({
   onDragEnd: () => void;
   onDrop: (targetId: string | null) => void;
   showFullName: boolean;
+  expandedIds: Set<string>;
+  onToggleExpand: (id: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const expanded = expandedIds.has(node.id);
   const hasChildren = node.children.length > 0;
   const isDragging  = draggingId === node.id;
   const isDropTarget = dropTargetId === node.id && draggingId !== node.id;
@@ -458,7 +462,7 @@ function RoleChartNode({
 
         {/* Collapse toggle */}
         {hasChildren && (
-          <button type="button" onClick={() => setExpanded(v => !v)}
+          <button type="button" onClick={() => onToggleExpand(node.id)}
             style={{ position: "absolute", top: 4, right: 4, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: 2, lineHeight: 1 }}>
             <i className={`ti ti-chevron-${expanded ? "up" : "down"}`} style={{ fontSize: 10 }} />
           </button>
@@ -552,6 +556,7 @@ function RoleChartNode({
                     draggingId={draggingId} dropTargetId={dropTargetId}
                     onDragStart={onDragStart} onDragEnter={onDragEnter} onDragEnd={onDragEnd} onDrop={onDrop}
                     showFullName={showFullName}
+                    expandedIds={expandedIds} onToggleExpand={onToggleExpand}
                   />
                 </div>
               );
@@ -846,6 +851,46 @@ function OrganisationPage() {
   const [showFullNames, setShowFullNames] = useState<boolean>(() => {
     try { return localStorage.getItem("orgChart_showFullNames") === "true"; } catch { return false; }
   });
+
+  // Lifted expand/collapse state — persisted in localStorage
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("orgChart_expandedIds");
+      if (saved !== null) return new Set<string>(JSON.parse(saved) as string[]);
+    } catch { /* ignore */ }
+    return new Set<string>();
+  });
+  const [expandedIdsSeeded, setExpandedIdsSeeded] = useState<boolean>(() => {
+    try { return localStorage.getItem("orgChart_expandedIds") !== null; } catch { return false; }
+  });
+
+  const _persistExpandedIds = (s: Set<string>) => {
+    try { localStorage.setItem("orgChart_expandedIds", JSON.stringify(Array.from(s))); } catch { /* ignore */ }
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      _persistExpandedIds(next);
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    const all = new Set<string>(orgRoles.map(r => r.id));
+    _persistExpandedIds(all);
+    setExpandedIds(all);
+    setExpandedIdsSeeded(true);
+  };
+
+  const collapseAll = () => {
+    const empty = new Set<string>();
+    _persistExpandedIds(empty);
+    setExpandedIds(empty);
+    setExpandedIdsSeeded(true);
+  };
+
   const [chartZoom, setChartZoom] = useState(0.85);          // default zoom-out so wide trees fit
   const [chartFullscreen, setChartFullscreen] = useState(false);
 
@@ -880,6 +925,19 @@ function OrganisationPage() {
   }, [tab, structureView, accessToken]);
 
   const roleTree = useMemo(() => buildRoleTree(orgRoles), [orgRoles]);
+
+  // Seed default expand state once on first load (if no saved state in localStorage)
+  useEffect(() => {
+    if (expandedIdsSeeded || orgRoles.length === 0) return;
+    // Expand HoE/root nodes so HoD level is visible; HoD stays collapsed by default
+    const defaults = new Set<string>(
+      orgRoles.filter(r => r.parent_role_id === null || r.designation === "head_of_entity").map(r => r.id)
+    );
+    _persistExpandedIds(defaults);
+    setExpandedIds(defaults);
+    setExpandedIdsSeeded(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgRoles, expandedIdsSeeded]);
 
   // Returns all descendant IDs of a given role (to prevent cycle on drop)
   const getDescendantIds = useCallback((roleId: string): Set<string> => {
@@ -1347,6 +1405,12 @@ function OrganisationPage() {
                       <i className="ti ti-plus" style={{ fontSize: 12 }} />
                     </button>
                   </div>
+                  <button type="button" onClick={expandedIds.size > 0 ? collapseAll : expandAll}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50"
+                    title={expandedIds.size > 0 ? "Collapse all levels" : "Expand all levels"}>
+                    <i className={`ti ti-${expandedIds.size > 0 ? "unfold-less" : "unfold-more"}`} style={{ fontSize: 13 }} />
+                    {expandedIds.size > 0 ? "Collapse all" : "Expand all"}
+                  </button>
                   <button type="button" onClick={() => setChartFullscreen(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50"
                     title="Expand to full screen">
@@ -1467,6 +1531,8 @@ function OrganisationPage() {
                           onDragEnd={handleRoleDragEnd}
                           onDrop={handleRoleDrop}
                           showFullName={showFullNames}
+                          expandedIds={expandedIds}
+                          onToggleExpand={toggleExpanded}
                         />
                       ))}
                     </div>
@@ -1486,6 +1552,12 @@ function OrganisationPage() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", borderBottom: "1px solid #e2e8f0", background: "#fff", flexShrink: 0 }}>
                     <span style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>Role Hierarchy</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button type="button" onClick={expandedIds.size > 0 ? collapseAll : expandAll}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontSize: 13, fontWeight: 500, border: "1px solid #d1d5db", borderRadius: 6, background: "#fff", cursor: "pointer" }}
+                        title={expandedIds.size > 0 ? "Collapse all levels" : "Expand all levels"}>
+                        <i className={`ti ti-${expandedIds.size > 0 ? "unfold-less" : "unfold-more"}`} style={{ fontSize: 13 }} />
+                        {expandedIds.size > 0 ? "Collapse all" : "Expand all"}
+                      </button>
                       <button type="button" onClick={() => setShowFullNames(v => { const next = !v; try { localStorage.setItem("orgChart_showFullNames", String(next)); } catch {} return next; })}
                         style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontSize: 13, fontWeight: 500, border: "1px solid #d1d5db", borderRadius: 6, background: "#fff", cursor: "pointer" }}>
                         <i className="ti ti-text-size" style={{ fontSize: 13 }} />
@@ -1533,6 +1605,8 @@ function OrganisationPage() {
                           onDragEnd={handleRoleDragEnd}
                           onDrop={handleRoleDrop}
                           showFullName={showFullNames}
+                          expandedIds={expandedIds}
+                          onToggleExpand={toggleExpanded}
                         />
                       ))}
                     </div>
