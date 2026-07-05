@@ -1050,7 +1050,7 @@ function OrganisationPage() {
     const needsParent = roleForm.designation !== "head_of_entity";
     if (!roleForm.name.trim() || !roleForm.costCenterId || !roleForm.capacity || !roleForm.designation || !roleForm.employment_type || (needsParent && !roleParentId) || !accessToken) return;
     setSavingRole(true);
-    const maxOcc = roleForm.capacity === "single" ? 1 : (roleForm.capacity === "unlimited" || roleForm.capacity === "") ? null : parseInt(roleForm.customN) || null;
+    const maxOcc = roleForm.capacity === "single" ? 1 : (roleForm.capacity === "unlimited" || (roleForm.capacity as string) === "") ? null : parseInt(roleForm.customN) || null;
     const ccId = roleForm.costCenterId || null;
     const desig = (roleForm.designation === "regular" || !roleForm.designation) ? null : roleForm.designation;
     const empType = roleForm.employment_type || "permanent";

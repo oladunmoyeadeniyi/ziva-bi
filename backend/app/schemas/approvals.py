@@ -559,3 +559,67 @@ class RoleScopeResponse(BaseModel):
 class RoleScopeUpdate(BaseModel):
     """Replace all scope sections for a role."""
     sections: list[RoleScopeSection] = []
+
+
+# ── Finance Review Steps ──────────────────────────────────────────────────────
+
+VALID_STEP_TYPES = {"capture", "validate", "review", "approve"}
+
+
+class FinanceReviewStepIn(BaseModel):
+    """One finance review step in the bulk-save payload."""
+
+    level: int
+    step_type: str
+    label: str
+    assigned_employee_id: str | None = None
+    assigned_designation: str | None = None
+    min_amount: float | None = None
+    can_send_back: bool = True
+    can_correct_gl: bool = False
+    is_required: bool = True
+    instructions: str | None = None
+
+    @field_validator("step_type")
+    @classmethod
+    def validate_step_type(cls, v: str) -> str:
+        if v not in VALID_STEP_TYPES:
+            raise ValueError(f"step_type must be one of: {', '.join(sorted(VALID_STEP_TYPES))}")
+        return v
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Label is required.")
+        return v
+
+
+class FinanceReviewStepBulkSave(BaseModel):
+    """Payload for PUT /api/approvals/policies/{policy_id}/finance-steps."""
+
+    steps: list[FinanceReviewStepIn]
+
+
+class FinanceReviewStepResponse(BaseModel):
+    """Serialised FinanceReviewStep row."""
+
+    id: str
+    policy_id: str
+    tenant_id: str
+    level: int
+    step_type: str
+    label: str
+    assigned_employee_id: str | None
+    assigned_designation: str | None
+    min_amount: float | None
+    can_send_back: bool
+    can_correct_gl: bool
+    is_required: bool
+    instructions: str | None
+    created_at: datetime
+    updated_at: datetime
+    assigned_employee_name: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)

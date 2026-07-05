@@ -283,6 +283,12 @@ class ApprovalPolicy(Base):
     thresholds: Mapped[list["ApprovalRoleThreshold"]] = relationship(
         "ApprovalRoleThreshold", back_populates="policy", cascade="all, delete-orphan",
     )
+    finance_steps: Mapped[list["FinanceReviewStep"]] = relationship(
+        "FinanceReviewStep",
+        back_populates="policy",
+        cascade="all, delete-orphan",
+        order_by="FinanceReviewStep.level",
+    )
 
 
 class ApprovalRoleThreshold(Base):
@@ -476,4 +482,72 @@ class ApprovalRoleScope(Base):
 
     __table_args__ = (
         UniqueConstraint("role_id", "section", name="uq_approval_role_scope_section"),
+    )
+
+
+class FinanceReviewStep(Base):
+    """
+    One step in the explicitly-configured finance review chain for an ApprovalPolicy.
+
+    Replaces the legacy finance_l1/l2/l3_designation fields on ApprovalPolicy.
+    Steps run sequentially (ordered by `level`) after the full management chain clears.
+
+    step_type determines what the reviewer can do:
+        capture  -- intake / admin: file documents, mark received.
+        validate -- technical review: GL accuracy, document completeness. Can send back;
+                    can optionally correct GL codes inline.
+        review   -- controller / CA sign-off: second-level review, payment scheduling.
+        approve  -- final finance approval (FD level). Releases for GL posting and payment.
+
+    Assignee hierarchy (first non-null wins at runtime):
+        1. assigned_employee_id  -- specific named employee
+        2. assigned_designation  -- first active Finance employee holding that designation
+    """
+
+    __tablename__ = "finance_review_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    policy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    level: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_type: Mapped[str] = mapped_column(
+        String(20), nullable=False,
+        comment="capture | validate | review | approve",
+    )
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    assigned_employee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_designation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    min_amount: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
+    can_send_back: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    can_correct_gl: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("policy_id", "level", name="uq_finance_step_policy_level"),
+    )
+
+    policy: Mapped["ApprovalPolicy"] = relationship(
+        "ApprovalPolicy", back_populates="finance_steps",
     )

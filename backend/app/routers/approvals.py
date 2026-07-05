@@ -2513,3 +2513,128 @@ async def refer_back(
 
     await db.flush()
     return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
+
+
+# ── Finance Review Steps ──────────────────────────────────────────────────────
+
+def _serialize_step(step, emp_name=None):
+    return {
+        "id": str(step.id),
+        "policy_id": str(step.policy_id),
+        "tenant_id": str(step.tenant_id),
+        "level": step.level,
+        "step_type": step.step_type,
+        "label": step.label,
+        "assigned_employee_id": str(step.assigned_employee_id) if step.assigned_employee_id else None,
+        "assigned_designation": step.assigned_designation,
+        "min_amount": float(step.min_amount) if step.min_amount is not None else None,
+        "can_send_back": step.can_send_back,
+        "can_correct_gl": step.can_correct_gl,
+        "is_required": step.is_required,
+        "instructions": step.instructions,
+        "created_at": step.created_at,
+        "updated_at": step.updated_at,
+        "assigned_employee_name": emp_name,
+    }
+
+
+@router.get("/policies/{policy_id}/finance-steps", response_model=list[FinanceReviewStepResponse])
+async def list_finance_steps(
+    policy_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all finance review steps for a policy, ordered by level."""
+    tenant_id = current_user.tenant_id
+    policy_result = await db.execute(
+        select(ApprovalPolicy).where(ApprovalPolicy.id == policy_id, ApprovalPolicy.tenant_id == tenant_id)
+    )
+    if not policy_result.scalars().first():
+        raise HTTPException(status_code=404, detail="Policy not found.")
+
+    result = await db.execute(
+        select(FinanceReviewStep)
+        .where(FinanceReviewStep.policy_id == policy_id, FinanceReviewStep.tenant_id == tenant_id)
+        .order_by(FinanceReviewStep.level)
+    )
+    steps = result.scalars().all()
+
+    emp_ids = [s.assigned_employee_id for s in steps if s.assigned_employee_id]
+    emp_name_map = {}
+    if emp_ids:
+        from app.models.master_data import Employee
+        emp_result = await db.execute(select(Employee).where(Employee.id.in_(emp_ids)))
+        for emp in emp_result.scalars().all():
+            emp_name_map[emp.id] = f"{emp.first_name} {emp.last_name}"
+
+    return [_serialize_step(s, emp_name_map.get(s.assigned_employee_id)) for s in steps]
+
+
+@router.put("/policies/{policy_id}/finance-steps", response_model=list[FinanceReviewStepResponse])
+async def bulk_save_finance_steps(
+    policy_id: uuid.UUID,
+    payload: FinanceReviewStepBulkSave,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace all finance review steps for a policy (atomic bulk-save)."""
+    tenant_id = current_user.tenant_id
+    if current_user.role not in ("admin", "owner"):
+        raise HTTPException(status_code=403, detail="Admin or Owner role required.")
+
+    policy_result = await db.execute(
+        select(ApprovalPolicy).where(ApprovalPolicy.id == policy_id, ApprovalPolicy.tenant_id == tenant_id)
+    )
+    if not policy_result.scalars().first():
+        raise HTTPException(status_code=404, detail="Policy not found.")
+
+    from app.models.master_data import Employee
+    emp_ids_in = [uuid.UUID(s.assigned_employee_id) for s in payload.steps if s.assigned_employee_id]
+    emp_name_map = {}
+    if emp_ids_in:
+        emp_result = await db.execute(
+            select(Employee).where(Employee.id.in_(emp_ids_in), Employee.tenant_id == tenant_id)
+        )
+        found = emp_result.scalars().all()
+        found_ids = {e.id for e in found}
+        for e in found:
+            emp_name_map[e.id] = f"{e.first_name} {e.last_name}"
+        missing = [str(eid) for eid in emp_ids_in if eid not in found_ids]
+        if missing:
+            raise HTTPException(status_code=422, detail=f"Employee(s) not found: {', '.join(missing)}")
+
+    await db.execute(
+        delete(FinanceReviewStep).where(
+            FinanceReviewStep.policy_id == policy_id, FinanceReviewStep.tenant_id == tenant_id
+        )
+    )
+
+    sorted_steps = sorted(payload.steps, key=lambda s: s.level)
+    new_rows = []
+    for idx, step_in in enumerate(sorted_steps, start=1):
+        emp_id = uuid.UUID(step_in.assigned_employee_id) if step_in.assigned_employee_id else None
+        row = FinanceReviewStep(
+            policy_id=policy_id,
+            tenant_id=tenant_id,
+            level=idx,
+            step_type=step_in.step_type,
+            label=step_in.label,
+            assigned_employee_id=emp_id,
+            assigned_designation=step_in.assigned_designation,
+            min_amount=Decimal(str(step_in.min_amount)) if step_in.min_amount is not None else None,
+            can_send_back=step_in.can_send_back,
+            can_correct_gl=step_in.can_correct_gl,
+            is_required=step_in.is_required,
+            instructions=step_in.instructions,
+        )
+        db.add(row)
+        new_rows.append(row)
+
+    await db.commit()
+    for row in new_rows:
+        await db.refresh(row)
+
+    return [
+        _serialize_step(r, emp_name_map.get(r.assigned_employee_id) if r.assigned_employee_id else None)
+        for r in new_rows
+    ]
