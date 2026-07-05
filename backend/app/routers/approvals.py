@@ -817,7 +817,7 @@ async def bulk_upload_roles(
             raise HTTPException(status_code=500, detail="openpyxl not installed — use CSV upload instead.")
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
         ws = wb.active
-        headers = [str(c.value or "").strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        headers = [str(c.value or "").strip().lower().replace("*", "").strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
         for row in ws.iter_rows(min_row=2, values_only=True):
             rows.append({headers[i]: (str(v).strip() if v is not None else "") for i, v in enumerate(row)})
     else:
