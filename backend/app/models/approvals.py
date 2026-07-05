@@ -429,9 +429,45 @@ class ExpenseApproval(Base):
     visible_to_requestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Referred approver's reply back to the referring approver
     response_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    actioned_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    actioned_at: Mappe
+
+class ApprovalRoleScope(Base):
+    """
+    Per-role section access configuration.
+
+    Stores which setup sections an org role can access and at what level.
+    Anyone holding the role inherits these scope settings at login
+    (union rule: most permissive wins if user also has a direct assignment).
+
+    access_level: 'full' | 'read_only' | 'none'
+    """
+
+    __tablename__ = "approval_role_scopes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    section: Mapped[str] = mapped_column(String(100), nullable=False)
+    access_level: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("role_id", "section", name="uq_approval_role_scope_section"),
     )

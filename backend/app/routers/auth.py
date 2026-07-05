@@ -758,4 +758,55 @@ async def switch_environment(
     # ── M9.1: block switch into a suspended tenant ────────────────────────────
     if getattr(target_tenant, "lifecycle_status", None) == "suspended":
         raise HTTPException(
-            status_c
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The target environment's tenant is suspended. Contact support.",
+        )
+
+    # ── Verify caller has access to the target tenant ─────────────────────────
+    ut_res = await db.execute(
+        select(UserTenant).where(
+            UserTenant.user_id == current_user.user_id,
+            UserTenant.tenant_id == target_tenant.id,
+            UserTenant.is_active.is_(True),
+        )
+    )
+    target_ut: UserTenant | None = ut_res.scalar_one_or_none()
+    if not target_ut:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to the target environment.",
+        )
+
+    # ── Load the user record ──────────────────────────────────────────────────
+    user_res = await db.execute(select(User).where(User.id == current_user.user_id))
+    user: User = user_res.scalar_one()
+
+    # ── Create a fresh session + refresh token for the target tenant ──────────
+    session, raw_token, _ = await _create_session_and_tokens(target_ut, db, request)
+
+    admin_flag = await _is_tenant_admin(target_ut.id, db)
+    non_admin_flag = await _has_non_admin_roles(target_ut.id, db)
+    access_token = _build_access_token(
+        user, target_ut, session,
+        is_tenant_admin=admin_flag,
+        has_non_admin_role=non_admin_flag,
+        environment=target_tenant.environment,
+    )
+
+    await _log_event(
+        "environment.switched",
+        db, request, user=user,
+        tenant_id=target_tenant.id,
+        metadata={"from": current_env, "to": data.target},
+    )
+
+    return AuthResponse(
+        access_token=access_token,
+        refresh_token=raw_token,
+        user=UserResponse.from_orm_pair(
+            user, target_tenant.id,
+            is_tenant_admin=admin_flag,
+            has_non_admin_role=non_admin_flag,
+            role_tier=getattr(target_ut, "role_tier", None),
+        ),
+    )

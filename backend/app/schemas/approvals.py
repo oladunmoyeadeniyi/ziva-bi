@@ -525,18 +525,21 @@ class SnapshotResponse(BaseModel):
     """A submitted expense report snapshot at a specific version."""
 
     id: str
-    report_id: str
-    version: int
-    submitted_at: datetime
-    snapshot_data: dict
-    created_at: datetime
+
+# ── Role Scope ────────────────────────────────────────────────────────────────
+
+class RoleScopeSection(BaseModel):
+    """One section entry in a role's scope config."""
+    section: str
+    access_level: str  # 'full' | 'read_only' | 'none'
 
 
-# ── Tenant User (for approver dropdowns) ─────────────────────────────────────
+class RoleScopeResponse(BaseModel):
+    """Scope configuration for an org role."""
+    role_id: str
+    sections: list[RoleScopeSection] = []
 
-class TenantUserResponse(BaseModel):
-    """Minimal user record returned for approver selection dropdowns."""
 
-    id: str
-    full_name: str
-    email: str
+class RoleScopeUpdate(BaseModel):
+    """Replace all scope sections for a role."""
+    sections: list[RoleScopeSection] = []

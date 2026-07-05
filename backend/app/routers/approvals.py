@@ -42,7 +42,7 @@ from email.mime.text import MIMEText
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -54,6 +54,7 @@ from app.models.approvals import (
     ApprovalMatrix,
     ApprovalPolicy,
     ApprovalRole,
+    ApprovalRoleScope,
     ApprovalRoleThreshold,
     ExpenseApproval,
 )
@@ -81,6 +82,8 @@ from app.schemas.approvals import (
     ReferBackRequest,
     RejectRequest,
     RoleBulkUploadResult,
+    RoleScopeResponse,
+    RoleScopeUpdate,
     SnapshotResponse,
     SubmitWithApproversRequest,
 )
@@ -612,6 +615,63 @@ async def set_role_permission_tier(
     await db.commit()
     await db.refresh(role)
     return ApprovalRoleResponse.from_orm(role)
+
+
+@router.get("/roles/{role_id}/scope", response_model=RoleScopeResponse)
+async def get_role_scope(
+    role_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> RoleScopeResponse:
+    """Return the section scope configuration for an org role."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    rows = (await db.execute(
+        select(ApprovalRoleScope).where(
+            ApprovalRoleScope.tenant_id == tenant_id,
+            ApprovalRoleScope.role_id == role_id,
+        )
+    )).scalars().all()
+
+    return RoleScopeResponse(
+        role_id=str(role_id),
+        sections=[{"section": r.section, "access_level": r.access_level} for r in rows],
+    )
+
+
+@router.patch("/roles/{role_id}/scope", response_model=RoleScopeResponse)
+async def patch_role_scope(
+    role_id: uuid.UUID,
+    data: RoleScopeUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> RoleScopeResponse:
+    """Replace all scope sections for an org role (full replace, not merge)."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    await db.execute(
+        delete(ApprovalRoleScope).where(
+            ApprovalRoleScope.tenant_id == tenant_id,
+            ApprovalRoleScope.role_id == role_id,
+        )
+    )
+
+    for item in data.sections:
+        db.add(ApprovalRoleScope(
+            tenant_id=tenant_id,
+            role_id=role_id,
+            section=item.section,
+            access_level=item.access_level,
+        ))
+
+    await db.commit()
+
+    return RoleScopeResponse(
+        role_id=str(role_id),
+        sections=[{"section": i.section, "access_level": i.access_level} for i in data.sections],
+    )
 
 
 @router.get("/roles/template")
