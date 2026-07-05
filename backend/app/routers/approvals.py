@@ -647,16 +647,115 @@ async def download_roles_template(
         "Description",
     ]
     header_comments = [
-        "REQUIRED\nThe unique name for this role.\nExample: General Manager",
-        "OPTIONAL\nThe name of the parent role this role reports to.\nMust match an existing role name exactly.\nTIP: If multiple roles share the same name (e.g. several DPM nodes), fill in 'Area / Location' on this row to match the correct parent.\nExample: General Manager",
-        "REQUIRED\nThe entity code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N200",
-        "REQUIRED\nThe cost center code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N22341AD",
-        "REQUIRED\nHow many people can hold this role at once.\nOptions: single | unlimited | 2 | 3 … 10\nExample: single",
-        "REQUIRED\nThe leadership designation for this role.\nOptions:\n  Head of Entity        — top-level leader (GM, MD, CEO)\n  Head of Department    — functional dept head (Sales Director, FD)\n  Manager               — unit/section manager within a dept\n  Team Lead             — leads a small team within a section\n  Individual Contributor — no direct reports (leave blank = same)\nExample: Head of Entity",
-        "REQUIRED\nType of engagement for this role.\nOptions: Permanent | Contract | Outsourced\nOutsourced staff appear on the org chart but are excluded from payroll.\nExample: Permanent",
-        "OPTIONAL\nThe broader scope this role is responsible for.\nCan be a region, sales channel, product category, customer segment, or any other dimension.\nFor sub-roles: enter the SAME value as the parent's Area — this is how the system finds the right parent when multiple roles share the same title.\nExample: Lagos Region | On Premise | Key Accounts | Energy Drinks",
-        "OPTIONAL\nA more specific scope within the parent's Area.\nCan be a sub-region, sub-channel, or any further breakdown.\nExample: Lagos Mainland | Modern Trade | SME Segment",
-        "OPTIONAL\nA brief description of this role's responsibilities.\nExample: Oversees all finance and accounting operations",
+        (
+            "COLUMN A — Role Name  [REQUIRED]\n"
+            "─────────────────────────────────\n"
+            "The display name of this role as it will appear on the org chart.\n"
+            "Must be unique within the same combination of Cost Center + Area.\n"
+            "You CAN have multiple roles with the same title (e.g. several DPMs)\n"
+            "as long as they differ in Area / Location.\n\n"
+            "Example: Distributor Partner Manager"
+        ),
+        (
+            "COLUMN B — Parent Role  [OPTIONAL]\n"
+            "────────────────────────────────────\n"
+            "The name of the role this role reports to.\n"
+            "Must match a Role Name in this file or an existing role in the system.\n\n"
+            "If multiple roles share the same parent title (e.g. five DPMs), also\n"
+            "fill in Column H (Area / Location) on this row. The system will then\n"
+            "match the child to the parent whose Area equals the child's Area.\n\n"
+            "Leave blank only for the top-level role (Head of Entity).\n\n"
+            "Example: Sales Director"
+        ),
+        (
+            "COLUMN C — Entity Code  [REQUIRED]\n"
+            "────────────────────────────────────\n"
+            "The legal entity or company this role belongs to.\n"
+            "Select from the dropdown — values come from your Org Structure setup.\n\n"
+            "Example: N200  (Red Bull Nigeria Limited)"
+        ),
+        (
+            "COLUMN D — Cost Center  [REQUIRED]\n"
+            "────────────────────────────────────\n"
+            "The cost center this role is attached to for budget and reporting.\n"
+            "Select from the dropdown — values come from your Org Structure setup.\n\n"
+            "Tip: Use the cost center that OWNS the role's budget, not necessarily\n"
+            "the one the role supports operationally.\n\n"
+            "Example: N22341SG  (Sales On Premise)"
+        ),
+        (
+            "COLUMN E — Capacity  [REQUIRED]\n"
+            "─────────────────────────────────\n"
+            "How many people can hold this role simultaneously.\n\n"
+            "  single    — exactly one person (e.g. GM, Finance Director)\n"
+            "  unlimited — no cap (e.g. Musketeer, Sales Executive)\n"
+            "  2 – 10    — fixed maximum headcount\n\n"
+            "Example: single"
+        ),
+        (
+            "COLUMN F — Designation  [REQUIRED]\n"
+            "────────────────────────────────────\n"
+            "The authority level of this role. Controls how the role appears\n"
+            "on the org chart and feeds into approval routing.\n\n"
+            "  Head of Entity        — top-level leader of the entity\n"
+            "                          (GM, MD, CEO, Country Manager)\n"
+            "  Head of Department    — leads a major functional department\n"
+            "                          (Sales Director, Finance Director)\n"
+            "  Manager               — heads a unit or sub-department within a dept\n"
+            "                          (National On-Premise Manager, Brand Manager)\n"
+            "  Team Lead             — leads a small team; has direct reports\n"
+            "                          but is not a department/unit head\n"
+            "                          (Senior DPS, Outlet Supervisor)\n"
+            "  Individual Contributor — no direct reports; executes role independently\n"
+            "                          (DPS, Musketeer, Chief Accountant, Analyst)\n\n"
+            "Leave blank = treated as Individual Contributor.\n\n"
+            "Example: Manager"
+        ),
+        (
+            "COLUMN G — Employment Type  [REQUIRED]\n"
+            "────────────────────────────────────────\n"
+            "The engagement type of the person(s) who will fill this role.\n\n"
+            "  Permanent  — full-time staff on payroll\n"
+            "  Contract   — fixed-term; shown with dashed border on chart\n"
+            "  Outsourced — third-party staff; dotted border on chart;\n"
+            "               excluded from internal payroll runs\n\n"
+            "Example: Permanent"
+        ),
+        (
+            "COLUMN H — Area / Location  [OPTIONAL]\n"
+            "─────────────────────────────────────────\n"
+            "The primary scope this role is responsible for.\n"
+            "This is NOT limited to physical geography — it can be any business\n"
+            "dimension: sales channel, product category, customer segment, etc.\n\n"
+            "  Geography  : Lagos, Abuja, South-South\n"
+            "  Channel    : On Premise, Off Premise, Modern Trade\n"
+            "  Segment    : Key Accounts, SME, Retail\n"
+            "  Category   : Energy Drinks, Soft Drinks\n\n"
+            "IMPORTANT for same-named roles (e.g. multiple DPMs):\n"
+            "Each DPM must have a DIFFERENT Area so the system can tell them apart\n"
+            "and route subordinates to the right parent.\n\n"
+            "Example: Lagos  |  Off Premise  |  Key Accounts"
+        ),
+        (
+            "COLUMN I — Sub Area  [OPTIONAL]\n"
+            "─────────────────────────────────\n"
+            "A more granular scope within this role's Area.\n"
+            "Typically used for mid-level roles (e.g. a DPM) to define the\n"
+            "territory their direct reports (DPS) will inherit as their Area.\n\n"
+            "Pattern:\n"
+            "  DPM  →  Area = Lagos,          Sub Area = Lagos Mainland\n"
+            "  DPS  →  Area = Lagos Mainland   (inherited from DPM's Sub Area)\n\n"
+            "Example: Lagos Mainland  |  Lagos Island  |  Abuja Central"
+        ),
+        (
+            "COLUMN J — Description  [OPTIONAL]\n"
+            "────────────────────────────────────\n"
+            "A plain-English summary of what this role does.\n"
+            "Shown on the role detail view. Helps new team members understand\n"
+            "the role's purpose at a glance.\n\n"
+            "Example: Manages a portfolio of distributor partners in the Lagos\n"
+            "region, driving sell-out and ensuring outlet execution standards."
+        ),
     ]
     header_fill = PatternFill("solid", fgColor="1D4ED8")
     header_font = Font(bold=True, color="FFFFFF", size=11)

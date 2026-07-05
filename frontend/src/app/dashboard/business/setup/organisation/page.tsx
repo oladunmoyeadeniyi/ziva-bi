@@ -409,6 +409,9 @@ function RoleChartNode({
     ? "#dbeafe"
     : node.designation === "head_of_entity"     ? "#dbeafe"
     : node.designation === "head_of_department" ? "#ede9fe"
+    : node.designation === "manager"            ? "#fff7ed"
+    : node.designation === "section_head"       ? "#fff7ed"   // legacy
+    : node.designation === "team_lead"          ? "#f0fdf9"
     : emp === "contract"   ? "#fffbeb"
     : emp === "outsourced" ? "#f8fafc"
     : "#ffffff";
@@ -416,6 +419,9 @@ function RoleChartNode({
   const borderColor = isDropTarget                                      ? "#3b82f6"
     : node.designation === "head_of_entity"     ? "#3b82f6"
     : node.designation === "head_of_department" ? "#7c3aed"
+    : node.designation === "manager"            ? "#ea580c"
+    : node.designation === "section_head"       ? "#ea580c"   // legacy
+    : node.designation === "team_lead"          ? "#0d9488"
     : emp === "contract"                        ? "#d97706"
     : emp === "outsourced"                      ? "#94a3b8"
     : "#94a3b8";
@@ -438,9 +444,9 @@ function RoleChartNode({
           background: boxBg,
           border: `1.5px ${borderStyle} ${borderColor}`,
           borderRadius: 3,
-          width: 172,
+          width: 148,
           textAlign: "center",
-          padding: "10px 12px 8px",
+          padding: "7px 8px 6px",
           opacity: isDragging ? 0.4 : 1,
           cursor: draggingId ? "copy" : "grab",
           boxShadow: isDropTarget
@@ -466,12 +472,19 @@ function RoleChartNode({
         </div>
 
         {/* Designation */}
-        {node.designation && (
+        {node.designation && !["regular", "individual_contributor", null].includes(node.designation) && (
           <div style={{
             fontSize: 9, fontWeight: 600, marginTop: 3, letterSpacing: 0.3,
-            color: node.designation === "head_of_entity" ? "#1d4ed8" : "#6d28d9",
+            color: node.designation === "head_of_entity"     ? "#1d4ed8"
+                 : node.designation === "head_of_department" ? "#6d28d9"
+                 : node.designation === "manager"            ? "#c2410c"
+                 : node.designation === "section_head"       ? "#c2410c"  // legacy
+                 : "#0f766e", // team_lead
           }}>
-            {node.designation === "head_of_entity" ? "HEAD OF ENTITY" : "HEAD OF DEPT"}
+            { node.designation === "head_of_entity"                    ? "HEAD OF ENTITY"
+            : node.designation === "head_of_department"                ? "HEAD OF DEPT"
+            : node.designation === "manager" || node.designation === "section_head" ? "MANAGER"
+            : "TEAM LEAD" }
           </div>
         )}
 
@@ -530,7 +543,7 @@ function RoleChartNode({
               const isLast  = i === node.children.length - 1;
               const isOnly  = node.children.length === 1;
               return (
-                <div key={child.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative", padding: "0 18px" }}>
+                <div key={child.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", position: "relative", padding: "0 8px" }}>
                   {!isOnly && !isFirst && <div style={{ position: "absolute", top: 0, left: 0, right: "50%", height: RW, background: RC }} />}
                   {!isOnly && !isLast  && <div style={{ position: "absolute", top: 0, left: "50%", right: 0, height: RW, background: RC }} />}
                   <div style={{ width: RW, height: RH, background: RC }} />
@@ -830,7 +843,9 @@ function OrganisationPage() {
   const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
-  const [showFullNames, setShowFullNames] = useState(false); // default: show initials
+  const [showFullNames, setShowFullNames] = useState<boolean>(() => {
+    try { return localStorage.getItem("orgChart_showFullNames") === "true"; } catch { return false; }
+  });
   const [chartZoom, setChartZoom] = useState(0.85);          // default zoom-out so wide trees fit
   const [chartFullscreen, setChartFullscreen] = useState(false);
 
@@ -1337,7 +1352,7 @@ function OrganisationPage() {
                     title="Expand to full screen">
                     <i className="ti ti-arrows-maximize" style={{ fontSize: 13 }} />
                   </button>
-                  <button type="button" onClick={() => setShowFullNames(v => !v)}
+                  <button type="button" onClick={() => setShowFullNames(v => { const next = !v; try { localStorage.setItem("orgChart_showFullNames", String(next)); } catch {} return next; })}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50"
                     title={showFullNames ? "Switch to initials view" : "Switch to full name view"}>
                     <i className="ti ti-text-size" style={{ fontSize: 13 }} />
@@ -1437,7 +1452,7 @@ function OrganisationPage() {
                     </div>
                   )}
                   <div style={{ overflowX: "auto", overflowY: "auto", paddingBottom: 32, paddingTop: 4, maxHeight: 520 }}>
-                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0", transform: `scale(${chartZoom})`, transformOrigin: "top center", transition: "transform 0.15s" }}>
+                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 16, padding: "4px 8px 0", transform: `scale(${chartZoom})`, transformOrigin: "top center", transition: "transform 0.15s" }}>
                       {roleTree.map(root => (
                         <RoleChartNode
                           key={root.id}
@@ -1471,7 +1486,7 @@ function OrganisationPage() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", borderBottom: "1px solid #e2e8f0", background: "#fff", flexShrink: 0 }}>
                     <span style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>Role Hierarchy</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <button type="button" onClick={() => setShowFullNames(v => !v)}
+                      <button type="button" onClick={() => setShowFullNames(v => { const next = !v; try { localStorage.setItem("orgChart_showFullNames", String(next)); } catch {} return next; })}
                         style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontSize: 13, fontWeight: 500, border: "1px solid #d1d5db", borderRadius: 6, background: "#fff", cursor: "pointer" }}>
                         <i className="ti ti-text-size" style={{ fontSize: 13 }} />
                         {showFullNames ? "Initials" : "Full names"}
@@ -1503,7 +1518,7 @@ function OrganisationPage() {
                   </div>
                   {/* Fullscreen chart area */}
                   <div style={{ flex: 1, overflow: "auto", padding: "24px 32px" }}>
-                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0", transform: `scale(${chartZoom})`, transformOrigin: "top center", transition: "transform 0.15s" }}>
+                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 16, padding: "4px 8px 0", transform: `scale(${chartZoom})`, transformOrigin: "top center", transition: "transform 0.15s" }}>
                       {roleTree.map(root => (
                         <RoleChartNode
                           key={root.id}
@@ -1685,22 +1700,20 @@ function OrganisationPage() {
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-2">Designation <span className="text-red-500">*</span></label>
-                        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                        <div className="grid grid-cols-5 rounded-lg border border-gray-300 overflow-hidden text-sm">
                           {([
-                            { value: "regular",            label: "Regular" },
-                            { value: "head_of_department", label: "Head of Dept" },
-                            { value: "head_of_entity",     label: "Head of Entity" },
+                            { value: "individual_contributor", label: "Ind. Contributor", activeClass: "bg-gray-500 text-white" },
+                            { value: "team_lead",              label: "Team Lead",         activeClass: "bg-teal-600 text-white" },
+                            { value: "manager",                label: "Manager",           activeClass: "bg-orange-500 text-white" },
+                            { value: "head_of_department",     label: "Head of Dept",      activeClass: "bg-violet-600 text-white" },
+                            { value: "head_of_entity",         label: "Head of Entity",    activeClass: "bg-blue-600 text-white" },
                           ] as const).map((opt, idx) => (
                             <button
                               key={opt.value}
                               type="button"
                               onClick={() => setRoleForm(f => ({ ...f, designation: opt.value }))}
-                              className={`flex-1 px-3 py-2 font-medium transition-colors ${
-                                roleForm.designation === opt.value
-                                  ? opt.value === "head_of_entity" ? "bg-amber-500 text-white"
-                                  : opt.value === "head_of_department" ? "bg-violet-600 text-white"
-                                  : "bg-gray-500 text-white"
-                                  : "bg-white text-gray-600 hover:bg-gray-50"
+                              className={`px-1 py-2 font-medium transition-colors text-center ${
+                                roleForm.designation === opt.value ? opt.activeClass : "bg-white text-gray-600 hover:bg-gray-50"
                               } ${idx > 0 ? "border-l border-gray-300" : ""}`}
                             >
                               {opt.label}
