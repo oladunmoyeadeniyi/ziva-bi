@@ -567,7 +567,6 @@ async def download_roles_template(
         import openpyxl
         from openpyxl.worksheet.datavalidation import DataValidation
         from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.comments import Comment
     except ImportError:
         raise HTTPException(status_code=500, detail="openpyxl not installed.")
     except Exception as _exc:
@@ -623,6 +622,61 @@ async def download_roles_template(
     ws.title = "Roles"
 
     # ── Hidden ref sheets ─────────────────────────────────────────────────────
+    # ── Instructions sheet ───────────────────────────────────────────────────
+    ws_guide = wb.create_sheet("Instructions", 0)  # insert as first sheet
+    guide_title_fill = PatternFill("solid", fgColor="1D4ED8")
+    guide_title_font = Font(bold=True, color="FFFFFF", size=13)
+    guide_head_fill  = PatternFill("solid", fgColor="1E40AF")
+    guide_head_font  = Font(bold=True, color="FFFFFF", size=11)
+    guide_rows = [
+        ("ROLE HIERARCHY UPLOAD GUIDE", "", ""),
+        ("", "", ""),
+        ("Column", "Required?", "Description & Accepted Values"),
+        ("A  Role Name",        "REQUIRED",  "Display name on the org chart. Must be unique per Cost Center + Area combination. Same name is allowed across different Areas (e.g. multiple DPMs)."),
+        ("B  Parent Role",      "optional",  "Name of the role this role reports to. Leave blank only for the top-level role. If multiple roles share a parent name, fill Area (col H) to disambiguate."),
+        ("C  Entity Code",      "REQUIRED",  "Legal entity code from your Org Structure. Select from dropdown. Example: N200"),
+        ("D  Cost Center",      "REQUIRED",  "Cost center code from your Org Structure. Select from dropdown. Example: N22341SG"),
+        ("E  Capacity",         "REQUIRED",  "How many people can hold this role. Values: single | unlimited | 2 to 10"),
+        ("F  Designation",      "REQUIRED",  "Authority level. Values: Head of Entity | Head of Department | Manager | Team Lead | Individual Contributor. Controls org chart appearance and approval routing."),
+        ("G  Employment Type",  "REQUIRED",  "Engagement type. Values: Permanent | Contract | Outsourced"),
+        ("H  Area / Location",  "optional",  "Primary scope (geography, channel, segment, etc.). Required when multiple roles share the same name. Example: Lagos | Off Premise | Key Accounts"),
+        ("I  Sub Area",         "optional",  "Narrower scope within the Area. Used so subordinate roles can inherit the parent's Sub Area as their own Area. Example: Lagos Mainland"),
+        ("J  Description",      "optional",  "Plain-English summary of the role's purpose. Shown on the role detail view."),
+        ("", "", ""),
+        ("DESIGNATION GUIDE", "", ""),
+        ("Head of Entity",        "", "Top-level leader of the entire entity (GM, MD, CEO, Country Manager). Only one per entity."),
+        ("Head of Department",    "", "Leads a major functional department (Sales Director, Finance Director)."),
+        ("Manager",               "", "Heads a unit or sub-department within a department (National On-Premise Manager, Brand Manager)."),
+        ("Team Lead",             "", "Leads a small team with direct reports but is not a department/unit head (Senior DPS, Outlet Supervisor)."),
+        ("Individual Contributor","", "No direct reports; executes role independently (DPS, Musketeer, Chief Accountant, Analyst). Default when left blank."),
+        ("", "", ""),
+        ("AREA & SUB AREA PATTERN", "", ""),
+        ("Example:", "", "DPM  -->  Area = Lagos,           Sub Area = Lagos Mainland"),
+        ("",         "", "DPS  -->  Area = Lagos Mainland   (inherited from DPM Sub Area)"),
+        ("", "", ""),
+        ("TIP:", "", "Fill in the Roles sheet. Do not rename or delete columns. * = required field."),
+    ]
+    ws_guide.column_dimensions["A"].width = 26
+    ws_guide.column_dimensions["B"].width = 12
+    ws_guide.column_dimensions["C"].width = 90
+    for r_idx, (col_a, col_b, col_c) in enumerate(guide_rows, start=1):
+        ws_guide.cell(row=r_idx, column=1, value=col_a)
+        ws_guide.cell(row=r_idx, column=2, value=col_b)
+        ws_guide.cell(row=r_idx, column=3, value=col_c)
+        if r_idx == 1:
+            c = ws_guide.cell(row=r_idx, column=1)
+            c.fill = guide_title_fill; c.font = guide_title_font
+            ws_guide.merge_cells(f"A1:C1")
+        elif col_a in ("Column", "DESIGNATION GUIDE", "AREA & SUB AREA PATTERN"):
+            for ci in range(1, 4):
+                cc = ws_guide.cell(row=r_idx, column=ci)
+                cc.fill = guide_head_fill; cc.font = guide_head_font
+        # wrap col C
+        ws_guide.cell(row=r_idx, column=3).alignment = Alignment(wrap_text=True, vertical="top")
+    ws_guide.row_dimensions[1].height = 22
+    # make Roles the active sheet
+    wb.active = wb["Roles"]
+
     ws_cc = wb.create_sheet("_cc")
     for i, code in enumerate(cc_codes, start=1):
         ws_cc.cell(row=i, column=1, value=code)
@@ -646,125 +700,13 @@ async def download_roles_template(
         "Sub Area",
         "Description",
     ]
-    header_comments = [
-        (
-            "COLUMN A — Role Name  [REQUIRED]\n"
-            "─────────────────────────────────\n"
-            "The display name of this role as it will appear on the org chart.\n"
-            "Must be unique within the same combination of Cost Center + Area.\n"
-            "You CAN have multiple roles with the same title (e.g. several DPMs)\n"
-            "as long as they differ in Area / Location.\n\n"
-            "Example: Distributor Partner Manager"
-        ),
-        (
-            "COLUMN B — Parent Role  [OPTIONAL]\n"
-            "────────────────────────────────────\n"
-            "The name of the role this role reports to.\n"
-            "Must match a Role Name in this file or an existing role in the system.\n\n"
-            "If multiple roles share the same parent title (e.g. five DPMs), also\n"
-            "fill in Column H (Area / Location) on this row. The system will then\n"
-            "match the child to the parent whose Area equals the child's Area.\n\n"
-            "Leave blank only for the top-level role (Head of Entity).\n\n"
-            "Example: Sales Director"
-        ),
-        (
-            "COLUMN C — Entity Code  [REQUIRED]\n"
-            "────────────────────────────────────\n"
-            "The legal entity or company this role belongs to.\n"
-            "Select from the dropdown — values come from your Org Structure setup.\n\n"
-            "Example: N200  (Red Bull Nigeria Limited)"
-        ),
-        (
-            "COLUMN D — Cost Center  [REQUIRED]\n"
-            "────────────────────────────────────\n"
-            "The cost center this role is attached to for budget and reporting.\n"
-            "Select from the dropdown — values come from your Org Structure setup.\n\n"
-            "Tip: Use the cost center that OWNS the role's budget, not necessarily\n"
-            "the one the role supports operationally.\n\n"
-            "Example: N22341SG  (Sales On Premise)"
-        ),
-        (
-            "COLUMN E — Capacity  [REQUIRED]\n"
-            "─────────────────────────────────\n"
-            "How many people can hold this role simultaneously.\n\n"
-            "  single    — exactly one person (e.g. GM, Finance Director)\n"
-            "  unlimited — no cap (e.g. Musketeer, Sales Executive)\n"
-            "  2 – 10    — fixed maximum headcount\n\n"
-            "Example: single"
-        ),
-        (
-            "COLUMN F — Designation  [REQUIRED]\n"
-            "────────────────────────────────────\n"
-            "The authority level of this role. Controls how the role appears\n"
-            "on the org chart and feeds into approval routing.\n\n"
-            "  Head of Entity        — top-level leader of the entity\n"
-            "                          (GM, MD, CEO, Country Manager)\n"
-            "  Head of Department    — leads a major functional department\n"
-            "                          (Sales Director, Finance Director)\n"
-            "  Manager               — heads a unit or sub-department within a dept\n"
-            "                          (National On-Premise Manager, Brand Manager)\n"
-            "  Team Lead             — leads a small team; has direct reports\n"
-            "                          but is not a department/unit head\n"
-            "                          (Senior DPS, Outlet Supervisor)\n"
-            "  Individual Contributor — no direct reports; executes role independently\n"
-            "                          (DPS, Musketeer, Chief Accountant, Analyst)\n\n"
-            "Leave blank = treated as Individual Contributor.\n\n"
-            "Example: Manager"
-        ),
-        (
-            "COLUMN G — Employment Type  [REQUIRED]\n"
-            "────────────────────────────────────────\n"
-            "The engagement type of the person(s) who will fill this role.\n\n"
-            "  Permanent  — full-time staff on payroll\n"
-            "  Contract   — fixed-term; shown with dashed border on chart\n"
-            "  Outsourced — third-party staff; dotted border on chart;\n"
-            "               excluded from internal payroll runs\n\n"
-            "Example: Permanent"
-        ),
-        (
-            "COLUMN H — Area / Location  [OPTIONAL]\n"
-            "─────────────────────────────────────────\n"
-            "The primary scope this role is responsible for.\n"
-            "This is NOT limited to physical geography — it can be any business\n"
-            "dimension: sales channel, product category, customer segment, etc.\n\n"
-            "  Geography  : Lagos, Abuja, South-South\n"
-            "  Channel    : On Premise, Off Premise, Modern Trade\n"
-            "  Segment    : Key Accounts, SME, Retail\n"
-            "  Category   : Energy Drinks, Soft Drinks\n\n"
-            "IMPORTANT for same-named roles (e.g. multiple DPMs):\n"
-            "Each DPM must have a DIFFERENT Area so the system can tell them apart\n"
-            "and route subordinates to the right parent.\n\n"
-            "Example: Lagos  |  Off Premise  |  Key Accounts"
-        ),
-        (
-            "COLUMN I — Sub Area  [OPTIONAL]\n"
-            "─────────────────────────────────\n"
-            "A more granular scope within this role's Area.\n"
-            "Typically used for mid-level roles (e.g. a DPM) to define the\n"
-            "territory their direct reports (DPS) will inherit as their Area.\n\n"
-            "Pattern:\n"
-            "  DPM  →  Area = Lagos,          Sub Area = Lagos Mainland\n"
-            "  DPS  →  Area = Lagos Mainland   (inherited from DPM's Sub Area)\n\n"
-            "Example: Lagos Mainland  |  Lagos Island  |  Abuja Central"
-        ),
-        (
-            "COLUMN J — Description  [OPTIONAL]\n"
-            "────────────────────────────────────\n"
-            "A plain-English summary of what this role does.\n"
-            "Shown on the role detail view. Helps new team members understand\n"
-            "the role's purpose at a glance.\n\n"
-            "Example: Manages a portfolio of distributor partners in the Lagos\n"
-            "region, driving sell-out and ensuring outlet execution standards."
-        ),
-    ]
     header_fill = PatternFill("solid", fgColor="1D4ED8")
     header_font = Font(bold=True, color="FFFFFF", size=11)
-    for col, (h, note) in enumerate(zip(headers, header_comments), start=1):
+    for col, h in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
-        cell.comment = Comment(note, "ZivaBI")
 
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 28
@@ -873,7 +815,7 @@ async def download_roles_template(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=roles_template.xlsx"},
+        headers={"Content-Disposition": "attachment; filename=roles_template.xlsx", "Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 
 
@@ -941,8 +883,8 @@ async def bulk_upload_roles(
     role_by_name: dict[str, ApprovalRole] = {r.name.lower(): r for r in existing_roles_q}
     # Composite lookup: (name, area) — correctly disambiguates same-named roles
     # (e.g. five DPMs each covering a different area). This is the preferred lookup.
-    role_by_composite: dict[tuple[str, str], ApprovalRole] = {
-        (r.name.lower(), (r.area or "").lower()): r for r in existing_roles_q
+    role_by_composite: dict[tuple[str, str, str], ApprovalRole] = {
+        (r.name.lower(), (r.area or "").lower(), (r.sub_area or "").lower()): r for r in existing_roles_q
     }
 
     cost_centers_q = (await db.execute(
@@ -1026,7 +968,7 @@ async def bulk_upload_roles(
                 continue
 
         # Look up by composite key first (handles multiple roles with same name)
-        composite_key = (role_name.lower(), (area_raw or "").lower())
+        composite_key = (role_name.lower(), (area_raw or "").lower(), (sub_area_raw or "").lower())
         existing = role_by_composite.get(composite_key) or (
             role_by_name.get(role_name.lower()) if not area_raw else None
         )
@@ -1058,14 +1000,14 @@ async def bulk_upload_roles(
             db.add(new_role)
             # Register in both dicts so later rows in this upload find it
             role_by_composite[composite_key] = new_role
-            role_by_name[role_name.lower()] = new_role  # fallback (may be overwritten by next same-name role)
+            role_by_name[role_name.lower()] = new_role  # name-only fallback
             upserted.append((role_name, new_role))
             result.created += 1
 
     await db.flush()  # generate PKs so pass-2 can reference them
 
     # ── Pass 2: wire parent_role_id ───────────────────────────────────────────
-    # role_by_composite keyed by (name, area) handles most cases.
+    # role_by_composite keyed by (name, area, sub_area) is the primary lookup.
     # role_by_subarea keyed by (name, sub_area) handles the cascade pattern:
     #   DPM.area="Lagos", DPM.sub_area="Lagos Mainland"
     #   DPS.area="Lagos Mainland" → matches DPM via sub_area key.
@@ -1079,18 +1021,20 @@ async def bulk_upload_roles(
         parent_name = _col(row, "ParentRole", "Parent Role", "parentrole")
         if not role_name or not parent_name:
             continue
-        row_area = _col(row, "Area", "Area / Location", "arealocation").lower()
-        # Find THIS child by (name, area) key
+        row_area     = _col(row, "Area", "Area / Location", "arealocation").lower()
+        row_sub_area = _col(row, "SubArea", "Sub Area", "subarea").lower()
+        # Find THIS child by full (name, area, sub_area) key, then fall back
         child = (
-            role_by_composite.get((role_name.lower(), row_area))
+            role_by_composite.get((role_name.lower(), row_area, row_sub_area))
+            or role_by_composite.get((role_name.lower(), row_area, ""))
             or role_by_name.get(role_name.lower())
         )
-        # Find parent: try (parent_name, child_area) by area match, then by
-        # sub_area match (child's area = parent's sub_area), then name-only
+        # Find parent: try area match (parent's area = child's area), then
+        # sub_area cascade (child's area = parent's sub_area), then name-only
         parent = None
         if row_area:
             parent = (
-                role_by_composite.get((parent_name.lower(), row_area))
+                role_by_composite.get((parent_name.lower(), row_area, ""))
                 or role_by_subarea.get((parent_name.lower(), row_area))
             )
         if not parent:
