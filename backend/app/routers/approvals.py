@@ -611,8 +611,11 @@ async def download_roles_template(
         return str(max_occ)
 
     def _desig_label(d: str | None) -> str:
-        if d == "head_of_entity":     return "Head of Entity"
-        if d == "head_of_department": return "Head of Department"
+        if d == "head_of_entity":          return "Head of Entity"
+        if d == "head_of_department":      return "Head of Department"
+        if d in ("manager", "section_head"): return "Manager"      # section_head = legacy
+        if d == "team_lead":               return "Team Lead"
+        if d in ("individual_contributor", "regular"): return "Individual Contributor"
         return ""
 
     wb = openpyxl.Workbook()
@@ -649,7 +652,7 @@ async def download_roles_template(
         "REQUIRED\nThe entity code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N200",
         "REQUIRED\nThe cost center code this role belongs to.\nSelect from the dropdown — codes come from your org structure.\nExample: N22341AD",
         "REQUIRED\nHow many people can hold this role at once.\nOptions: single | unlimited | 2 | 3 … 10\nExample: single",
-        "REQUIRED\nThe leadership designation for this role.\nOptions: Head of Entity | Head of Department | (leave blank for Regular)\nExample: Head of Entity",
+        "REQUIRED\nThe leadership designation for this role.\nOptions:\n  Head of Entity        — top-level leader (GM, MD, CEO)\n  Head of Department    — functional dept head (Sales Director, FD)\n  Manager               — unit/section manager within a dept\n  Team Lead             — leads a small team within a section\n  Individual Contributor — no direct reports (leave blank = same)\nExample: Head of Entity",
         "REQUIRED\nType of engagement for this role.\nOptions: Permanent | Contract | Outsourced\nOutsourced staff appear on the org chart but are excluded from payroll.\nExample: Permanent",
         "OPTIONAL\nThe broader scope this role is responsible for.\nCan be a region, sales channel, product category, customer segment, or any other dimension.\nFor sub-roles: enter the SAME value as the parent's Area — this is how the system finds the right parent when multiple roles share the same title.\nExample: Lagos Region | On Premise | Key Accounts | Energy Drinks",
         "OPTIONAL\nA more specific scope within the parent's Area.\nCan be a sub-region, sub-channel, or any further breakdown.\nExample: Lagos Mainland | Modern Trade | SME Segment",
@@ -729,10 +732,10 @@ async def download_roles_template(
 
     dv_desig = DataValidation(
         type="list",
-        formula1='"Head of Entity,Head of Department,"',
+        formula1='"Head of Entity,Head of Department,Manager,Team Lead,Individual Contributor"',
         allow_blank=True,
         showErrorMessage=True,
-        error="Select: Head of Entity, Head of Department, or leave blank.",
+        error="Select: Head of Entity, Head of Department, Manager, Team Lead, Individual Contributor, or leave blank.",
         errorTitle="Invalid Designation",
     )
     ws.add_data_validation(dv_desig)
@@ -877,7 +880,14 @@ async def bulk_upload_roles(
         entity_code_raw = _col(row, "EntityCode", "Entity Code", "entitycode")
         capacity_raw = _col(row, "Capacity", "MaxOccupants", "max_occupants")
         _desig = _col(row, "Designation", "designation").lower().replace(" ", "_")
-        designation_raw: str | None = _desig if _desig in ("head_of_department", "head_of_entity") else None
+        # Normalise legacy values + accept both old and new names
+        _DESIG_ALIAS = {
+            "section_head": "manager",          # renamed
+            "regular": "individual_contributor", # renamed
+        }
+        _desig = _DESIG_ALIAS.get(_desig, _desig)
+        _VALID_DESIG = ("head_of_entity", "head_of_department", "manager", "team_lead", "individual_contributor")
+        designation_raw: str | None = _desig if _desig in _VALID_DESIG else None
         _emp = _col(row, "EmploymentType", "Employment Type", "employmenttype").lower().strip()
         employment_type_raw = _emp if _emp in ("contract", "outsourced") else "permanent"
         area_raw = _col(row, "Area", "Area / Location", "arealocation") or None
