@@ -50,3 +50,9 @@ desktop.ini
 
 # Claude Code — local machine settings (never commit)
 .claude/settings.local.json
+
+# Backup and log files — never commit
+*.bak
+backend/uvicorn_out.txt
+backend/uvicorn_err.txt
+backend/scripts/backups/
