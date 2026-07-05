@@ -525,6 +525,22 @@ class SnapshotResponse(BaseModel):
     """A submitted expense report snapshot at a specific version."""
 
     id: str
+    report_id: str
+    version: int
+    submitted_at: datetime
+    snapshot_data: dict
+    created_at: datetime
+
+
+# ── Tenant User (for approver dropdowns) ─────────────────────────────────────
+
+class TenantUserResponse(BaseModel):
+    """Minimal user record returned for approver selection dropdowns."""
+
+    id: str
+    full_name: str
+    email: str
+
 
 # ── Role Scope ────────────────────────────────────────────────────────────────
 
