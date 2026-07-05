@@ -835,7 +835,13 @@ async def bulk_upload_roles(
     existing_roles_q = (await db.execute(
         select(ApprovalRole).where(ApprovalRole.tenant_id == tenant_id)
     )).scalars().all()
+    # Primary lookup: name-only (last-one-wins, used only as fallback)
     role_by_name: dict[str, ApprovalRole] = {r.name.lower(): r for r in existing_roles_q}
+    # Composite lookup: (name, area) — correctly disambiguates same-named roles
+    # (e.g. five DPMs each covering a different area). This is the preferred lookup.
+    role_by_composite: dict[tuple[str, str], ApprovalRole] = {
+        (r.name.lower(), (r.area or "").lower()): r for r in existing_roles_q
+    }
 
     cost_centers_q = (await db.execute(
         select(OrgStructureNode).where(
@@ -910,7 +916,11 @@ async def bulk_upload_roles(
                 result.skipped += 1
                 continue
 
-        existing = role_by_name.get(role_name.lower())
+        # Look up by composite key first (handles multiple roles with same name)
+        composite_key = (role_name.lower(), (area_raw or "").lower())
+        existing = role_by_composite.get(composite_key) or (
+            role_by_name.get(role_name.lower()) if not area_raw else None
+        )
         if existing:
             existing.description = description or existing.description
             existing.cost_center_id = cc_id if cc_id is not None else existing.cost_center_id
@@ -937,35 +947,45 @@ async def bulk_upload_roles(
                 display_order=0,
             )
             db.add(new_role)
-            role_by_name[role_name.lower()] = new_role
+            # Register in both dicts so later rows in this upload find it
+            role_by_composite[composite_key] = new_role
+            role_by_name[role_name.lower()] = new_role  # fallback (may be overwritten by next same-name role)
             upserted.append((role_name, new_role))
             result.created += 1
 
     await db.flush()  # generate PKs so pass-2 can reference them
 
     # ── Pass 2: wire parent_role_id ───────────────────────────────────────────
-    # Build secondary index: (name, area) → role, for disambiguation when
-    # multiple roles share the same title (e.g. several DPM nodes, each with
-    # a different area). A child row that fills in Area will be matched to the
-    # parent whose name AND area both match; falls back to name-only.
-    role_by_name_area: dict[tuple[str, str], ApprovalRole] = {}
-    for r in role_by_name.values():
-        if r.area:
-            role_by_name_area[(r.name.lower(), r.area.lower())] = r
+    # role_by_composite keyed by (name, area) handles most cases.
+    # role_by_subarea keyed by (name, sub_area) handles the cascade pattern:
+    #   DPM.area="Lagos", DPM.sub_area="Lagos Mainland"
+    #   DPS.area="Lagos Mainland" → matches DPM via sub_area key.
+    role_by_subarea: dict[tuple[str, str], ApprovalRole] = {
+        (r.name.lower(), r.sub_area.lower()): r
+        for r in role_by_composite.values() if r.sub_area
+    }
 
     for i, row in enumerate(rows, start=2):
         role_name = _col(row, "RoleName", "Role Name", "name")
         parent_name = _col(row, "ParentRole", "Parent Role", "parentrole")
         if not role_name or not parent_name:
             continue
-        child = role_by_name.get(role_name.lower())
-        # Try (parent_name, child_area) disambiguation first, then name-only
-        child_area = _col(row, "Area", "Area / Location", "arealocation")
-        parent = (
-            role_by_name_area.get((parent_name.lower(), child_area.lower()))
-            if child_area
-            else None
-        ) or role_by_name.get(parent_name.lower())
+        row_area = _col(row, "Area", "Area / Location", "arealocation").lower()
+        # Find THIS child by (name, area) key
+        child = (
+            role_by_composite.get((role_name.lower(), row_area))
+            or role_by_name.get(role_name.lower())
+        )
+        # Find parent: try (parent_name, child_area) by area match, then by
+        # sub_area match (child's area = parent's sub_area), then name-only
+        parent = None
+        if row_area:
+            parent = (
+                role_by_composite.get((parent_name.lower(), row_area))
+                or role_by_subarea.get((parent_name.lower(), row_area))
+            )
+        if not parent:
+            parent = role_by_name.get(parent_name.lower())
         if child and parent:
             child.parent_role_id = parent.id
         elif child and not parent:

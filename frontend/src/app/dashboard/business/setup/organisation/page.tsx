@@ -831,12 +831,21 @@ function OrganisationPage() {
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
   const [showFullNames, setShowFullNames] = useState(false); // default: show initials
+  const [chartZoom, setChartZoom] = useState(0.85);          // default zoom-out so wide trees fit
+  const [chartFullscreen, setChartFullscreen] = useState(false);
 
   // Bulk upload state
   const roleUploadRef = useRef<HTMLInputElement>(null);
   const [roleUploadResult, setRoleUploadResult] = useState<{ created: number; updated: number; skipped: number; errors: Array<{ row: number; role: string; error: string }> } | null>(null);
   const [uploadingRoles, setUploadingRoles] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
+
+  // Close fullscreen on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setChartFullscreen(false); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const loadRoles = async () => {
     if (!accessToken) return;
@@ -1308,6 +1317,26 @@ function OrganisationPage() {
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <p className="text-sm font-semibold text-gray-800">Role hierarchy</p>
                 <div className="flex items-center gap-2 flex-wrap">
+                  {/* Zoom controls */}
+                  <div className="flex items-center border border-gray-300 rounded-md overflow-hidden">
+                    <button type="button" onClick={() => setChartZoom(z => Math.max(0.3, +(z - 0.1).toFixed(1)))}
+                      className="px-2 py-1.5 text-sm font-medium hover:bg-gray-50 border-r border-gray-300" title="Zoom out">
+                      <i className="ti ti-minus" style={{ fontSize: 12 }} />
+                    </button>
+                    <button type="button" onClick={() => setChartZoom(1)}
+                      className="px-2 py-1.5 text-xs font-medium hover:bg-gray-50 border-r border-gray-300 min-w-[42px] text-center" title="Reset zoom">
+                      {Math.round(chartZoom * 100)}%
+                    </button>
+                    <button type="button" onClick={() => setChartZoom(z => Math.min(2, +(z + 0.1).toFixed(1)))}
+                      className="px-2 py-1.5 text-sm font-medium hover:bg-gray-50" title="Zoom in">
+                      <i className="ti ti-plus" style={{ fontSize: 12 }} />
+                    </button>
+                  </div>
+                  <button type="button" onClick={() => setChartFullscreen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50"
+                    title="Expand to full screen">
+                    <i className="ti ti-arrows-maximize" style={{ fontSize: 13 }} />
+                  </button>
                   <button type="button" onClick={() => setShowFullNames(v => !v)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-md hover:bg-gray-50"
                     title={showFullNames ? "Switch to initials view" : "Switch to full name view"}>
@@ -1407,8 +1436,8 @@ function OrganisationPage() {
                       Drop here to make top-level role
                     </div>
                   )}
-                  <div style={{ overflowX: "auto", overflowY: "visible", paddingBottom: 32, paddingTop: 4 }}>
-                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0" }}>
+                  <div style={{ overflowX: "auto", overflowY: "auto", paddingBottom: 32, paddingTop: 4, maxHeight: 520 }}>
+                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0", transform: `scale(${chartZoom})`, transformOrigin: "top center", transition: "transform 0.15s" }}>
                       {roleTree.map(root => (
                         <RoleChartNode
                           key={root.id}
@@ -1433,6 +1462,74 @@ function OrganisationPage() {
                     <span><i className="ti ti-users mr-1.5 text-violet-400" /><strong className="text-gray-700">{orgRoles.filter(r => r.max_occupants !== 1).length}</strong> multi-occupant</span>
                   </div>
                 </>
+              )}
+
+              {/* ── Fullscreen chart overlay ── */}
+              {chartFullscreen && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f8fafc", display: "flex", flexDirection: "column" }}>
+                  {/* Fullscreen toolbar */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", borderBottom: "1px solid #e2e8f0", background: "#fff", flexShrink: 0 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>Role Hierarchy</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button type="button" onClick={() => setShowFullNames(v => !v)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontSize: 13, fontWeight: 500, border: "1px solid #d1d5db", borderRadius: 6, background: "#fff", cursor: "pointer" }}>
+                        <i className="ti ti-text-size" style={{ fontSize: 13 }} />
+                        {showFullNames ? "Initials" : "Full names"}
+                      </button>
+                      <div style={{ display: "flex", alignItems: "center", border: "1px solid #d1d5db", borderRadius: 6, overflow: "hidden" }}>
+                        <button type="button" onClick={() => setChartZoom(z => Math.max(0.2, +(z - 0.1).toFixed(1)))}
+                          style={{ padding: "5px 9px", fontSize: 13, background: "#fff", border: "none", borderRight: "1px solid #d1d5db", cursor: "pointer" }} title="Zoom out">
+                          <i className="ti ti-minus" />
+                        </button>
+                        <button type="button" onClick={() => setChartZoom(1)}
+                          style={{ padding: "5px 8px", fontSize: 12, background: "#fff", border: "none", borderRight: "1px solid #d1d5db", cursor: "pointer", minWidth: 46, textAlign: "center" }} title="Reset zoom">
+                          {Math.round(chartZoom * 100)}%
+                        </button>
+                        <button type="button" onClick={() => setChartZoom(z => Math.min(2, +(z + 0.1).toFixed(1)))}
+                          style={{ padding: "5px 9px", fontSize: 13, background: "#fff", border: "none", cursor: "pointer" }} title="Zoom in">
+                          <i className="ti ti-plus" />
+                        </button>
+                      </div>
+                      <button type="button" onClick={() => setChartZoom(0.6)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontSize: 13, fontWeight: 500, border: "1px solid #d1d5db", borderRadius: 6, background: "#fff", cursor: "pointer" }}
+                        title="Fit all roles on screen">
+                        <i className="ti ti-arrows-minimize" style={{ fontSize: 13 }} /> Fit
+                      </button>
+                      <button type="button" onClick={() => setChartFullscreen(false)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", fontSize: 13, fontWeight: 600, border: "1px solid #e2e8f0", borderRadius: 6, background: "#0f172a", color: "#fff", cursor: "pointer" }}>
+                        <i className="ti ti-arrows-minimize" style={{ fontSize: 13 }} /> Close view
+                      </button>
+                    </div>
+                  </div>
+                  {/* Fullscreen chart area */}
+                  <div style={{ flex: 1, overflow: "auto", padding: "24px 32px" }}>
+                    <div style={{ display: "inline-flex", flexDirection: "row", alignItems: "flex-start", justifyContent: "center", minWidth: "100%", gap: 32, padding: "4px 16px 0", transform: `scale(${chartZoom})`, transformOrigin: "top center", transition: "transform 0.15s" }}>
+                      {roleTree.map(root => (
+                        <RoleChartNode
+                          key={root.id}
+                          node={root}
+                          onAddChild={openAddRole}
+                          onDelete={deleteRole}
+                          onEdit={openEditRole}
+                          draggingId={draggingId}
+                          dropTargetId={dropTargetId}
+                          onDragStart={handleRoleDragStart}
+                          onDragEnter={handleRoleDragEnter}
+                          onDragEnd={handleRoleDragEnd}
+                          onDrop={handleRoleDrop}
+                          showFullName={showFullNames}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  {/* Fullscreen legend */}
+                  <div style={{ padding: "10px 20px", borderTop: "1px solid #e2e8f0", background: "#fff", display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", fontSize: 11, color: "#64748b", flexShrink: 0 }}>
+                    <span><i className="ti ti-user-star" style={{ marginRight: 4, color: "#60a5fa" }} /><strong style={{ color: "#374151" }}>{orgRoles.length}</strong> roles</span>
+                    <span><i className="ti ti-user" style={{ marginRight: 4, color: "#34d399" }} /><strong style={{ color: "#374151" }}>{orgRoles.filter(r => r.max_occupants === 1).length}</strong> single-occupant</span>
+                    <span><i className="ti ti-users" style={{ marginRight: 4, color: "#a78bfa" }} /><strong style={{ color: "#374151" }}>{orgRoles.filter(r => r.max_occupants !== 1).length}</strong> multi-occupant</span>
+                    <span style={{ marginLeft: "auto", color: "#94a3b8" }}>Press Esc or click Close view to exit</span>
+                  </div>
+                </div>
               )}
 
               {/* ── Clear-all confirm modal ── */}
@@ -1483,8 +1580,10 @@ function OrganisationPage() {
 
               {/* Add / Edit role modal */}
               {showRoleModal && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-                  <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm flex flex-col" style={{ maxHeight: "90vh" }}>
+                    {/* Scrollable body */}
+                    <div className="overflow-y-auto flex-1 p-6">
                     <h3 className="text-base font-semibold mb-4">
                       {editingRole ? "Edit role" : roleParentId ? "Add sub-role" : "Add top-level role"}
                     </h3>
@@ -1655,7 +1754,9 @@ function OrganisationPage() {
                         />
                       </div>
                     </div>
-                    <div className="flex gap-2 mt-6 justify-end">
+                    </div>{/* end scrollable body */}
+                    {/* Sticky footer */}
+                    <div className="flex gap-2 px-6 py-4 justify-end border-t border-gray-100 flex-shrink-0">
                       <button type="button" onClick={() => setShowRoleModal(false)}
                         className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
                         Cancel
