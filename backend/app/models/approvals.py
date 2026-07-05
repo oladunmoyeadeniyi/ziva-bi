@@ -429,7 +429,13 @@ class ExpenseApproval(Base):
     visible_to_requestor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Referred approver's reply back to the referring approver
     response_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    actioned_at: Mappe
+    actioned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
 
 class ApprovalRoleScope(Base):
     """
