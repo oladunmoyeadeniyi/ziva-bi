@@ -720,6 +720,10 @@ function OrganisationPage() {
   const [fnDraft, setFnDraft] = useState<Record<string, string>>({}); // function_code → cost_center_id
   const [fnSaving, setFnSaving] = useState(false);
   const [fnSaved, setFnSaved] = useState(false);
+  // Conflict prompt: shown when user picks a cost centre already used by another function
+  const [fnConflict, setFnConflict] = useState<{
+    forFn: string; nodeId: string; nodeName: string; clashLabel: string;
+  } | null>(null);
 
   // Load function mappings, modules, and org nodes when Functions tab is active
   useEffect(() => {
@@ -2695,25 +2699,85 @@ function OrganisationPage() {
             </p>
           </div>
 
+          {/* Conflict confirmation modal */}
+          {fnConflict && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+              <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+                <p className="text-sm font-semibold text-gray-900 mb-2">Shared cost centre — confirm?</p>
+                <p className="text-xs text-gray-500 mb-4">
+                  <strong>{fnConflict.nodeName}</strong> is already mapped as <strong>{fnConflict.clashLabel}</strong>.
+                  Mapping it to a second function means both functions will scope their teams to the same department.
+                  This is fine for shared-service or combined departments — but confirm it is intentional.
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                    onClick={() => setFnConflict(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                    onClick={() => {
+                      setFnDraft(d => ({ ...d, [fnConflict.forFn]: fnConflict.nodeId }));
+                      setFnConflict(null);
+                    }}
+                  >
+                    Yes, map to both
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-0 border border-gray-100 rounded-xl overflow-hidden">
             {visibleFunctions.map((fn, idx) => {
               const selected = fnDraft[fn.code] ?? "";
               const savedMapping = functionMappings.find(m => m.function_code === fn.code && m.is_primary);
               const isFinance = fn.code === "finance";
 
+              // Nodes valid for function mapping: operational depts only, not org hierarchy shells
+              const OPERATIONAL_TYPES = new Set(["Cost center", "Department", "Division / Business unit"]);
+              const eligibleNodes = flattenNodes(fnAllNodes).filter(
+                n => n.is_active && OPERATIONAL_TYPES.has(n.node_type)
+              );
+
+              // Build a map of node_id → function label for nodes used by OTHER functions
+              const usedByOther: Record<string, string> = {};
+              for (const other of visibleFunctions) {
+                if (other.code === fn.code) continue;
+                const otherId = fnDraft[other.code];
+                if (otherId) usedByOther[otherId] = other.label;
+              }
+
+              const handleSelect = (nodeId: string) => {
+                if (!nodeId) { setFnDraft(d => ({ ...d, [fn.code]: "" })); return; }
+                if (usedByOther[nodeId]) {
+                  const node = eligibleNodes.find(n => n.id === nodeId);
+                  setFnConflict({
+                    forFn: fn.code,
+                    nodeId,
+                    nodeName: node?.name ?? nodeId,
+                    clashLabel: usedByOther[nodeId],
+                  });
+                } else {
+                  setFnDraft(d => ({ ...d, [fn.code]: nodeId }));
+                }
+              };
+
               return (
                 <div
                   key={fn.code}
                   className={`flex items-start gap-4 px-4 py-4 ${idx !== 0 ? "border-t border-gray-100" : ""}`}
                 >
-                  {/* Icon + label */}
+                  {/* Icon */}
                   <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center mt-0.5">
                     <i className={`ti ${
-                      fn.code === "finance"     ? "ti-chart-bar"       :
-                      fn.code === "hr"          ? "ti-users"           :
-                      fn.code === "procurement" ? "ti-package"         :
-                      fn.code === "sales"       ? "ti-trending-up"     :
-                      fn.code === "operations"  ? "ti-settings-2"      :
+                      fn.code === "finance"     ? "ti-chart-bar"   :
+                      fn.code === "hr"          ? "ti-users"       :
+                      fn.code === "procurement" ? "ti-package"     :
+                      fn.code === "sales"       ? "ti-trending-up" :
+                      fn.code === "operations"  ? "ti-settings-2"  :
                                                   "ti-shield-check"
                     } text-indigo-600`} style={{ fontSize: 15 }} />
                   </div>
@@ -2735,17 +2799,19 @@ function OrganisationPage() {
 
                     <select
                       value={selected}
-                      onChange={e => setFnDraft(d => ({ ...d, [fn.code]: e.target.value }))}
+                      onChange={e => handleSelect(e.target.value)}
                       className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
                     >
                       <option value="">&#8212; Select department / cost centre &#8212;</option>
-                      {flattenNodes(fnAllNodes)
-                        .filter(n => n.is_active)
-                        .map(n => (
-                          <option key={n.id} value={n.id}>
-                            {n.name} ({n.node_type})
+                      {eligibleNodes.map(n => {
+                        const clash = usedByOther[n.id];
+                        const codeTag = n.code ? ` [${n.code}]` : "";
+                        return (
+                          <option key={n.id} value={n.id} style={clash ? { color: "#9ca3af" } : undefined}>
+                            {n.name}{codeTag} ({n.node_type}){clash ? ` — already mapped to ${clash}` : ""}
                           </option>
-                        ))}
+                        );
+                      })}
                     </select>
                   </div>
                 </div>
