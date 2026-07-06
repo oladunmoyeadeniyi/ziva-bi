@@ -703,3 +703,75 @@ class EmployeeOnboardingToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class SystemFunctionMapping(Base):
+    """
+    Maps a system-level business function (Finance, HR, Procurement, etc.) to the cost center
+    that represents that function within a tenant's org structure.
+
+    Why this exists:
+        Ziva BI needs to know *which* cost center IS the Finance department so it can
+        auto-populate the Finance Review Chain assignee dropdown, restrict journal-entry
+        approvals to Finance staff, and so on. The same logic applies for HR, Procurement,
+        Sales, and Operations when those modules are active.
+
+    Design decisions:
+        - function_code is one of: finance | hr | procurement | sales | operations | audit
+        - finance is always required; other functions are only meaningful when the matching
+          module is active (payroll->hr, accounts_payable->procurement,
+          accounts_receivable->sales, inventory->operations).
+        - is_primary allows one canonical mapping per function while still permitting
+          secondary cost centres (e.g., a shared-service finance centre + a branch finance team).
+        - Unique on (tenant_id, function_code, cost_center_id).
+
+    Connection to other tables:
+        cost_center_id -> org_structure.id (OrgStructureNode).
+    """
+
+    __tablename__ = "system_function_mappings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    function_code: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment="finance | hr | procurement | sales | operations | audit",
+    )
+    cost_center_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("org_structure.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        comment="True = canonical mapping; False = secondary/branch mapping",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "function_code",
+            "cost_center_id",
+            name="uq_system_function_mappings_tenant_fn_cc",
+        ),
+    )
+
+            "tenant_id",
+            "function_code",
+            "cost_center_id",
+            name="uq_system_function_mappings_tenant_fn_cc",
+        ),
+    )

@@ -19,7 +19,32 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 
-type Tab = "identity" | "structure" | "branding" | "config";
+type Tab = "identity" | "structure" | "branding" | "config" | "functions";
+
+// ── Function Mapping types ────────────────────────────────────────────────────
+
+interface FunctionMappingItem {
+  id: string;
+  function_code: string;
+  cost_center_id: string;
+  cost_center_name: string;
+  cost_center_code: string;
+  is_primary: boolean;
+}
+
+interface ActiveModule {
+  module_key: string;
+  is_active: boolean;
+}
+
+const FUNCTION_CATALOGUE: { code: string; label: string; module: string | null; description: string }[] = [
+  { code: "finance",     label: "Finance & Accounting", module: null,                description: "The department responsible for GL, AP, AR, expenses, and reporting." },
+  { code: "hr",          label: "Human Resources",      module: "payroll",           description: "The HR/People department that manages employees, payroll, and onboarding." },
+  { code: "procurement", label: "Procurement",          module: "accounts_payable",  description: "The team that raises purchase orders and manages vendor relationships." },
+  { code: "sales",       label: "Sales & Revenue",      module: "accounts_receivable", description: "The team responsible for customer invoicing and revenue collection." },
+  { code: "operations",  label: "Operations",           module: "inventory",         description: "The team that manages inventory, warehousing, and supply chain." },
+  { code: "audit",       label: "Internal Audit",       module: null,                description: "Internal audit team. Optional — only map if your org has a dedicated IA function." },
+];
 
 interface OrgConfig {
   tenant_id: string;
@@ -688,6 +713,74 @@ function OrganisationPage() {
 
   const [config, setConfig] = useState<OrgConfiguration>(DEFAULT_CONFIG);
 
+  // ── Function Mapping state ─────────────────────────────────────────────────
+  const [functionMappings, setFunctionMappings] = useState<FunctionMappingItem[]>([]);
+  const [activeModules, setActiveModules] = useState<ActiveModule[]>([]);
+  const [fnAllNodes, setFnAllNodes] = useState<OrgNode[]>([]);
+  const [fnDraft, setFnDraft] = useState<Record<string, string>>({}); // function_code → cost_center_id
+  const [fnSaving, setFnSaving] = useState(false);
+  const [fnSaved, setFnSaved] = useState(false);
+
+  // Load function mappings, modules, and org nodes when Functions tab is active
+  useEffect(() => {
+    if (tab !== "functions" || !accessToken) return;
+    Promise.all([
+      apiFetch<{ mappings: FunctionMappingItem[] }>("/api/setup/function-mappings", { token: accessToken }),
+      apiFetch<{ modules: ActiveModule[] }>("/api/setup/modules", { token: accessToken }),
+      apiFetch<{ nodes: OrgNode[] }>("/api/setup/org-structure", { token: accessToken }),
+    ]).then(([fm, mods, tree]) => {
+      setFunctionMappings(fm.mappings);
+      setActiveModules(mods.modules ?? []);
+      setFnAllNodes(tree.nodes ?? []);
+      // Seed draft from saved mappings (primary only)
+      const draft: Record<string, string> = {};
+      for (const m of fm.mappings) {
+        if (m.is_primary) draft[m.function_code] = m.cost_center_id;
+      }
+      setFnDraft(draft);
+    }).catch(() => {});
+  }, [tab, accessToken]);
+
+  const isModuleActive = (moduleKey: string) =>
+    activeModules.some(m => m.module_key === moduleKey && m.is_active);
+
+  const visibleFunctions = FUNCTION_CATALOGUE.filter(
+    fn => fn.module === null || isModuleActive(fn.module)
+  );
+
+  // Flatten a nested OrgNode tree to a flat list
+  function flattenNodes(nodes: OrgNode[]): OrgNode[] {
+    const result: OrgNode[] = [];
+    const walk = (ns: OrgNode[]) => {
+      for (const n of ns) { result.push(n); if (n.children?.length) walk(n.children); }
+    };
+    walk(nodes);
+    return result;
+  }
+
+  const saveFunctionMappings = async () => {
+    if (!accessToken) return;
+    setFnSaving(true);
+    setFnSaved(false);
+    try {
+      const body = Object.entries(fnDraft)
+        .filter(([, ccId]) => ccId !== "")
+        .map(([function_code, cost_center_id]) => ({ function_code, cost_center_id, is_primary: true }));
+      const result = await apiFetch<{ mappings: FunctionMappingItem[] }>("/api/setup/function-mappings", {
+        method: "PUT",
+        token: accessToken,
+        body,
+      });
+      setFunctionMappings(result.mappings);
+      setFnSaved(true);
+      setTimeout(() => setFnSaved(false), 2500);
+    } catch {
+      // silently handled
+    } finally {
+      setFnSaving(false);
+    }
+  };
+
   // Load org config
   useEffect(() => {
     if (!accessToken) return;
@@ -1176,6 +1269,7 @@ function OrganisationPage() {
         <TabBtn tab="structure" active={tab === "structure"} onClick={changeTab} label="Structure" />
         <TabBtn tab="branding" active={tab === "branding"} onClick={changeTab} label="Branding" />
         <TabBtn tab="config" active={tab === "config"} onClick={changeTab} label="Configuration" />
+        <TabBtn tab="functions" active={tab === "functions"} onClick={changeTab} label="Function Mapping" />
       </div>
 
       {/* ── Identity tab ─────────────────────────────────────────────────────── */}
@@ -2523,7 +2617,7 @@ function OrganisationPage() {
                     <Field label="When budget is exceeded">
                       <Select value={config.budget_exceeded_action ?? ""} onChange={e => setConfig(c => ({ ...c, budget_exceeded_action: e.target.value }))}>
                         <option>Show warning, allow posting</option>
-                        <option>Block posting -- hard stop</option>
+                        <option>Block posting &mdash; hard stop</option>
                         <option>Require approval to override</option>
                       </Select>
                     </Field>
@@ -2584,6 +2678,97 @@ function OrganisationPage() {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* Function Mapping tab */}
+      {tab === "functions" && (
+        <div className="space-y-6 max-w-2xl">
+          <div>
+            <p className="text-sm text-gray-600">
+              Tell Ziva BI which department is your <strong>Finance</strong> team, your <strong>HR</strong> department, and so on.
+              The system uses these mappings to automatically scope approval chains, assignee dropdowns, and access controls &mdash;
+              so only the right people appear in the right places.
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              Modules for HR, Procurement, Sales, and Operations must be enabled in the Modules setup page before they appear here.
+            </p>
+          </div>
+
+          <div className="space-y-0 border border-gray-100 rounded-xl overflow-hidden">
+            {visibleFunctions.map((fn, idx) => {
+              const selected = fnDraft[fn.code] ?? "";
+              const savedMapping = functionMappings.find(m => m.function_code === fn.code && m.is_primary);
+              const isFinance = fn.code === "finance";
+
+              return (
+                <div
+                  key={fn.code}
+                  className={`flex items-start gap-4 px-4 py-4 ${idx !== 0 ? "border-t border-gray-100" : ""}`}
+                >
+                  {/* Icon + label */}
+                  <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center mt-0.5">
+                    <i className={`ti ${
+                      fn.code === "finance"     ? "ti-chart-bar"       :
+                      fn.code === "hr"          ? "ti-users"           :
+                      fn.code === "procurement" ? "ti-package"         :
+                      fn.code === "sales"       ? "ti-trending-up"     :
+                      fn.code === "operations"  ? "ti-settings-2"      :
+                                                  "ti-shield-check"
+                    } text-indigo-600`} style={{ fontSize: 15 }} />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-sm font-medium text-gray-900">{fn.label}</span>
+                      {isFinance && (
+                        <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100 uppercase">Required</span>
+                      )}
+                      {savedMapping && (
+                        <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">
+                          <i className="ti ti-check mr-0.5" />
+                          Mapped
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mb-2">{fn.description}</p>
+
+                    <select
+                      value={selected}
+                      onChange={e => setFnDraft(d => ({ ...d, [fn.code]: e.target.value }))}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+                    >
+                      <option value="">&#8212; Select department / cost centre &#8212;</option>
+                      {flattenNodes(fnAllNodes)
+                        .filter(n => n.is_active)
+                        .map(n => (
+                          <option key={n.id} value={n.id}>
+                            {n.name} ({n.node_type})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {visibleFunctions.length === 0 && (
+            <div className="text-center py-12 text-gray-400 text-sm border border-gray-100 rounded-xl">
+              No functions to configure yet. Enable modules in the Modules setup page first.
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              onClick={saveFunctionMappings}
+              disabled={fnSaving}
+              loading={fnSaving}
+            >
+              {fnSaving ? "Saving..." : fnSaved ? "Saved!" : "Save function mappings"}
+            </Button>
+          </div>
         </div>
       )}
     </PageContainer>

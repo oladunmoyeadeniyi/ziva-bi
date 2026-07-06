@@ -95,6 +95,7 @@ from app.models.setup import (
     PeriodAuditLog,
     PeriodChecklistCompletion,
     PeriodGraceOverride,
+    SystemFunctionMapping,
     TenantFxConfig,
     TenantModule,
     TenantOrgConfig,
@@ -153,6 +154,11 @@ from app.schemas.setup import (
     StatutoryCloseRequest,
     TaxConfigResponse,
     TaxConfigUpdate,
+    FunctionMappingItem,
+    FunctionMappingUpsertItem,
+    FunctionMappingsResponse,
+    FunctionTeamMember,
+    FunctionTeamResponse,
 )
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -3449,7 +3455,215 @@ async def delete_document_rule(
     await db.commit()
 
 
-# ── Go-live ────────────────────────────────────────────────────────────────────
+# ── System Function Mappings ───────────────────────────────────────────────────
+# Maps business functions (Finance, HR, Procurement, …) to OrgStructureNodes so
+# that downstream features (Finance Review Chain, payroll scoping, etc.) know
+# which cost centres belong to which department type.
+
+# Catalogue of supported functions and which module activates them (None = always shown).
+_FUNCTION_CATALOGUE: dict[str, dict] = {
+    "finance":     {"label": "Finance & Accounting", "module": None},
+    "hr":          {"label": "Human Resources",      "module": "payroll"},
+    "procurement": {"label": "Procurement",          "module": "accounts_payable"},
+    "sales":       {"label": "Sales & Revenue",      "module": "accounts_receivable"},
+    "operations":  {"label": "Operations",           "module": "inventory"},
+    "audit":       {"label": "Internal Audit",       "module": None},
+}
+
+
+@router.get("/function-mappings", response_model=FunctionMappingsResponse)
+async def get_function_mappings(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FunctionMappingsResponse:
+    """
+    Return all system function → cost-centre mappings for this tenant.
+
+    Each row includes the resolved cost-centre name and code from org_structure.
+    """
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(SystemFunctionMapping, OrgStructureNode)
+        .join(OrgStructureNode, SystemFunctionMapping.cost_center_id == OrgStructureNode.id)
+        .where(SystemFunctionMapping.tenant_id == tenant_id)
+        .order_by(SystemFunctionMapping.function_code)
+    )
+    rows = result.all()
+
+    return FunctionMappingsResponse(
+        mappings=[
+            FunctionMappingItem(
+                id=str(m.id),
+                function_code=m.function_code,
+                cost_center_id=str(m.cost_center_id),
+                cost_center_name=node.name,
+                cost_center_code=node.code,
+                is_primary=m.is_primary,
+            )
+            for m, node in rows
+        ]
+    )
+
+
+@router.put("/function-mappings", response_model=FunctionMappingsResponse)
+async def upsert_function_mappings(
+    body: list[FunctionMappingUpsertItem],
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FunctionMappingsResponse:
+    """
+    Replace all function mappings for this tenant with the supplied list.
+
+    Strategy: delete all existing rows for the tenant then insert the new set.
+    This is a full replacement (not partial), so send the complete desired state.
+
+    Validates:
+    - function_code must be one of the known catalogue keys.
+    - cost_center_id must belong to this tenant's org_structure.
+    """
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    valid_codes = set(_FUNCTION_CATALOGUE.keys())
+    for item in body:
+        if item.function_code not in valid_codes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown function_code '{item.function_code}'. Valid: {sorted(valid_codes)}",
+            )
+
+    # Verify all cost_center_ids belong to this tenant
+    cc_ids = [uuid.UUID(item.cost_center_id) for item in body]
+    if cc_ids:
+        cc_result = await db.execute(
+            select(OrgStructureNode.id).where(
+                OrgStructureNode.id.in_(cc_ids),
+                OrgStructureNode.tenant_id == tenant_id,
+            )
+        )
+        found_ids = {row[0] for row in cc_result.all()}
+        missing = [str(i) for i in cc_ids if i not in found_ids]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cost_center_id(s) not found in this tenant's org: {missing}",
+            )
+
+    # Full replace
+    await db.execute(
+        delete(SystemFunctionMapping).where(SystemFunctionMapping.tenant_id == tenant_id)
+    )
+    new_rows = [
+        SystemFunctionMapping(
+            tenant_id=tenant_id,
+            function_code=item.function_code,
+            cost_center_id=uuid.UUID(item.cost_center_id),
+            is_primary=item.is_primary,
+        )
+        for item in body
+    ]
+    db.add_all(new_rows)
+    await db.commit()
+
+    # Re-fetch with joined node names
+    result = await db.execute(
+        select(SystemFunctionMapping, OrgStructureNode)
+        .join(OrgStructureNode, SystemFunctionMapping.cost_center_id == OrgStructureNode.id)
+        .where(SystemFunctionMapping.tenant_id == tenant_id)
+        .order_by(SystemFunctionMapping.function_code)
+    )
+    rows = result.all()
+
+    return FunctionMappingsResponse(
+        mappings=[
+            FunctionMappingItem(
+                id=str(m.id),
+                function_code=m.function_code,
+                cost_center_id=str(m.cost_center_id),
+                cost_center_name=node.name,
+                cost_center_code=node.code,
+                is_primary=m.is_primary,
+            )
+            for m, node in rows
+        ]
+    )
+
+
+@router.get("/functions/{function_code}/team", response_model=FunctionTeamResponse)
+async def get_function_team(
+    function_code: str,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FunctionTeamResponse:
+    """
+    Return all OrgRoles whose cost centre is mapped to the given function code.
+
+    Used by the Finance Review Chain step builder (and similar features) to
+    populate the Named Assignee dropdown with only Finance staff.
+    """
+    from app.models.approvals import OrgRole
+
+    tenant_id = _require_tenant(current_user)
+
+    if function_code not in _FUNCTION_CATALOGUE:
+        raise HTTPException(status_code=404, detail=f"Unknown function code: {function_code}")
+
+    mapping_result = await db.execute(
+        select(SystemFunctionMapping, OrgStructureNode)
+        .join(OrgStructureNode, SystemFunctionMapping.cost_center_id == OrgStructureNode.id)
+        .where(
+            SystemFunctionMapping.tenant_id == tenant_id,
+            SystemFunctionMapping.function_code == function_code,
+        )
+    )
+    mapping_rows = mapping_result.all()
+
+    if not mapping_rows:
+        return FunctionTeamResponse(
+            function_code=function_code,
+            function_label=_FUNCTION_CATALOGUE[function_code]["label"],
+            cost_centers=[],
+            team=[],
+        )
+
+    cc_ids = [m.cost_center_id for m, _ in mapping_rows]
+    cc_names = [node.name for _, node in mapping_rows]
+
+    roles_result = await db.execute(
+        select(OrgRole).where(
+            OrgRole.tenant_id == tenant_id,
+            OrgRole.cost_center_id.in_(cc_ids),
+        ).order_by(OrgRole.name)
+    )
+    roles = roles_result.scalars().all()
+
+    team: list[FunctionTeamMember] = []
+    for role in roles:
+        node_result = await db.execute(
+            select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
+        )
+        node = node_result.scalar_one_or_none()
+        team.append(
+            FunctionTeamMember(
+                role_id=str(role.id),
+                role_name=role.name,
+                designation=role.designation,
+                cost_center_id=str(role.cost_center_id) if role.cost_center_id else "",
+                cost_center_name=node.name if node else "",
+                occupants=role.occupants or [],
+            )
+        )
+
+    return FunctionTeamResponse(
+        function_code=function_code,
+        function_label=_FUNCTION_CATALOGUE[function_code]["label"],
+        cost_centers=cc_names,
+        team=team,
+    )
+
+
+# ── Go-live ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/go-live", response_model=GoLiveResponse)
 async def mark_go_live(
@@ -3483,15 +3697,6 @@ async def mark_go_live(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found.")
 
-    # M9.0.1: under the test-first model, this endpoint's caller is on the
-    # current tenant from their own JWT -- pre-promotion that tenant IS the
-    # test tenant (no live counterpart exists yet). Flipping is_active /
-    # lifecycle_status on it in place would corrupt the test tenant instead of
-    # creating a separate live one. Live is now only ever born via the
-    # platform promotion engine's first apply call (app/routers/platform.py
-    # platform_promotion_apply -> _create_live_from_test). This guard makes
-    # that the only path; mark_go_live stays valid only for an
-    # already-live tenant (e.g. a manual re-flip after a lifecycle edit).
     if tenant.environment != "live":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3506,15 +3711,8 @@ async def mark_go_live(
     old_lifecycle = tenant.lifecycle_status
 
     tenant.is_active = True
-    # Transition lifecycle_status to "live" in the same transaction.
-    # Previously go-live only set is_active; lifecycle stayed at "trial" or
-    # "in_implementation", which left enter_tenant logic in implementation mode
-    # (full-edit) instead of support mode (read-only) for the Super Admin.
     tenant.lifecycle_status = "live"
 
-    # Audit log — same event name as the manual PATCH /api/platform/tenants/{id}/lifecycle
-    # so audit searches surface all lifecycle transitions from one query.
-    # "via": "go_live" distinguishes this from a manual override by a super admin.
     db.add(AuditLog(
         event_type="platform.lifecycle.updated",
         user_id=current_user.user_id,
