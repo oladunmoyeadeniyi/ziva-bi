@@ -768,10 +768,3 @@ class SystemFunctionMapping(Base):
             name="uq_system_function_mappings_tenant_fn_cc",
         ),
     )
-
-            "tenant_id",
-            "function_code",
-            "cost_center_id",
-            name="uq_system_function_mappings_tenant_fn_cc",
-        ),
-    )
