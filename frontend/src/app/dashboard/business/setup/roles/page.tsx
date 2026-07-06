@@ -3,13 +3,12 @@
 /**
  * Roles & Permissions page — M8.2 Implementation Portal.
  *
- * 2 tabs: Role tiers | Role assignments
- * - ZivaBI Consultant: always full access (locked, no config)
- * - Tenant Power Admin: full access by default, scope configurable per ORG ROLE
- * - Functional Admin: per-role scope — which sections + at what level
- * - Roles are name-deduplicated: DPM in 3 cost centers shows as one chip.
- * - Drag a chip to assign the entire name group; ⚙ opens scope per instance.
- * - Search/autocomplete lets you find and assign roles without scrolling.
+ * Tabs: Role tiers | Role assignments
+ * - Roles grouped by cost center within each tier.
+ * - Same-name roles within a cost center collapse into a sub-role group.
+ * - Assigning a name with multiple variants shows a selection prompt.
+ * - + button on each tier card for quick add without dragging.
+ * - UA section collapsed by default; PA/FA expanded.
  */
 
 import { useEffect, useState, useRef, Suspense } from "react";
@@ -54,28 +53,35 @@ interface OrgRole {
   occupants: { id: string; full_name: string; initials: string; employee_code?: string }[];
 }
 
-/** Name-deduplicated display unit. Multiple OrgRoles with the same name show as one chip. */
-interface NameGroup {
-  name: string;
-  instances: OrgRole[];
-  permission_tier: string | null;
-  cost_centers: string[];
-  totalOccupants: number;
+/** Group by cost center for display. No-CC roles go under "General". */
+function groupByCostCenter(roles: OrgRole[]): { cc: string; ccRoles: OrgRole[] }[] {
+  const map = new Map<string, OrgRole[]>();
+  for (const r of roles) {
+    const key = r.cost_center_name || "General";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(r);
+  }
+  return Array.from(map.entries()).map(([cc, ccRoles]) => ({ cc, ccRoles }));
 }
 
-function groupByName(roles: OrgRole[]): NameGroup[] {
+/** Within a cost center, group same-name roles as sub-role clusters. */
+function groupByNameWithin(roles: OrgRole[]): { name: string; instances: OrgRole[] }[] {
   const map = new Map<string, OrgRole[]>();
   for (const r of roles) {
     if (!map.has(r.name)) map.set(r.name, []);
     map.get(r.name)!.push(r);
   }
-  return Array.from(map.entries()).map(([name, instances]) => ({
-    name,
-    instances,
-    permission_tier: instances[0].permission_tier,
-    cost_centers: [...new Set(instances.map(i => i.cost_center_name).filter(Boolean) as string[])],
-    totalOccupants: instances.reduce((s, i) => s + i.occupants.length, 0),
-  }));
+  return Array.from(map.entries()).map(([name, instances]) => ({ name, instances }));
+}
+
+/** Unique role names across a list (for search / dedup). */
+function getUniqueNames(roles: OrgRole[]): { name: string; instances: OrgRole[] }[] {
+  const map = new Map<string, OrgRole[]>();
+  for (const r of roles) {
+    if (!map.has(r.name)) map.set(r.name, []);
+    map.get(r.name)!.push(r);
+  }
+  return Array.from(map.entries()).map(([name, instances]) => ({ name, instances }));
 }
 
 function TabBtn({ id, active, onClick, label }: { id: Tab; active: boolean; onClick: (t: Tab) => void; label: string }) {
@@ -84,6 +90,55 @@ function TabBtn({ id, active, onClick, label }: { id: Tab; active: boolean; onCl
       className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${active ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
       {label}
     </button>
+  );
+}
+
+/** Expandable sub-role cluster for same-name roles within a cost center. */
+function SubRoleGroup({
+  name, instances, onRemove, onScope, openScopeId, scopePanel,
+}: {
+  name: string;
+  instances: OrgRole[];
+  onRemove: (r: OrgRole) => void;
+  onScope: (r: OrgRole) => void;
+  openScopeId: string | null;
+  scopePanel: (r: OrgRole) => React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mb-1.5">
+      <div className="flex items-center gap-1 flex-wrap">
+        <button type="button" onClick={() => setExpanded(v => !v)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-white border-gray-200 text-gray-700 hover:border-blue-300 hover:text-blue-700 hover:shadow-sm transition-all">
+          <span className="font-medium">{name}</span>
+          <span className="text-[10px] text-gray-400 bg-gray-100 rounded px-1">×{instances.length}</span>
+          <i className={`ti ${expanded ? "ti-chevron-up" : "ti-chevron-down"} text-gray-400`} style={{ fontSize: 10 }} />
+        </button>
+      </div>
+      {expanded && (
+        <div className="ml-3 mt-1 border-l-2 border-gray-100 pl-2 space-y-1">
+          {instances.map(r => (
+            <div key={r.id}>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs border bg-gray-50 border-gray-200 text-gray-600">
+                <span className="truncate">{r.cost_center_name || "General"}</span>
+                {r.occupants.length > 0 && (
+                  <span className="text-[10px] text-gray-400 ml-1">· {r.occupants.length}</span>
+                )}
+                <button type="button" title="Configure scope" onClick={() => onScope(r)}
+                  className={`ml-auto shrink-0 ${openScopeId === r.id ? "text-blue-500" : "text-gray-300 hover:text-blue-400"} transition-colors`}>
+                  <i className="ti ti-settings" style={{ fontSize: 11 }} />
+                </button>
+                <button type="button" title="Remove" onClick={() => onRemove(r)}
+                  className="text-gray-300 hover:text-red-400 shrink-0 transition-colors">
+                  <i className="ti ti-x" style={{ fontSize: 10 }} />
+                </button>
+              </div>
+              {scopePanel(r)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -99,29 +154,41 @@ function RolesContent() {
 
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
-  const [savingTier, setSavingTier] = useState<string | null>(null);
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState(false);
 
   const [scopeMap, setScopeMap] = useState<Record<string, Record<string, string>>>({});
   const [openScope, setOpenScope] = useState<string | null>(null);
   const [savingScope, setSavingScope] = useState(false);
-  const [saved, setSaved] = useState(false);
 
-  const [pendingRemove, setPendingRemove] = useState<NameGroup | null>(null);
+  // Remove confirmation
+  const [pendingRemove, setPendingRemove] = useState<OrgRole | null>(null);
 
-  // Drag state — uses group name as key
-  const [draggingGroupName, setDraggingGroupName] = useState<string | null>(null);
+  // Drag state — dragging a unique name (may cover multiple roles)
+  const [draggingName, setDraggingName] = useState<string | null>(null);
   const [dragOverTier, setDragOverTier] = useState<string | null>(null);
 
-  // Search autocomplete
+  // Search autocomplete (global)
   const [search, setSearch] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [unassignedCollapsed, setUnassignedCollapsed] = useState(true);
   const searchRef = useRef<HTMLDivElement>(null);
 
-  // Close suggestions on outside click
+  // Per-tier add dropdown
+  const [addTier, setAddTier] = useState<string | null>(null);
+  const [addSearch, setAddSearch] = useState("");
+  const addRef = useRef<HTMLDivElement>(null);
+
+  // UA collapsed
+  const [uaCollapsed, setUaCollapsed] = useState(true);
+
+  // Assignment prompt (for multi-variant roles)
+  const [assignPrompt, setAssignPrompt] = useState<{ name: string; instances: OrgRole[]; tier: string } | null>(null);
+  const [promptSelected, setPromptSelected] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) setShowSuggestions(false);
+      if (addRef.current && !addRef.current.contains(e.target as Node)) setAddTier(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -133,20 +200,16 @@ function RolesContent() {
     apiFetch<OrgRole[]>("/api/approvals/roles", { token: accessToken })
       .then(async (roles) => {
         setOrgRoles(roles);
-        // Auto-assign head_of_department / head_of_entity roles that have no tier yet
         const hodRoles = roles.filter(
           r => !r.permission_tier &&
                (r.designation === "head_of_department" || r.designation === "head_of_entity")
         );
         if (hodRoles.length > 0) {
-          await Promise.all(
-            hodRoles.map(r =>
-              apiFetch(`/api/approvals/roles/${r.id}/permission-tier`, {
-                method: "PATCH", token: accessToken!,
-                body: { permission_tier: "functional_admin" },
-              }).catch(() => null)
-            )
-          );
+          await Promise.all(hodRoles.map(r =>
+            apiFetch(`/api/approvals/roles/${r.id}/permission-tier`, {
+              method: "PATCH", token: accessToken!, body: { permission_tier: "functional_admin" },
+            }).catch(() => null)
+          ));
           const updated = await apiFetch<OrgRole[]>("/api/approvals/roles", { token: accessToken! });
           setOrgRoles(updated);
         }
@@ -155,11 +218,10 @@ function RolesContent() {
       .finally(() => setRolesLoading(false));
   }, [accessToken, tab]);
 
-  /** Assign all instances in a NameGroup to the given tier (or null = remove). */
-  const saveTierForGroup = async (group: NameGroup, tier: string | null) => {
+  /** Assign specific role IDs to a tier (or null to remove). */
+  const saveTierForIds = async (ids: string[], tier: string | null) => {
     if (!accessToken) return;
-    const ids = group.instances.map(i => i.id);
-    setSavingTier(group.name);
+    setSavingIds(new Set(ids));
     try {
       await Promise.all(ids.map(id =>
         apiFetch(`/api/approvals/roles/${id}/permission-tier`, {
@@ -169,9 +231,28 @@ function RolesContent() {
       setOrgRoles(prev => prev.map(r => ids.includes(r.id) ? { ...r, permission_tier: tier } : r));
       setSaved(true); setTimeout(() => setSaved(false), 2000);
     } catch (e) { setError(e instanceof Error ? e.message : "Save failed"); }
-    finally { setSavingTier(null); }
+    finally { setSavingIds(new Set()); }
   };
 
+  /** Request assignment — shows prompt if multiple variants exist. */
+  const requestAssign = (name: string, instances: OrgRole[], tier: string) => {
+    if (instances.length === 1) {
+      saveTierForIds([instances[0].id], tier);
+    } else {
+      setAssignPrompt({ name, instances, tier });
+      setPromptSelected(new Set(instances.map(i => i.id)));
+    }
+  };
+
+  const confirmAssign = async () => {
+    if (!assignPrompt) return;
+    const ids = [...promptSelected];
+    await saveTierForIds(ids, assignPrompt.tier);
+    setAssignPrompt(null);
+    setPromptSelected(new Set());
+  };
+
+  // ── Scope ──────────────────────────────────────────────────────────────────
   const loadScope = async (role: OrgRole) => {
     if (!accessToken || scopeMap[role.id] !== undefined) return;
     const isPA = role.permission_tier === "power_admin";
@@ -196,8 +277,8 @@ function RolesContent() {
   const cycleScopeSection = (roleId: string, section: string) => {
     setScopeMap(prev => {
       const current = prev[roleId] ?? {};
-      const currentLevel = current[section] ?? "none";
-      const next = currentLevel === "none" ? "read_only" : currentLevel === "read_only" ? "full" : "none";
+      const lvl = current[section] ?? "none";
+      const next = lvl === "none" ? "read_only" : lvl === "read_only" ? "full" : "none";
       return { ...prev, [roleId]: { ...current, [section]: next } };
     });
   };
@@ -218,39 +299,15 @@ function RolesContent() {
     finally { setSavingScope(false); }
   };
 
-  // ── Drag handlers ─────────────────────────────────────────────────────────
-  const handleDragStart = (e: React.DragEvent, groupName: string) => {
-    setDraggingGroupName(groupName);
-    e.dataTransfer.setData("groupName", groupName);
-    e.dataTransfer.effectAllowed = "move";
-  };
-  const handleDragEnd = () => { setDraggingGroupName(null); setDragOverTier(null); };
-  const handleDragOver = (e: React.DragEvent, tier: string) => {
-    e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTier(tier);
-  };
-  const handleDragLeave = (e: React.DragEvent) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverTier(null);
-  };
-  const handleDrop = (e: React.DragEvent, tier: string) => {
-    e.preventDefault();
-    const groupName = e.dataTransfer.getData("groupName");
-    if (groupName) {
-      const group = allNameGroups.find(g => g.name === groupName);
-      if (group) saveTierForGroup(group, tier);
-    }
-    setDraggingGroupName(null); setDragOverTier(null);
-  };
-
-  // ── Scope panel ───────────────────────────────────────────────────────────
   const renderScopePanel = (role: OrgRole) => {
     if (openScope !== role.id) return null;
     const sectionMap = scopeMap[role.id];
-    if (sectionMap === undefined) return <div className="mt-2 px-3 py-2 text-xs text-gray-400">Loading…</div>;
+    if (sectionMap === undefined) return <div className="mt-1 px-3 py-2 text-xs text-gray-400">Loading…</div>;
     const isPA = role.permission_tier === "power_admin";
     const sections = isPA ? PA_SCOPE_SECTIONS : FA_SCOPE_SECTIONS;
-    const grantedCount = Object.values(sectionMap).filter((l) => l !== "none").length;
+    const grantedCount = Object.values(sectionMap).filter(l => l !== "none").length;
     return (
-      <div className="mt-2 border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden">
+      <div className="mt-1 border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden">
         <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
           <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">{role.name} — scope</p>
           <button type="button" onClick={() => saveScope(role.id)} disabled={savingScope}
@@ -259,8 +316,8 @@ function RolesContent() {
           </button>
         </div>
         <div className="px-3 pt-2 pb-1">
-          <p className="text-[9px] text-gray-400 mb-2">Click to cycle: No access → Read only → Full</p>
-          <div className="space-y-1">
+          <p className="text-[9px] text-gray-400 mb-1.5">Click to cycle: No access → Read only → Full</p>
+          <div className="space-y-0.5">
             {sections.map((sec) => {
               const fallback = isPA ? (PA_SECTION_DEFAULTS[sec] ?? "full") : "none";
               const level = sectionMap[sec] ?? fallback;
@@ -268,7 +325,7 @@ function RolesContent() {
                 <div key={sec} className="flex items-center justify-between py-0.5">
                   <span className="text-xs text-gray-600">{sec}</span>
                   <button type="button" onClick={() => cycleScopeSection(role.id, sec)}
-                    className={`whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors ${ACCESS_PILL[level] ?? ACCESS_PILL.none}`}>
+                    className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${ACCESS_PILL[level] ?? ACCESS_PILL.none}`}>
                     {ACCESS_LABEL[level]}
                   </button>
                 </div>
@@ -283,94 +340,169 @@ function RolesContent() {
     );
   };
 
-  // ── Group chip ─────────────────────────────────────────────────────────────
-  const renderGroupChip = (group: NameGroup, opts: { bgClass: string; textClass: string; removable?: boolean }) => {
-    const firstRole = group.instances[0];
-    const isLoading = savingTier === group.name;
-    return (
-      <div key={group.name} className="mb-2 mr-2 inline-block align-top">
-        <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border ${opts.bgClass} ${isLoading ? "opacity-60" : ""}`}>
-          <div className="min-w-0">
-            <span className={`font-medium ${opts.textClass}`}>{group.name}</span>
-            {group.cost_centers.length > 0 && (
-              <span className="ml-1.5 text-[10px] text-gray-400 truncate">
-                {group.cost_centers.length <= 2
-                  ? group.cost_centers.join(", ")
-                  : `${group.cost_centers[0]} +${group.cost_centers.length - 1}`}
-              </span>
-            )}
-            {group.totalOccupants > 0 && (
-              <span className="ml-1.5 text-[10px] text-gray-400">
-                · {group.totalOccupants} {group.totalOccupants === 1 ? "occupant" : "occupants"}
-              </span>
-            )}
-          </div>
-          <button type="button" title="Configure scope" onClick={() => toggleScope(firstRole)}
-            className={`ml-0.5 shrink-0 ${openScope === firstRole.id ? "text-blue-500" : "text-gray-300 hover:text-blue-400"} transition-colors`}>
-            <i className="ti ti-settings" style={{ fontSize: 11 }} />
-          </button>
-          {opts.removable && (
-            <button type="button" title="Remove from tier" onClick={() => setPendingRemove(group)}
-              className="text-gray-300 hover:text-red-400 leading-none transition-colors shrink-0">
-              <i className="ti ti-x" style={{ fontSize: 10 }} />
-            </button>
-          )}
-        </div>
-        {renderScopePanel(firstRole)}
-      </div>
-    );
+  // ── Drag handlers ─────────────────────────────────────────────────────────
+  const handleDragStart = (e: React.DragEvent, name: string) => {
+    setDraggingName(name);
+    e.dataTransfer.setData("roleName", name);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleDragEnd = () => { setDraggingName(null); setDragOverTier(null); };
+  const handleDragOver = (e: React.DragEvent, tier: string) => {
+    e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTier(tier);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverTier(null);
+  };
+  const handleDrop = (e: React.DragEvent, tier: string) => {
+    e.preventDefault();
+    const name = e.dataTransfer.getData("roleName");
+    if (name) {
+      const instances = orgRoles.filter(r => r.name === name && !r.permission_tier);
+      if (instances.length) requestAssign(name, instances, tier);
+    }
+    setDraggingName(null); setDragOverTier(null);
   };
 
-  // ── Derived lists ─────────────────────────────────────────────────────────
-  const paGroups   = groupByName(orgRoles.filter(r => r.permission_tier === "power_admin"));
-  const faGroups   = groupByName(orgRoles.filter(r => r.permission_tier === "functional_admin"));
-  const freeGroups = groupByName(orgRoles.filter(r => !r.permission_tier));
-  const allNameGroups = groupByName(orgRoles);
+  // ── Single role chip (for assigned tiers, single instance) ─────────────────
+  const renderSingleChip = (role: OrgRole, chipBg: string, chipText: string) => (
+    <div key={role.id} className="mb-1.5">
+      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border ${chipBg} ${savingIds.has(role.id) ? "opacity-60" : ""}`}>
+        <span className={`font-medium ${chipText}`}>{role.name}</span>
+        {role.occupants.length > 0 && (
+          <span className="text-[10px] text-gray-400 ml-0.5">· {role.occupants.length}</span>
+        )}
+        <button type="button" title="Configure scope" onClick={() => toggleScope(role)}
+          className={`ml-auto shrink-0 ${openScope === role.id ? "text-blue-500" : "text-gray-300 hover:text-blue-400"} transition-colors`}>
+          <i className="ti ti-settings" style={{ fontSize: 11 }} />
+        </button>
+        <button type="button" title="Remove" onClick={() => setPendingRemove(role)}
+          className="text-gray-300 hover:text-red-400 shrink-0 transition-colors">
+          <i className="ti ti-x" style={{ fontSize: 10 }} />
+        </button>
+      </div>
+      {renderScopePanel(role)}
+    </div>
+  );
 
-  // Search suggestions
+  // ── Derived lists ─────────────────────────────────────────────────────────
+  const paRoles   = orgRoles.filter(r => r.permission_tier === "power_admin");
+  const faRoles   = orgRoles.filter(r => r.permission_tier === "functional_admin");
+  const freeRoles = orgRoles.filter(r => !r.permission_tier);
+
+  const freeNames = getUniqueNames(freeRoles);
+
+  // Global search suggestions (all roles)
+  const allNames = getUniqueNames(orgRoles);
   const searchTerm = search.trim().toLowerCase();
   const suggestions = searchTerm.length >= 1
-    ? allNameGroups.filter(g => g.name.toLowerCase().includes(searchTerm)).slice(0, 8)
+    ? allNames.filter(g => g.name.toLowerCase().includes(searchTerm)).slice(0, 8)
     : [];
+
+  // Per-tier add search
+  const addTerm = addSearch.trim().toLowerCase();
+  const addSuggestions = addTerm.length >= 1
+    ? freeNames.filter(g => g.name.toLowerCase().includes(addTerm)).slice(0, 6)
+    : freeNames.slice(0, 6);
 
   // ── Tier column ───────────────────────────────────────────────────────────
   const TierCol = ({
-    tier, label, badge, subLabel, chipBg, chipText, groups, dropHighlight,
+    tier, label, badge, subLabel, chipBg, chipText, roles, dropHighlight,
   }: {
     tier: string; label: string; badge: string; subLabel: string;
-    chipBg: string; chipText: string; groups: NameGroup[]; dropHighlight: string;
-  }) => (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="flex items-start justify-between px-3 py-2.5 bg-gray-50 border-b border-gray-200">
-        <div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE[tier]}`}>{label}</span>
-            <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium ${badge}`}>
-              {tier === "power_admin" ? "Full by default" : "Scope per role"}
-            </span>
+    chipBg: string; chipText: string; roles: OrgRole[]; dropHighlight: string;
+  }) => {
+    const ccGroups = groupByCostCenter(roles);
+    const isAddOpen = addTier === tier;
+
+    return (
+      <div className="border border-gray-200 rounded-lg overflow-visible">
+        {/* Header */}
+        <div className="px-3 py-2.5 bg-gray-50 border-b border-gray-200">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE[tier]}`}>{label}</span>
+                <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium ${badge}`}>
+                  {tier === "power_admin" ? "Full by default" : "Scope per role"}
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-500 mt-1 leading-relaxed">{subLabel}</p>
+            </div>
+            {/* + Add button */}
+            <div className="relative shrink-0" ref={isAddOpen ? addRef : undefined}>
+              <button type="button"
+                onClick={() => { setAddTier(isAddOpen ? null : tier); setAddSearch(""); }}
+                className="flex items-center gap-1 text-[10px] font-medium text-blue-600 border border-blue-200 rounded-lg px-2 py-1 hover:bg-blue-50 transition-colors whitespace-nowrap">
+                <i className="ti ti-plus" style={{ fontSize: 11 }} />
+                Add role
+              </button>
+              {isAddOpen && (
+                <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-30">
+                  <div className="p-2 border-b border-gray-100">
+                    <input autoFocus type="text" placeholder="Search unassigned roles…"
+                      value={addSearch}
+                      onChange={e => setAddSearch(e.target.value)}
+                      className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                    />
+                  </div>
+                  <div className="max-h-52 overflow-y-auto">
+                    {addSuggestions.length === 0 ? (
+                      <p className="px-3 py-3 text-xs text-gray-400 italic">No unassigned roles found.</p>
+                    ) : addSuggestions.map(({ name, instances }) => (
+                      <button key={name} type="button"
+                        onClick={() => { requestAssign(name, instances, tier); setAddTier(null); setAddSearch(""); }}
+                        className="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-50 text-left border-b border-gray-50 last:border-0">
+                        <span className="text-xs font-medium text-gray-800 truncate">{name}</span>
+                        {instances.length > 1 && (
+                          <span className="ml-2 shrink-0 text-[10px] text-gray-400 bg-gray-100 rounded px-1">×{instances.length}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-          <p className="text-[10px] text-gray-500 mt-1 leading-relaxed">{subLabel}</p>
+          {draggingName && (
+            <p className="mt-1.5 text-[10px] text-blue-500 font-medium animate-pulse">Drop here to assign</p>
+          )}
         </div>
-        {draggingGroupName && (
-          <span className="text-[10px] text-blue-500 font-medium mt-1 shrink-0 ml-2 animate-pulse">Drop here</span>
-        )}
+
+        {/* Drop zone + content */}
+        <div
+          onDragOver={(e) => handleDragOver(e, tier)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, tier)}
+          className={`px-3 py-2.5 min-h-[52px] transition-colors ${dragOverTier === tier ? dropHighlight : ""}`}
+        >
+          {roles.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">Drag a role here or use + Add role.</p>
+          ) : (
+            ccGroups.map(({ cc, ccRoles }) => (
+              <div key={cc} className="mb-3 last:mb-0">
+                <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{cc}</p>
+                {groupByNameWithin(ccRoles).map(({ name, instances }) =>
+                  instances.length === 1
+                    ? renderSingleChip(instances[0], chipBg, chipText)
+                    : (
+                      <SubRoleGroup
+                        key={name}
+                        name={name}
+                        instances={instances}
+                        onRemove={setPendingRemove}
+                        onScope={toggleScope}
+                        openScopeId={openScope}
+                        scopePanel={renderScopePanel}
+                      />
+                    )
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
-      <div
-        onDragOver={(e) => handleDragOver(e, tier)}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => handleDrop(e, tier)}
-        className={`px-3 py-2.5 min-h-[52px] transition-colors rounded-b-lg ${dragOverTier === tier ? dropHighlight : ""}`}
-      >
-        {groups.length === 0 ? (
-          <p className="text-xs text-gray-400 italic">Drag a role here to assign.</p>
-        ) : (
-          <div className="flex flex-wrap">
-            {groups.map(g => renderGroupChip(g, { bgClass: chipBg, textClass: chipText, removable: true }))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <PageContainer maxWidth="5xl">
@@ -381,7 +513,7 @@ function RolesContent() {
       </button>
       <PageHeading title="Roles & permissions" />
       <p className="text-sm text-gray-500 mb-4">
-        Assign org chart roles to permission tiers. Everyone holding that role inherits the settings — no individual user config needed.
+        Assign org chart roles to permission tiers. Everyone holding that role inherits the settings.
       </p>
 
       <div className="flex border-b border-gray-200 mb-5 gap-1">
@@ -449,17 +581,15 @@ function RolesContent() {
             <div className="text-center py-12 text-sm text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
               <i className="ti ti-sitemap block mb-2" style={{ fontSize: 36, color: "#d1d5db" }} />
               <p className="font-semibold text-gray-600 mb-1">No org roles defined yet</p>
-              <p className="text-xs">Go to Organisation → Structure → Chart to build your role hierarchy first.</p>
+              <p className="text-xs">Go to Organisation → Structure to build your role hierarchy first.</p>
             </div>
           ) : (
             <>
-              {/* Search bar */}
+              {/* Global search */}
               <div className="relative mb-4" ref={searchRef}>
                 <div className="relative">
                   <i className="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" style={{ fontSize: 13 }} />
-                  <input
-                    type="text"
-                    placeholder="Search roles to assign…"
+                  <input type="text" placeholder="Search roles to assign…"
                     value={search}
                     onChange={e => { setSearch(e.target.value); setShowSuggestions(true); }}
                     onFocus={() => setShowSuggestions(true)}
@@ -474,45 +604,49 @@ function RolesContent() {
                 </div>
                 {showSuggestions && suggestions.length > 0 && (
                   <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-64 overflow-y-auto">
-                    {suggestions.map(group => (
-                      <div key={group.name} className="px-3 py-2 flex items-center justify-between hover:bg-gray-50 border-b border-gray-50 last:border-0">
-                        <div className="min-w-0 mr-2">
-                          <span className="text-sm font-medium text-gray-800">{group.name}</span>
-                          {group.cost_centers.length > 0 && (
-                            <span className="ml-2 text-xs text-gray-400">{group.cost_centers.join(", ")}</span>
-                          )}
-                          {group.permission_tier && (
-                            <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] ${TIER_BADGE[group.permission_tier]}`}>
-                              {group.permission_tier === "power_admin" ? "Power Admin" : "Functional Admin"}
-                            </span>
+                    {suggestions.map(({ name, instances }) => {
+                      const tier = instances[0]?.permission_tier;
+                      const unassigned = instances.filter(i => !i.permission_tier);
+                      return (
+                        <div key={name} className="px-3 py-2 flex items-center justify-between hover:bg-gray-50 border-b border-gray-50 last:border-0">
+                          <div className="min-w-0 mr-2">
+                            <span className="text-sm font-medium text-gray-800">{name}</span>
+                            {instances.length > 1 && (
+                              <span className="ml-2 text-xs text-gray-400">×{instances.length} variants</span>
+                            )}
+                            {tier && (
+                              <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] ${TIER_BADGE[tier]}`}>
+                                {tier === "power_admin" ? "Power Admin" : "Func. Admin"}
+                              </span>
+                            )}
+                          </div>
+                          {unassigned.length > 0 ? (
+                            <div className="flex gap-1 shrink-0">
+                              <button type="button"
+                                onClick={() => { requestAssign(name, unassigned, "power_admin"); setSearch(""); setShowSuggestions(false); }}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 whitespace-nowrap">
+                                → PA
+                              </button>
+                              <button type="button"
+                                onClick={() => { requestAssign(name, unassigned, "functional_admin"); setSearch(""); setShowSuggestions(false); }}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 whitespace-nowrap">
+                                → FA
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-gray-400 shrink-0">Assigned</span>
                           )}
                         </div>
-                        {!group.permission_tier ? (
-                          <div className="flex gap-1 shrink-0">
-                            <button type="button"
-                              onClick={() => { saveTierForGroup(group, "power_admin"); setSearch(""); setShowSuggestions(false); }}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 whitespace-nowrap">
-                              → Power Admin
-                            </button>
-                            <button type="button"
-                              onClick={() => { saveTierForGroup(group, "functional_admin"); setSearch(""); setShowSuggestions(false); }}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 whitespace-nowrap">
-                              → Func. Admin
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-gray-400 shrink-0">Already assigned</span>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
-              {freeGroups.length > 0 && (
+              {freeRoles.length > 0 && (
                 <div className="mb-3 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 flex items-center gap-2">
                   <i className="ti ti-drag-drop" style={{ fontSize: 13 }} />
-                  Drag any unassigned role into a tier to assign it, or use the search bar above.
+                  Drag unassigned roles into a tier, or use the search bar or + Add role button.
                 </div>
               )}
 
@@ -522,65 +656,69 @@ function RolesContent() {
                   tier="power_admin"
                   label="Tenant Power Admin"
                   badge="bg-green-100 text-green-800 border border-green-300"
-                  subLabel="Full access by default. Use ⚙ to restrict per role. Typically Finance Director, CFO."
+                  subLabel="Full access by default. Use ⚙ to restrict per role."
                   chipBg="bg-white border-gray-200"
                   chipText="text-gray-700"
-                  groups={paGroups}
+                  roles={paRoles}
                   dropHighlight="bg-blue-50 ring-2 ring-blue-300 ring-inset"
                 />
                 <TierCol
                   tier="functional_admin"
                   label="Functional Admin"
                   badge="bg-blue-100 text-blue-800 border border-blue-200"
-                  subLabel="Configure which sections each role can access. Use ⚙ to set section-level access."
+                  subLabel="Configure section access per role using ⚙."
                   chipBg="bg-green-50 border-green-200"
                   chipText="text-green-800"
-                  groups={faGroups}
+                  roles={faRoles}
                   dropHighlight="bg-green-50 ring-2 ring-green-300 ring-inset"
                 />
               </div>
 
-              {/* Unassigned — 3-column grid, deduplicated */}
-              {freeGroups.length > 0 && (
+              {/* Unassigned — collapsible */}
+              {freeRoles.length > 0 && (
                 <div className="border border-dashed border-gray-200 rounded-lg overflow-hidden">
-                  <button type="button" onClick={() => setUnassignedCollapsed(c => !c)}
+                  <button type="button" onClick={() => setUaCollapsed(c => !c)}
                     className="w-full px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between hover:bg-gray-100 transition-colors">
                     <div className="text-left">
                       <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                        Unassigned roles ({freeGroups.length} unique{freeGroups.length !== orgRoles.filter(r => !r.permission_tier).length ? `, ${orgRoles.filter(r => !r.permission_tier).length} total` : ""})
+                        Unassigned ({freeNames.length} unique · {freeRoles.length} total)
                       </p>
-                      {!unassignedCollapsed && <p className="text-[10px] text-gray-400 mt-0.5">Drag into a tier above, or search above to quick-assign.</p>}
+                      {!uaCollapsed && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">Drag into a tier above, or use + Add role.</p>
+                      )}
                     </div>
-                    <i className={`ti ${unassignedCollapsed ? "ti-chevron-down" : "ti-chevron-up"} text-gray-400`} style={{ fontSize: 13 }} />
+                    <i className={`ti ${uaCollapsed ? "ti-chevron-down" : "ti-chevron-up"} text-gray-400`} style={{ fontSize: 13 }} />
                   </button>
-                  {!unassignedCollapsed && <div className="px-3 py-2.5" style={{ columns: 3, columnGap: "0.75rem" }}>
-                    {freeGroups.map(group => (
-                      <div
-                        key={group.name}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, group.name)}
-                        onDragEnd={handleDragEnd}
-                        style={{ breakInside: "avoid", marginBottom: "0.4rem" }}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-white border-gray-200 text-gray-600 cursor-grab active:cursor-grabbing select-none transition-opacity ${
-                          draggingGroupName === group.name ? "opacity-40 scale-95" : "hover:border-blue-300 hover:text-blue-700 hover:shadow-sm"
-                        }`}
-                      >
-                        <i className="ti ti-grip-vertical text-gray-300 shrink-0" style={{ fontSize: 11 }} />
-                        <span className="font-medium truncate">{group.name}</span>
-                        {group.instances.length > 1 && (
-                          <span className="shrink-0 ml-auto text-[10px] text-gray-400 border border-gray-100 rounded px-1"
-                            title={`${group.instances.length} variants: ${group.cost_centers.join(", ")}`}>
-                            ×{group.instances.length}
-                          </span>
-                        )}
-                        {group.instances.length === 1 && group.totalOccupants > 0 && (
-                          <span className="shrink-0 ml-auto text-[10px] text-gray-400 border border-gray-100 rounded px-1">
-                            {group.totalOccupants}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>}
+
+                  {!uaCollapsed && (
+                    <div className="px-3 py-2.5" style={{ columns: 3, columnGap: "0.75rem" }}>
+                      {freeNames.map(({ name, instances }) => (
+                        <div
+                          key={name}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, name)}
+                          onDragEnd={handleDragEnd}
+                          style={{ breakInside: "avoid", marginBottom: "0.4rem" }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-white border-gray-200 text-gray-600 cursor-grab active:cursor-grabbing select-none transition-opacity ${
+                            draggingName === name ? "opacity-40 scale-95" : "hover:border-blue-300 hover:text-blue-700 hover:shadow-sm"
+                          }`}
+                        >
+                          <i className="ti ti-grip-vertical text-gray-300 shrink-0" style={{ fontSize: 11 }} />
+                          <span className="font-medium truncate">{name}</span>
+                          {instances.length > 1 ? (
+                            <span className="shrink-0 ml-auto text-[10px] text-gray-400 border border-gray-100 rounded px-1"
+                              title={`${instances.length} variants across: ${[...new Set(instances.map(i => i.cost_center_name).filter(Boolean))].join(", ")}`}>
+                              ×{instances.length}
+                            </span>
+                          ) : instances[0].occupants.length > 0 ? (
+                            <span className="shrink-0 ml-auto text-[10px] text-gray-400 border border-gray-100 rounded px-1">
+                              {instances[0].occupants.length}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -588,18 +726,75 @@ function RolesContent() {
         </div>
       )}
 
-      {/* ── Remove confirmation modal ── */}
+      {/* ── Assignment prompt (multi-variant) ── */}
+      {assignPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-800">Assign "{assignPrompt.name}"</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {assignPrompt.instances.length} variants found. Select which to assign to{" "}
+                <span className="font-medium">{assignPrompt.tier === "power_admin" ? "Tenant Power Admin" : "Functional Admin"}</span>.
+              </p>
+            </div>
+            <div className="px-5 py-3 space-y-2 max-h-64 overflow-y-auto">
+              {assignPrompt.instances.map(r => (
+                <label key={r.id} className="flex items-center gap-2.5 cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                  <input type="checkbox"
+                    checked={promptSelected.has(r.id)}
+                    onChange={e => {
+                      const next = new Set(promptSelected);
+                      e.target.checked ? next.add(r.id) : next.delete(r.id);
+                      setPromptSelected(next);
+                    }}
+                    className="rounded border-gray-300 text-blue-600"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{r.cost_center_name || "General"}</p>
+                    {r.occupants.length > 0 && (
+                      <p className="text-[10px] text-gray-400">{r.occupants.length} occupant{r.occupants.length !== 1 ? "s" : ""}</p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center justify-between px-5 py-2 border-t border-gray-100">
+              <button type="button"
+                onClick={() => {
+                  const all = assignPrompt.instances.every(r => promptSelected.has(r.id));
+                  setPromptSelected(all ? new Set() : new Set(assignPrompt.instances.map(r => r.id)));
+                }}
+                className="text-xs text-gray-500 hover:text-gray-700">
+                {assignPrompt.instances.every(r => promptSelected.has(r.id)) ? "Deselect all" : "Select all"}
+              </button>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setAssignPrompt(null); setPromptSelected(new Set()); }}
+                  className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
+                  Cancel
+                </button>
+                <button type="button" disabled={promptSelected.size === 0 || savingIds.size > 0}
+                  onClick={confirmAssign}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                  {savingIds.size > 0 ? "Assigning…" : `Assign ${promptSelected.size}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Remove confirmation ── */}
       {pendingRemove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100">
-              <p className="text-sm font-semibold text-gray-800">Remove role from tier?</p>
+              <p className="text-sm font-semibold text-gray-800">Remove from tier?</p>
             </div>
             <div className="px-5 py-4">
               <p className="text-sm text-gray-600">
                 <span className="font-medium">{pendingRemove.name}</span>
-                {pendingRemove.instances.length > 1 && ` (${pendingRemove.instances.length} variants)`}
-                {" "}will be removed from its permission tier. Occupants lose inherited permissions at their next login.
+                {pendingRemove.cost_center_name && ` (${pendingRemove.cost_center_name})`}
+                {" "}will lose its permission tier. Occupants lose inherited permissions at next login.
               </p>
             </div>
             <div className="px-5 py-3 bg-gray-50 flex justify-end gap-2 border-t border-gray-100">
@@ -607,10 +802,10 @@ function RolesContent() {
                 className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors">
                 Cancel
               </button>
-              <button type="button" disabled={!!savingTier}
-                onClick={async () => { await saveTierForGroup(pendingRemove, null); setPendingRemove(null); }}
+              <button type="button" disabled={savingIds.has(pendingRemove.id)}
+                onClick={async () => { await saveTierForIds([pendingRemove.id], null); setPendingRemove(null); }}
                 className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors">
-                {savingTier ? "Removing…" : "Remove"}
+                {savingIds.has(pendingRemove.id) ? "Removing…" : "Remove"}
               </button>
             </div>
           </div>
