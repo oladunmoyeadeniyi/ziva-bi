@@ -128,6 +128,10 @@ export default function PositionsPage() {
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
 
+  // Import from role hierarchy
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ created: number; skipped: number } | null>(null);
+
   // Modal state
   const [showCreate, setShowCreate] = useState(false);
   const [editPos, setEditPos] = useState<Position | null>(null);
@@ -220,6 +224,41 @@ export default function PositionsPage() {
   });
 
   // ── CRUD actions ────────────────────────────────────────────────────────────
+
+  const handleImportFromRoles = async () => {
+    if (orgRoles.length === 0) {
+      alert("No org roles found. Set up your Role Hierarchy first, then import.");
+      return;
+    }
+    if (!confirm(
+      `This will create a Position for each of your ${orgRoles.length} org roles that doesn't already have one. Continue?`
+    )) return;
+
+    setImporting(true);
+    setImportResult(null);
+    let created = 0;
+    let skipped = 0;
+
+    const existingRoleIds = new Set(positions.map((p) => p.org_role_id).filter(Boolean));
+
+    for (const role of orgRoles) {
+      if (existingRoleIds.has(role.id)) { skipped++; continue; }
+      try {
+        await apiFetch("/api/hr/positions", {
+          token,
+          method: "POST",
+          body: { title: role.name, org_role_id: role.id },
+        });
+        created++;
+      } catch {
+        skipped++;
+      }
+    }
+
+    setImportResult({ created, skipped });
+    setImporting(false);
+    loadPositions();
+  };
 
   const openCreate = () => {
     setFTitle(""); setFCode(""); setFCostCenter(""); setFParent("");
@@ -528,12 +567,18 @@ export default function PositionsPage() {
         title="Positions"
         subtitle="Position-based org model — durable slots that survive attrition. Assign employees to positions; approval routing and GL coding follow the position."
         actions={
-          <Button onClick={openCreate} size="sm">
-            + New position
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleImportFromRoles} disabled={importing}>
+              {importing ? "Importing…" : "↓ Import from role hierarchy"}
+            </Button>
+            <Button onClick={openCreate} size="sm">+ New position</Button>
+          </div>
         }
       />
 
+      {importResult && (
+        <Banner type="success" message={`Import complete: ${importResult.created} created, ${importResult.skipped} skipped.`} className="mb-4" />
+      )}
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">

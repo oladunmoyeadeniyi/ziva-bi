@@ -46,7 +46,9 @@ interface Employee {
 interface ApprovalRole {
   id: string;
   name: string;
-  level: number;
+  display_order: number;
+  cost_center_name: string | null;
+  designation: string | null;
 }
 
 interface CostCenterOption {
@@ -823,8 +825,10 @@ function EmployeesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Approval Role</label>
                 <select value={addForm.approval_role_id} onChange={e => setAddForm(f => ({ ...f, approval_role_id: e.target.value }))} className={selectCls}>
                   <option value="">— None —</option>
-                  {approvalRoles.sort((a, b) => a.level - b.level).map(r => (
-                    <option key={r.id} value={r.id}>{r.name} (Level {r.level})</option>
+                  {approvalRoles.sort((a, b) => a.display_order - b.display_order).map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}{r.cost_center_name ? ` — ${r.cost_center_name}` : ""}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-0.5">Assigns this employee a role in the approval chain (e.g. Finance Director, HOD).</p>
@@ -873,8 +877,10 @@ function EmployeesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Approval Role</label>
                 <select value={editForm.approval_role_id} onChange={e => setEditForm(f => ({ ...f, approval_role_id: e.target.value }))} className={selectCls}>
                   <option value="">— None —</option>
-                  {approvalRoles.sort((a, b) => a.level - b.level).map(r => (
-                    <option key={r.id} value={r.id}>{r.name} (Level {r.level})</option>
+                  {approvalRoles.sort((a, b) => a.display_order - b.display_order).map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}{r.cost_center_name ? ` — ${r.cost_center_name}` : ""}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-0.5">Assigns this employee a role in the approval chain (e.g. Finance Director, HOD).</p>
@@ -1115,18 +1121,4 @@ function EmployeesPage() {
                 loading={inviting}>
                 {inviting ? "Sending…" : "Send invite"}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </PageContainer>
-  );
-}
-
-export default function EmployeesPageWrapper() {
-  return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
-      <EmployeesPage />
-    </Suspense>
-  );
-}
+            <

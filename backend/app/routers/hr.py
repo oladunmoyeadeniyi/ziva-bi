@@ -330,16 +330,35 @@ async def download_employee_template(
             ws.add_data_validation(dv_cc)
             dv_cc.sqref = "H2:H10002"
 
-    # Org Role column (L = col 12): dropdown from role names
+    # Org Role column (L = col 12): dropdown from role names.
+    # Same hidden-sheet guard as CC codes — inline DV formula1 is capped at 255 chars.
     if role_names_for_template:
-        role_formula = '"' + ",".join(role_names_for_template[:50]) + '"'  # DV max ~255 chars
-        from openpyxl.worksheet.datavalidation import DataValidation as DV2
-        role_dv = DV2(
-            type="list", formula1=role_formula,
-            allow_blank=True, showDropDown=False,
-            sqref=f"L2:L5000",
-        )
-        ws.add_data_validation(role_dv)
+        role_inline = '"' + ",".join(role_names_for_template) + '"'
+        if len(role_inline) <= 255:
+            role_dv = DataValidation(
+                type="list", formula1=role_inline,
+                allow_blank=True, showDropDown=False,
+                showErrorMessage=True,
+                error="Please select a valid Org Role from the dropdown.",
+                errorTitle="Invalid Org Role",
+            )
+            ws.add_data_validation(role_dv)
+            role_dv.sqref = "L2:L10002"
+        else:
+            ws_roles = wb.create_sheet("_Role_Names")
+            for ri, rname in enumerate(role_names_for_template, 1):
+                ws_roles.cell(row=ri, column=1, value=rname)
+            ws_roles.sheet_state = "hidden"
+            role_dv = DataValidation(
+                type="list",
+                formula1=f"_Role_Names!$A$1:$A${len(role_names_for_template)}",
+                allow_blank=True, showDropDown=False,
+                showErrorMessage=True,
+                error="Please select a valid Org Role from the dropdown.",
+                errorTitle="Invalid Org Role",
+            )
+            ws.add_data_validation(role_dv)
+            role_dv.sqref = "L2:L10002"
 
     # Head of Cost Center column (K = col 11): Y or blank
     dv_head = DataValidation(
@@ -2041,31 +2060,4 @@ async def get_employee_current_position(
         )
         .limit(1)
     )
-    row = asgn_res.first()
-    if not row:
-        return None
-
-    asgn, pos = row
-    cc_name = None
-    if pos.cost_center_id:
-        cc_res = await db.execute(
-            select(OrgStructureNode).where(OrgStructureNode.id == pos.cost_center_id)
-        )
-        cc = cc_res.scalar_one_or_none()
-        cc_name = cc.name if cc else None
-
-    return EmployeeAssignmentResponse(
-        id=str(asgn.id),
-        employee_id=str(asgn.employee_id),
-        position_id=str(asgn.position_id),
-        position_title=pos.title,
-        cost_center_id=str(pos.cost_center_id) if pos.cost_center_id else None,
-        cost_center_name=cc_name,
-        effective_from=asgn.effective_from,
-        effective_to=asgn.effective_to,
-        assignment_type=asgn.assignment_type,
-        transfer_reason=asgn.transfer_reason,
-        is_retrospective=asgn.is_retrospective,
-        notes=asgn.notes,
-        created_at=asgn.created_at,
-    )
+    row = a

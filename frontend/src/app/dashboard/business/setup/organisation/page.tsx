@@ -2805,10 +2805,11 @@ function OrganisationPage() {
                       <option value="">&#8212; Select department / cost centre &#8212;</option>
                       {eligibleNodes.map(n => {
                         const clash = usedByOther[n.id];
-                        const codeTag = n.code ? ` [${n.code}]` : "";
+                        // Format: "CODE — Name" to match the employee modal dropdown style
+                        const label = n.code ? `${n.code} — ${n.name}` : n.name;
                         return (
                           <option key={n.id} value={n.id} style={clash ? { color: "#9ca3af" } : undefined}>
-                            {n.name}{codeTag} ({n.node_type}){clash ? ` — already mapped to ${clash}` : ""}
+                            {label}{clash ? ` (already mapped to ${clash})` : ""}
                           </option>
                         );
                       })}
