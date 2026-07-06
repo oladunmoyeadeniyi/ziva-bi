@@ -361,6 +361,7 @@ export default function BusinessLayout({
               <div className="px-2">
                 <SectionLabel label="People" />
                 <NavLink href="/dashboard/business/settings/employees" label="Employees" icon="users" />
+                <NavLink href="/dashboard/business/settings/positions" label="Positions" icon="hierarchy" />
                 <NavLink href="/dashboard/business/settings/cost-centers" label="Cost centers" icon="building-community" />
               </div>
 
@@ -400,9 +401,4 @@ export default function BusinessLayout({
           )}
         </nav>
 
-        {/* Main content */}
-        <main className="flex-1 overflow-auto">{children}</main>
-      </div>
-    </div>
-  );
-}
+        {/* Main cont
