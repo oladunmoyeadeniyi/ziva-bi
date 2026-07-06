@@ -115,6 +115,7 @@ function RolesContent() {
   // Search autocomplete
   const [search, setSearch] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [unassignedCollapsed, setUnassignedCollapsed] = useState(true);
   const searchRef = useRef<HTMLDivElement>(null);
 
   // Close suggestions on outside click
@@ -542,16 +543,17 @@ function RolesContent() {
               {/* Unassigned — 3-column grid, deduplicated */}
               {freeGroups.length > 0 && (
                 <div className="border border-dashed border-gray-200 rounded-lg overflow-hidden">
-                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                    <div>
+                  <button type="button" onClick={() => setUnassignedCollapsed(c => !c)}
+                    className="w-full px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between hover:bg-gray-100 transition-colors">
+                    <div className="text-left">
                       <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                         Unassigned roles ({freeGroups.length} unique{freeGroups.length !== orgRoles.filter(r => !r.permission_tier).length ? `, ${orgRoles.filter(r => !r.permission_tier).length} total` : ""})
                       </p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Drag into a tier above, or search above to quick-assign.</p>
+                      {!unassignedCollapsed && <p className="text-[10px] text-gray-400 mt-0.5">Drag into a tier above, or search above to quick-assign.</p>}
                     </div>
-                    <i className="ti ti-grip-horizontal text-gray-300" style={{ fontSize: 15 }} />
-                  </div>
-                  <div className="px-3 py-2.5" style={{ columns: 3, columnGap: "0.75rem" }}>
+                    <i className={`ti ${unassignedCollapsed ? "ti-chevron-down" : "ti-chevron-up"} text-gray-400`} style={{ fontSize: 13 }} />
+                  </button>
+                  {!unassignedCollapsed && <div className="px-3 py-2.5" style={{ columns: 3, columnGap: "0.75rem" }}>
                     {freeGroups.map(group => (
                       <div
                         key={group.name}
@@ -578,7 +580,7 @@ function RolesContent() {
                         )}
                       </div>
                     ))}
-                  </div>
+                  </div>}
                 </div>
               )}
             </>
