@@ -8,6 +8,8 @@
  * - Tenant Power Admin: full access by default, scope configurable per ORG ROLE
  * - Functional Admin: per-role scope — which sections + at what level
  * - Org roles are assigned to a tier; anyone holding the role inherits permissions
+ *
+ * Drag-and-drop: drag any unassigned role chip into a tier section to assign it.
  */
 
 import { useEffect, useState, Suspense } from "react";
@@ -19,7 +21,6 @@ import PageHeading from "@/components/PageHeading";
 
 type Tab = "tiers" | "assignments";
 
-// Sections for Tenant Power Admin scope (full suite)
 const PA_SCOPE_SECTIONS = [
   "Organisation",
   "Module activation",
@@ -86,19 +87,20 @@ function RolesContent() {
 
   const handleTabChange = (t: Tab) => { setTab(t); setError(null); router.replace(`?tab=${t}`, { scroll: false }); };
 
-  // Org roles
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [savingTier, setSavingTier] = useState<string | null>(null);
-  const [addingToTier, setAddingToTier] = useState<string | null>(null);
 
-  // Scope per role: roleId → { section → access_level }
   const [scopeMap, setScopeMap] = useState<Record<string, Record<string, string>>>({});
   const [openScope, setOpenScope] = useState<string | null>(null);
   const [savingScope, setSavingScope] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const [pendingRemove, setPendingRemove] = useState<{ id: string; name: string } | null>(null);
+
+  // Drag-and-drop state
+  const [draggingRoleId, setDraggingRoleId] = useState<string | null>(null);
+  const [dragOverTier, setDragOverTier] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken || tab !== "assignments") return;
@@ -127,9 +129,7 @@ function RolesContent() {
     const isPA = role.permission_tier === "power_admin";
     const sections = isPA ? PA_SCOPE_SECTIONS : FA_SCOPE_SECTIONS;
     const initMap: Record<string, string> = {};
-    for (const sec of sections) {
-      initMap[sec] = isPA ? (PA_SECTION_DEFAULTS[sec] ?? "full") : "none";
-    }
+    for (const sec of sections) initMap[sec] = isPA ? (PA_SECTION_DEFAULTS[sec] ?? "full") : "none";
     try {
       const d = await apiFetch<{ role_id: string; sections: { section: string; access_level: string }[] }>(
         `/api/approvals/roles/${role.id}/scope`, { token: accessToken }
@@ -170,6 +170,23 @@ function RolesContent() {
     finally { setSavingScope(false); }
   };
 
+  // ── Drag handlers ─────────────────────────────────────────────────────────
+  const handleDragStart = (e: React.DragEvent, roleId: string) => {
+    setDraggingRoleId(roleId);
+    e.dataTransfer.setData("roleId", roleId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const handleDragEnd = () => { setDraggingRoleId(null); setDragOverTier(null); };
+  const handleDragOver = (e: React.DragEvent, tier: string) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTier(tier); };
+  const handleDragLeave = (e: React.DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverTier(null); };
+  const handleDrop = (e: React.DragEvent, tier: string) => {
+    e.preventDefault();
+    const roleId = e.dataTransfer.getData("roleId");
+    if (roleId) saveTier(roleId, tier);
+    setDraggingRoleId(null);
+    setDragOverTier(null);
+  };
+
   // ── Scope panel ───────────────────────────────────────────────────────────
   const renderScopePanel = (role: OrgRole) => {
     if (openScope !== role.id) return null;
@@ -181,9 +198,7 @@ function RolesContent() {
     return (
       <div className="mt-2 border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden">
         <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
-            {role.name} — scope
-          </p>
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">{role.name} — scope</p>
           <button type="button" onClick={() => saveScope(role.id)} disabled={savingScope}
             className="text-[10px] font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50 border border-blue-300 px-2 py-0.5 rounded">
             {savingScope ? "Saving…" : "Save"}
@@ -198,8 +213,7 @@ function RolesContent() {
               return (
                 <div key={sec} className="flex items-center justify-between py-0.5">
                   <span className="text-xs text-gray-600">{sec}</span>
-                  <button type="button"
-                    onClick={() => cycleScopeSection(role.id, sec)}
+                  <button type="button" onClick={() => cycleScopeSection(role.id, sec)}
                     className={`whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors ${ACCESS_PILL[level] ?? ACCESS_PILL.none}`}>
                     {ACCESS_LABEL[level]}
                   </button>
@@ -215,7 +229,7 @@ function RolesContent() {
     );
   };
 
-  // ── Role chip with scope + remove ─────────────────────────────────────────
+  // ── Role chip ─────────────────────────────────────────────────────────────
   const renderRoleChip = (role: OrgRole, opts: { bgClass: string; textClass: string; removable?: boolean }) => (
     <div key={role.id} className="mb-2 mr-2 inline-block">
       <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border ${opts.bgClass}`}>
@@ -242,16 +256,57 @@ function RolesContent() {
     </div>
   );
 
-  const paRoles  = orgRoles.filter(r => r.permission_tier === "power_admin");
-  const faRoles  = orgRoles.filter(r => r.permission_tier === "functional_admin");
+  const paRoles   = orgRoles.filter(r => r.permission_tier === "power_admin");
+  const faRoles   = orgRoles.filter(r => r.permission_tier === "functional_admin");
   const freeRoles = orgRoles.filter(r => !r.permission_tier);
+
+  // ── Tier drop zone ────────────────────────────────────────────────────────
+  const TierDropZone = ({
+    tier, label, badge, subLabel, chipBg, chipText, roles, dropHighlight,
+  }: {
+    tier: string; label: string; badge: string; subLabel: string;
+    chipBg: string; chipText: string; roles: OrgRole[]; dropHighlight: string;
+  }) => (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="flex items-start justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE[tier]}`}>{label}</span>
+            <span className={`whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium ${badge}`}>{tier === "power_admin" ? "Full by default" : "Scope per role"}</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">{subLabel}</p>
+        </div>
+        {draggingRoleId && (
+          <span className="text-[10px] text-blue-500 font-medium mt-1 shrink-0 ml-4 animate-pulse">
+            Drop here to assign
+          </span>
+        )}
+      </div>
+      <div
+        onDragOver={(e) => handleDragOver(e, tier)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDrop(e, tier)}
+        className={`px-4 py-3 min-h-[56px] transition-colors rounded-b-lg ${
+          dragOverTier === tier ? dropHighlight : ""
+        }`}
+      >
+        {roles.length === 0 && !dragOverTier ? (
+          <p className="text-xs text-gray-400 italic">
+            {freeRoles.length > 0 ? "Drag a role here or use + Add role above." : "No roles assigned yet."}
+          </p>
+        ) : (
+          <div>{roles.map(r => renderRoleChip(r, { bgClass: chipBg, textClass: chipText, removable: true }))}</div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <PageContainer maxWidth="4xl">
-      <button type="button" onClick={() => router.push("/dashboard/business/setup")}
+      <button type="button" onClick={() => window.history.length > 1 ? router.back() : router.push("/dashboard/business/setup")}
         className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
-        Setup dashboard
+        Back
       </button>
       <PageHeading title="Roles & permissions" />
       <p className="text-sm text-gray-500 mb-6">
@@ -271,7 +326,7 @@ function RolesContent() {
         </div>
       ) : error ? <p className="mb-4 text-sm text-red-600">{error}</p> : null}
 
-      {saved && <p className="mb-4 text-xs text-green-600">Saved</p>}
+      {saved && <p className="mb-4 text-xs text-green-600">✓ Saved</p>}
 
       {/* ── Role tiers ── */}
       {tab === "tiers" && (
@@ -294,25 +349,19 @@ function RolesContent() {
                   <td className="px-4 py-3"><span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.consultant}`}>ZivaBI Consultant</span></td>
                   <td className="px-4 py-3 text-gray-700">ZivaBI implementation team</td>
                   <td className="px-4 py-3 text-gray-700">Super admin only</td>
-                  <td className="px-4 py-3">
-                    <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-600 text-white">Full — all sections, always</span>
-                  </td>
+                  <td className="px-4 py-3"><span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-600 text-white">Full — all sections, always</span></td>
                 </tr>
                 <tr>
                   <td className="px-4 py-3"><span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.power_admin}`}>Tenant Power Admin</span></td>
                   <td className="px-4 py-3 text-gray-700">Finance Director / CFO</td>
                   <td className="px-4 py-3 text-gray-700">ZivaBI Consultant</td>
-                  <td className="px-4 py-3">
-                    <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800 border border-green-300">Full by default — adjustable per role</span>
-                  </td>
+                  <td className="px-4 py-3"><span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800 border border-green-300">Full by default — adjustable per role</span></td>
                 </tr>
                 <tr>
                   <td className="px-4 py-3"><span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.functional_admin}`}>Functional Admin</span></td>
                   <td className="px-4 py-3 text-gray-700">Department / Cost Center Heads</td>
                   <td className="px-4 py-3 text-gray-700">Consultant or Power Admin</td>
-                  <td className="px-4 py-3">
-                    <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-200">Configured per section per role</span>
-                  </td>
+                  <td className="px-4 py-3"><span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-200">Configured per section per role</span></td>
                 </tr>
               </tbody>
             </table>
@@ -333,121 +382,74 @@ function RolesContent() {
             </div>
           ) : (
             <>
-              {/* ── Power Admin roles ── */}
-              {(() => {
-                const isAdding = addingToTier === "power_admin";
-                return (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="flex items-start justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.power_admin}`}>Tenant Power Admin</span>
-                          <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800 border border-green-300">Full by default</span>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Full access to all setup sections by default. Use <i className="ti ti-settings" style={{ fontSize: 10 }} /> to restrict per role. Typically Finance Director, CFO roles.
-                        </p>
-                      </div>
-                      {freeRoles.length > 0 && (
-                        <button type="button" onClick={() => setAddingToTier(isAdding ? null : "power_admin")}
-                          className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 mt-0.5 shrink-0 ml-4">
-                          <i className="ti ti-plus" style={{ fontSize: 11 }} /> Add role
-                        </button>
-                      )}
-                    </div>
-                    {isAdding && (
-                      <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
-                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Select a role to assign as Power Admin</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {freeRoles.map(r => (
-                            <button key={r.id} type="button"
-                              disabled={savingTier === r.id}
-                              onClick={() => { saveTier(r.id, "power_admin"); setAddingToTier(null); }}
-                              className="text-xs px-2.5 py-1 bg-white border border-gray-200 rounded-full hover:border-blue-400 hover:text-blue-700 text-gray-700 disabled:opacity-50">
-                              {r.name}
-                              {r.occupants.length > 0 && <span className="text-gray-400 ml-1 text-[10px]">· {r.occupants.length}</span>}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="px-4 py-3 min-h-[48px]">
-                      {paRoles.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic">No roles assigned yet.</p>
-                      ) : (
-                        <div>
-                          {paRoles.map(r => renderRoleChip(r, { bgClass: "bg-white border-gray-200", textClass: "text-gray-700", removable: true }))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── Functional Admin roles ── */}
-              {(() => {
-                const isAdding = addingToTier === "functional_admin";
-                return (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="flex items-start justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`whitespace-nowrap px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.functional_admin}`}>Functional Admin</span>
-                          <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-200">Scope per role</span>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Configure which sections each role can access. Use <i className="ti ti-settings" style={{ fontSize: 10 }} /> on each role to set section-level access.
-                        </p>
-                      </div>
-                      {freeRoles.length > 0 && (
-                        <button type="button" onClick={() => setAddingToTier(isAdding ? null : "functional_admin")}
-                          className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 mt-0.5 shrink-0 ml-4">
-                          <i className="ti ti-plus" style={{ fontSize: 11 }} /> Add role
-                        </button>
-                      )}
-                    </div>
-                    {isAdding && (
-                      <div className="px-4 py-3 bg-blue-50 border-b border-blue-100">
-                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Select a role to assign as Functional Admin</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {freeRoles.map(r => (
-                            <button key={r.id} type="button"
-                              disabled={savingTier === r.id}
-                              onClick={() => { saveTier(r.id, "functional_admin"); setAddingToTier(null); }}
-                              className="text-xs px-2.5 py-1 bg-white border border-gray-200 rounded-full hover:border-green-400 hover:text-green-700 text-gray-700 disabled:opacity-50">
-                              {r.name}
-                              {r.occupants.length > 0 && <span className="text-gray-400 ml-1 text-[10px]">· {r.occupants.length}</span>}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="px-4 py-3 min-h-[48px]">
-                      {faRoles.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic">No roles assigned yet.</p>
-                      ) : (
-                        <div>
-                          {faRoles.map(r => renderRoleChip(r, { bgClass: "bg-green-50 border-green-200", textClass: "text-green-800", removable: true }))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── Unassigned roles ── */}
               {freeRoles.length > 0 && (
-                <div className="border border-gray-100 rounded-lg overflow-hidden">
-                  <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
-                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Unassigned roles ({freeRoles.length})</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">These roles have no permission tier. Use + Add role above to assign them.</p>
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 flex items-center gap-2">
+                  <i className="ti ti-drag-drop" style={{ fontSize: 14 }} />
+                  Drag any unassigned role into a tier below to assign it.
+                </div>
+              )}
+
+              {/* Power Admin */}
+              <TierDropZone
+                tier="power_admin"
+                label="Tenant Power Admin"
+                badge="bg-green-100 text-green-800 border border-green-300"
+                subLabel="Full access to all setup sections by default. Use ⚙ to restrict per role. Typically Finance Director, CFO roles."
+                chipBg="bg-white border-gray-200"
+                chipText="text-gray-700"
+                roles={paRoles}
+                dropHighlight="bg-blue-50 ring-2 ring-blue-300 ring-inset"
+              />
+
+              {/* Functional Admin */}
+              <TierDropZone
+                tier="functional_admin"
+                label="Functional Admin"
+                badge="bg-blue-100 text-blue-800 border border-blue-200"
+                subLabel="Configure which sections each role can access. Use ⚙ on each role to set section-level access."
+                chipBg="bg-green-50 border-green-200"
+                chipText="text-green-800"
+                roles={faRoles}
+                dropHighlight="bg-green-50 ring-2 ring-green-300 ring-inset"
+              />
+
+              {/* Unassigned — 3-column grid */}
+              {freeRoles.length > 0 && (
+                <div className="border border-dashed border-gray-200 rounded-lg overflow-hidden">
+                  <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                        Unassigned roles ({freeRoles.length})
+                      </p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        These roles have no permission tier. Drag them into a tier above to assign.
+                      </p>
+                    </div>
+                    <i className="ti ti-grip-horizontal text-gray-300" style={{ fontSize: 16 }} />
                   </div>
-                  <div className="px-4 py-3 flex flex-wrap gap-1.5">
+                  <div
+                    className="px-4 py-3"
+                    style={{ columns: 3, columnGap: "1rem" }}
+                  >
                     {freeRoles.map(r => (
-                      <span key={r.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-gray-50 border border-gray-200 text-gray-500">
-                        {r.name}
-                        {r.occupants.length > 0 && <span className="text-gray-400 text-[10px]">· {r.occupants.length}</span>}
-                      </span>
+                      <div
+                        key={r.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, r.id)}
+                        onDragEnd={handleDragEnd}
+                        style={{ breakInside: "avoid", marginBottom: "0.5rem" }}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-white border-gray-200 text-gray-600 cursor-grab active:cursor-grabbing select-none transition-opacity ${
+                          draggingRoleId === r.id ? "opacity-40 scale-95" : "hover:border-blue-300 hover:text-blue-700 hover:shadow-sm"
+                        }`}
+                      >
+                        <i className="ti ti-grip-vertical text-gray-300 shrink-0" style={{ fontSize: 11 }} />
+                        <span className="font-medium truncate">{r.name}</span>
+                        {r.occupants.length > 0 && (
+                          <span className="ml-auto shrink-0 text-[10px] text-gray-400 border border-gray-100 rounded px-1">
+                            {r.occupants.length}
+                          </span>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -476,10 +478,7 @@ function RolesContent() {
                 Cancel
               </button>
               <button type="button" disabled={savingTier === pendingRemove.id}
-                onClick={async () => {
-                  await saveTier(pendingRemove.id, null);
-                  setPendingRemove(null);
-                }}
+                onClick={async () => { await saveTier(pendingRemove.id, null); setPendingRemove(null); }}
                 className="px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors">
                 {savingTier === pendingRemove.id ? "Removing…" : "Remove"}
               </button>

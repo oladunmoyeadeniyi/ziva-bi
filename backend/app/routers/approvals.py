@@ -57,6 +57,7 @@ from app.models.approvals import (
     ApprovalRoleScope,
     ApprovalRoleThreshold,
     ExpenseApproval,
+    FinanceReviewStep,
 )
 from app.models.setup import OrgStructureNode
 from app.models.auth import AuditLog, User, UserTenant
@@ -86,6 +87,8 @@ from app.schemas.approvals import (
     RoleScopeUpdate,
     SnapshotResponse,
     SubmitWithApproversRequest,
+    FinanceReviewStepBulkSave,
+    FinanceReviewStepResponse,
 )
 from app.schemas.expenses import ExpenseReportResponse
 from app.services.account_determination import AccountMappingError

@@ -568,7 +568,14 @@ export default function ApprovalWorkflowsPage() {
                       <div className="border-t border-gray-100 pt-5">
                         <label className="flex items-center gap-2 cursor-pointer mb-1">
                           <input type="checkbox" checked={requiresFinanceReview}
-                            onChange={e => setRequiresFinanceReview(e.target.checked)} className="accent-blue-600" />
+                            onChange={e => {
+                                const checked = e.target.checked;
+                                setRequiresFinanceReview(checked);
+                                if (checked && financeSteps.length === 0) {
+                                  if (currentPolicyId) loadFinanceStepsById(currentPolicyId);
+                                  else setFinanceSteps(DEFAULT_STEPS.map(s => ({ ...s, _key: `${Date.now()}-${Math.random()}` })));
+                                }
+                              }} className="accent-blue-600" />
                           <span className="text-sm font-medium text-gray-700">Requires finance review after management approval</span>
                         </label>
                         <p className="text-xs text-gray-400 mb-3 ml-5">Named-person step chain: document intake → GL validation → controller sign-off → FD approval.</p>

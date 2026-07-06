@@ -993,10 +993,10 @@ function DimensionsPage() {
     <PageContainer maxWidth="3xl">
 
       {/* Back button */}
-      <button type="button" onClick={() => router.push("/dashboard/business/setup")}
+      <button type="button" onClick={() => window.history.length > 1 ? router.back() : router.push("/dashboard/business/setup")}
         className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4">
         <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
-        Setup dashboard
+        Back
       </button>
 
       <PageHeading title="Financial Dimensions" />

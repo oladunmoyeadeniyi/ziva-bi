@@ -370,11 +370,11 @@ export default function ModuleActivationPage() {
         <div className="p-4 border-b border-gray-100">
           <button
             type="button"
-            onClick={() => router.push("/dashboard/business/setup")}
+            onClick={() => window.history.length > 1 ? router.back() : router.push("/dashboard/business/setup")}
             className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 mb-4"
           >
             <i className="ti ti-arrow-left" style={{ fontSize: 13 }} />
-            Setup dashboard
+            Back
           </button>
           <h1 className="text-base font-semibold text-gray-900">Module activation</h1>
           <p className="text-xs text-gray-500 mt-0.5">
