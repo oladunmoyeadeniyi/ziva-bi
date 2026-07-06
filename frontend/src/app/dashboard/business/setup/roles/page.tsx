@@ -49,15 +49,25 @@ interface OrgRole {
   name: string;
   designation: string | null;
   cost_center_name: string | null;
+  area: string | null;
+  sub_area: string | null;
   permission_tier: string | null;
   occupants: { id: string; full_name: string; initials: string; employee_code?: string }[];
 }
 
-/** Group by cost center for display. No-CC roles go under "General". */
-function groupByCostCenter(roles: OrgRole[]): { cc: string; ccRoles: OrgRole[] }[] {
+/** Human-readable label for a role instance — Area / Sub-area, falling back to cost center or "General". */
+function roleAreaLabel(r: OrgRole): string {
+  if (r.area && r.sub_area) return `${r.area} / ${r.sub_area}`;
+  if (r.area) return r.area;
+  if (r.sub_area) return r.sub_area;
+  return r.cost_center_name || "General";
+}
+
+/** Group by area label for display. */
+function groupByArea(roles: OrgRole[]): { cc: string; ccRoles: OrgRole[] }[] {
   const map = new Map<string, OrgRole[]>();
   for (const r of roles) {
-    const key = r.cost_center_name || "General";
+    const key = roleAreaLabel(r);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(r);
   }
@@ -120,7 +130,7 @@ function SubRoleGroup({
           {instances.map(r => (
             <div key={r.id}>
               <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs border bg-gray-50 border-gray-200 text-gray-600">
-                <span className="truncate">{r.cost_center_name || "General"}</span>
+                <span className="truncate">{roleAreaLabel(r)}</span>
                 {r.occupants.length > 0 && (
                   <span className="text-[10px] text-gray-400 ml-1">· {r.occupants.length}</span>
                 )}
@@ -411,7 +421,7 @@ function RolesContent() {
     tier: string; label: string; badge: string; subLabel: string;
     chipBg: string; chipText: string; roles: OrgRole[]; dropHighlight: string;
   }) => {
-    const ccGroups = groupByCostCenter(roles);
+    const ccGroups = groupByArea(roles);
     const isAddOpen = addTier === tier;
 
     return (
@@ -707,7 +717,7 @@ function RolesContent() {
                           <span className="font-medium truncate">{name}</span>
                           {instances.length > 1 ? (
                             <span className="shrink-0 ml-auto text-[10px] text-gray-400 border border-gray-100 rounded px-1"
-                              title={`${instances.length} variants across: ${[...new Set(instances.map(i => i.cost_center_name).filter(Boolean))].join(", ")}`}>
+                              title={`${instances.length} variants across: ${[...new Set(instances.map(i => roleAreaLabel(i)))].join(", ")}`}>
                               ×{instances.length}
                             </span>
                           ) : instances[0].occupants.length > 0 ? (
@@ -750,7 +760,7 @@ function RolesContent() {
                     className="rounded border-gray-300 text-blue-600"
                   />
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-800">{r.cost_center_name || "General"}</p>
+                    <p className="text-sm font-medium text-gray-800">{roleAreaLabel(r)}</p>
                     {r.occupants.length > 0 && (
                       <p className="text-[10px] text-gray-400">{r.occupants.length} occupant{r.occupants.length !== 1 ? "s" : ""}</p>
                     )}
@@ -793,7 +803,7 @@ function RolesContent() {
             <div className="px-5 py-4">
               <p className="text-sm text-gray-600">
                 <span className="font-medium">{pendingRemove.name}</span>
-                {pendingRemove.cost_center_name && ` (${pendingRemove.cost_center_name})`}
+                {roleAreaLabel(pendingRemove) !== pendingRemove.name && ` (${roleAreaLabel(pendingRemove)})`}
                 {" "}will lose its permission tier. Occupants lose inherited permissions at next login.
               </p>
             </div>
