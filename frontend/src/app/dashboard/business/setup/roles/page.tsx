@@ -273,7 +273,7 @@ function RolesContent() {
           onDragStart={isDraggable ? e => handleDragStart(e, role) : undefined}
           onDragEnd={isDraggable ? handleDragEnd : undefined}
           className={`inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-lg border text-xs bg-white ${
-            isDraggable ? "cursor-grab active:cursor-grabbing border-gray-200 hover:border-blue-300 hover:shadow-sm" : "border-gray-200"
+            isDraggable ? "cursor-grab active:cursor-grabbing border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:shadow-sm" : "border-gray-200"
           } select-none transition-all`}
         >
           {isDraggable && <i className="ti ti-grip-vertical text-gray-300 shrink-0" style={{ fontSize: 10 }} />}
@@ -504,7 +504,7 @@ function RolesContent() {
                                   <i className="ti ti-square-filled" style={{ fontSize: 7, color: "#9ca3af" }} />
                                   <span className="truncate">{r.cost_center_name || "—"}</span>
                                 </span>
-                                <RoleChip role={r} showDesig />
+                                <RoleChip role={r} draggable showDesig />
                               </div>
                             ))}
                           </div>
@@ -521,7 +521,7 @@ function RolesContent() {
                                   <i className="ti ti-square-filled" style={{ fontSize: 7, color: "#9ca3af" }} />
                                   <span className="truncate">{r.cost_center_name || "—"}</span>
                                 </span>
-                                <RoleChip role={r} removable showDesig />
+                                <RoleChip role={r} draggable removable showDesig />
                               </div>
                             ))}
                           </div>
