@@ -59,9 +59,8 @@ from app.models.master_data import (
     EmployeePositionAssignment,
     EmployeeTransfer,
     FinanceReviewConfig,
-    Position,
-    PositionHistory,
 )
+from app.models.approvals import ApprovalRole as OrgRole
 from app.models.setup import OrgStructureNode
 from app.models.setup import EmployeeOnboardingToken
 from app.models.auth import Tenant
@@ -84,7 +83,6 @@ from app.schemas.hr import (
     FinanceReviewerCreate,
     FinanceReviewerUpdate,
     PositionCreate,
-    PositionHistoryItem,
     PositionMoveRequest,
     PositionOccupant,
     PositionResponse,
@@ -1484,72 +1482,33 @@ async def reject_employee_onboarding(
 
 # ── Positions API (People v1) ─────────────────────────────────────────────────
 
-def _build_position_response(
-    pos: "Position",
-    occupants: list[PositionOccupant],
-    cc_name: str | None = None,
-    cc_code: str | None = None,
-    parent_title: str | None = None,
-    role_name: str | None = None,
-) -> PositionResponse:
-    """Assemble a PositionResponse from ORM object + resolved names."""
-    return PositionResponse(
-        id=str(pos.id),
-        tenant_id=str(pos.tenant_id),
-        title=pos.title,
-        position_code=pos.position_code,
-        cost_center_id=str(pos.cost_center_id) if pos.cost_center_id else None,
-        cost_center_name=cc_name,
-        cost_center_code=cc_code,
-        parent_position_id=str(pos.parent_position_id) if pos.parent_position_id else None,
-        parent_position_title=parent_title,
-        org_role_id=str(pos.org_role_id) if pos.org_role_id else None,
-        org_role_name=role_name,
-        function_code=pos.function_code,
-        grade=pos.grade,
-        is_head_of_cost_center=pos.is_head_of_cost_center,
-        max_occupants=pos.max_occupants,
-        is_active=pos.is_active,
-        occupants=occupants,
-        created_at=pos.created_at,
-    )
-
-
-async def _resolve_position(pos: "Position", db: AsyncSession) -> PositionResponse:
-    """Resolve names and current occupants for a position."""
-    from app.models.approvals import ApprovalRole as AR
-
+async def _resolve_position(role: OrgRole, db: AsyncSession) -> PositionResponse:
+    """
+    Build a PositionResponse from an ApprovalRole ORM object.
+    approval_roles is the single source of truth — positions are a view of it.
+    """
     cc_name = cc_code = None
-    if pos.cost_center_id:
+    if role.cost_center_id:
         cc_res = await db.execute(
-            select(OrgStructureNode).where(OrgStructureNode.id == pos.cost_center_id)
+            select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
         )
         cc = cc_res.scalar_one_or_none()
         if cc:
-            cc_name, cc_code = cc.name, cc.code
+            cc_name, cc_code = cc.name, getattr(cc, "code", None)
 
-    parent_title = None
-    if pos.parent_position_id:
-        par_res = await db.execute(
-            select(Position).where(Position.id == pos.parent_position_id)
-        )
+    parent_name = None
+    if role.parent_role_id:
+        par_res = await db.execute(select(OrgRole).where(OrgRole.id == role.parent_role_id))
         par = par_res.scalar_one_or_none()
         if par:
-            parent_title = par.title
-
-    role_name = None
-    if pos.org_role_id:
-        ar_res = await db.execute(select(AR).where(AR.id == pos.org_role_id))
-        ar = ar_res.scalar_one_or_none()
-        if ar:
-            role_name = ar.name
+            parent_name = par.name
 
     # Current active assignments (effective_to IS NULL)
     occ_res = await db.execute(
         select(EmployeePositionAssignment, Employee)
         .join(Employee, Employee.id == EmployeePositionAssignment.employee_id)
         .where(
-            EmployeePositionAssignment.position_id == pos.id,
+            EmployeePositionAssignment.approval_role_id == role.id,
             EmployeePositionAssignment.effective_to.is_(None),
         )
         .order_by(EmployeePositionAssignment.effective_from)
@@ -1565,37 +1524,55 @@ async def _resolve_position(pos: "Position", db: AsyncSession) -> PositionRespon
         )
         for asgn, emp in occ_res.all()
     ]
-    return _build_position_response(pos, occupants, cc_name, cc_code, parent_title, role_name)
+
+    return PositionResponse(
+        id=str(role.id),
+        name=role.name,
+        code=role.code,
+        grade=role.grade,
+        description=role.description,
+        display_order=role.display_order,
+        is_active=role.is_active,
+        parent_role_id=str(role.parent_role_id) if role.parent_role_id else None,
+        parent_role_name=parent_name,
+        cost_center_id=str(role.cost_center_id) if role.cost_center_id else None,
+        cost_center_name=cc_name,
+        cost_center_code=cc_code,
+        entity_node_id=str(role.entity_node_id) if role.entity_node_id else None,
+        max_occupants=role.max_occupants,
+        designation=role.designation,
+        area=role.area,
+        sub_area=role.sub_area,
+        employment_type=role.employment_type,
+        occupant_count=len(occupants),
+        occupants=occupants,
+        created_at=role.created_at,
+    )
 
 
 @router.get("/positions", response_model=list[PositionResponse])
 async def list_positions(
     cost_center_id: Optional[uuid.UUID] = None,
-    function_code: Optional[str] = None,
     is_active: Optional[bool] = None,
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[PositionResponse]:
     """
-    List all positions for the tenant.
-
-    Filter by cost_center_id, function_code, or is_active (default: all).
-    Each position includes its current occupants.
+    List all positions (approval_roles) for the tenant.
+    Positions and the role hierarchy are the same data — single source of truth.
     """
     tenant_id = _require_tenant(current_user)
 
-    q = select(Position).where(Position.tenant_id == tenant_id)
+    q = select(OrgRole).where(OrgRole.tenant_id == tenant_id)
     if cost_center_id:
-        q = q.where(Position.cost_center_id == cost_center_id)
-    if function_code:
-        q = q.where(Position.function_code == function_code)
+        q = q.where(OrgRole.cost_center_id == cost_center_id)
     if is_active is not None:
-        q = q.where(Position.is_active.is_(is_active))
-    q = q.order_by(Position.title)
+        q = q.where(OrgRole.is_active.is_(is_active))
+    q = q.order_by(OrgRole.display_order, OrgRole.name)
 
     res = await db.execute(q)
-    positions = res.scalars().all()
-    return [await _resolve_position(p, db) for p in positions]
+    roles = res.scalars().all()
+    return [await _resolve_position(r, db) for r in roles]
 
 
 @router.post("/positions", response_model=PositionResponse, status_code=201)
@@ -1605,51 +1582,32 @@ async def create_position(
     db: AsyncSession = Depends(get_db),
 ) -> PositionResponse:
     """
-    Create a new position slot.
-
-    Writes a 'create' row to position_history on creation.
-    position_code is auto-generated from the title if not supplied.
+    Create a new position slot (writes to approval_roles).
+    Immediately visible in both the Positions page and the Role Hierarchy page.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
-    # Auto-generate position code if not supplied
-    code = payload.position_code
-    if not code:
-        import re as _re
-        base = _re.sub(r"[^A-Z0-9]", "", payload.title.upper())[:8]
-        suffix = str(uuid.uuid4())[:4].upper()
-        code = f"{base}-{suffix}"
-
-    pos = Position(
+    role = OrgRole(
         tenant_id=tenant_id,
-        title=payload.title,
-        position_code=code,
-        cost_center_id=payload.cost_center_id,
-        parent_position_id=payload.parent_position_id,
-        org_role_id=payload.org_role_id,
-        function_code=payload.function_code,
+        name=payload.name,
+        code=payload.code,
         grade=payload.grade,
-        is_head_of_cost_center=payload.is_head_of_cost_center,
+        description=payload.description,
+        display_order=payload.display_order,
+        parent_role_id=payload.parent_role_id,
+        cost_center_id=payload.cost_center_id,
+        entity_node_id=payload.entity_node_id,
         max_occupants=payload.max_occupants,
+        designation=payload.designation,
+        area=payload.area,
+        sub_area=payload.sub_area,
+        employment_type=payload.employment_type or "permanent",
     )
-    db.add(pos)
-    await db.flush()
-
-    # Write creation history row
-    db.add(PositionHistory(
-        position_id=pos.id,
-        new_cost_center_id=pos.cost_center_id,
-        new_parent_position_id=pos.parent_position_id,
-        new_title=pos.title,
-        new_org_role_id=pos.org_role_id,
-        effective_date=datetime.now(timezone.utc).date(),
-        change_type="create",
-        changed_by=current_user.user_id,
-    ))
+    db.add(role)
     await db.commit()
-    await db.refresh(pos)
-    return await _resolve_position(pos, db)
+    await db.refresh(role)
+    return await _resolve_position(role, db)
 
 
 @router.get("/positions/{position_id}", response_model=PositionResponse)
@@ -1661,12 +1619,12 @@ async def get_position(
     """Get a single position by ID, including current occupants."""
     tenant_id = _require_tenant(current_user)
     res = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+        select(OrgRole).where(OrgRole.id == position_id, OrgRole.tenant_id == tenant_id)
     )
-    pos = res.scalar_one_or_none()
-    if not pos:
+    role = res.scalar_one_or_none()
+    if not role:
         raise HTTPException(status_code=404, detail="Position not found.")
-    return await _resolve_position(pos, db)
+    return await _resolve_position(role, db)
 
 
 @router.patch("/positions/{position_id}", response_model=PositionResponse)
@@ -1676,23 +1634,23 @@ async def update_position(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> PositionResponse:
-    """Update position metadata (title, grade, function_code etc.)."""
+    """Update position / role metadata. Reflected immediately on both pages."""
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     res = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+        select(OrgRole).where(OrgRole.id == position_id, OrgRole.tenant_id == tenant_id)
     )
-    pos = res.scalar_one_or_none()
-    if not pos:
+    role = res.scalar_one_or_none()
+    if not role:
         raise HTTPException(status_code=404, detail="Position not found.")
 
     for field, value in payload.model_dump(exclude_none=True).items():
-        setattr(pos, field, value)
+        setattr(role, field, value)
 
     await db.commit()
-    await db.refresh(pos)
-    return await _resolve_position(pos, db)
+    await db.refresh(role)
+    return await _resolve_position(role, db)
 
 
 @router.delete("/positions/{position_id}", status_code=200)
@@ -1702,44 +1660,35 @@ async def archive_position(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Archive (soft-delete) a position.
-
-    Blocked if the position has any active assignments (effective_to IS NULL).
-    Writes an 'archive' history row.
+    Deactivate a position (sets is_active=False on the approval_role).
+    Blocked if there are active occupants.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     res = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+        select(OrgRole).where(OrgRole.id == position_id, OrgRole.tenant_id == tenant_id)
     )
-    pos = res.scalar_one_or_none()
-    if not pos:
+    role = res.scalar_one_or_none()
+    if not role:
         raise HTTPException(status_code=404, detail="Position not found.")
 
     # Block if active occupants
     occ_res = await db.execute(
         select(EmployeePositionAssignment).where(
-            EmployeePositionAssignment.position_id == position_id,
+            EmployeePositionAssignment.approval_role_id == position_id,
             EmployeePositionAssignment.effective_to.is_(None),
         ).limit(1)
     )
     if occ_res.scalar_one_or_none():
         raise HTTPException(
             status_code=409,
-            detail="Cannot archive a position with active occupants. Transfer or end their assignments first.",
+            detail="Cannot deactivate a position with active occupants. Transfer or end their assignments first.",
         )
 
-    pos.is_active = False
-    db.add(PositionHistory(
-        position_id=pos.id,
-        old_title=pos.title,
-        effective_date=datetime.now(timezone.utc).date(),
-        change_type="archive",
-        changed_by=current_user.user_id,
-    ))
+    role.is_active = False
     await db.commit()
-    return {"message": f"Position '{pos.title}' archived."}
+    return {"message": f"Position '{role.name}' deactivated."}
 
 
 @router.post("/positions/{position_id}/move", response_model=PositionResponse)
@@ -1750,64 +1699,32 @@ async def move_position(
     db: AsyncSession = Depends(get_db),
 ) -> PositionResponse:
     """
-    Move a position to a new cost centre and/or re-parent it in the hierarchy.
-
-    Prospective (default): transactions before effective_date are unaffected.
-    Retrospective: admin-confirmed; flags intervening transactions for review.
-
-    Writes to position_history. Does NOT auto-update SystemFunctionMapping —
-    the tenant admin is alerted to review function mappings after a move.
+    Move a position to a new parent or cost centre.
+    Updates approval_role.parent_role_id and/or cost_center_id.
+    Syncs cost_center_id on current substantive occupant's Employee row.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     res = await db.execute(
-        select(Position).where(Position.id == position_id, Position.tenant_id == tenant_id)
+        select(OrgRole).where(OrgRole.id == position_id, OrgRole.tenant_id == tenant_id)
     )
-    pos = res.scalar_one_or_none()
-    if not pos:
+    role = res.scalar_one_or_none()
+    if not role:
         raise HTTPException(status_code=404, detail="Position not found.")
 
-    # Snapshot old values
-    old_cc = pos.cost_center_id
-    old_parent = pos.parent_position_id
-    old_title = pos.title
-    old_role = pos.org_role_id
-
-    # Apply changes
     if payload.new_cost_center_id is not None:
-        pos.cost_center_id = payload.new_cost_center_id
-    if payload.new_parent_position_id is not None:
-        pos.parent_position_id = payload.new_parent_position_id
-    if payload.new_title is not None:
-        pos.title = payload.new_title
-    if payload.new_org_role_id is not None:
-        pos.org_role_id = payload.new_org_role_id
+        role.cost_center_id = payload.new_cost_center_id
+    if payload.new_parent_role_id is not None:
+        role.parent_role_id = payload.new_parent_role_id
+    if payload.new_name is not None:
+        role.name = payload.new_name
 
-    # History row
-    db.add(PositionHistory(
-        position_id=pos.id,
-        old_cost_center_id=old_cc,
-        new_cost_center_id=pos.cost_center_id,
-        old_parent_position_id=old_parent,
-        new_parent_position_id=pos.parent_position_id,
-        old_title=old_title,
-        new_title=pos.title if payload.new_title else None,
-        old_org_role_id=old_role,
-        new_org_role_id=pos.org_role_id if payload.new_org_role_id else None,
-        effective_date=payload.effective_date,
-        change_type=payload.change_type,
-        change_reason=payload.change_reason,
-        is_retrospective=payload.is_retrospective,
-        changed_by=current_user.user_id,
-    ))
-
-    # If position move is retrospective, also sync the employee's cost_center_id
-    # on their Employee row (denorm) so current lookups stay correct.
+    # Sync cost_center_id on current occupant's Employee row (denorm)
     if payload.new_cost_center_id:
         occ_res = await db.execute(
             select(EmployeePositionAssignment).where(
-                EmployeePositionAssignment.position_id == position_id,
+                EmployeePositionAssignment.approval_role_id == position_id,
                 EmployeePositionAssignment.effective_to.is_(None),
                 EmployeePositionAssignment.assignment_type == "substantive",
             )
@@ -1819,49 +1736,27 @@ async def move_position(
                 emp.cost_center_id = payload.new_cost_center_id
 
     await db.commit()
-    await db.refresh(pos)
-    return await _resolve_position(pos, db)
+    await db.refresh(role)
+    return await _resolve_position(role, db)
 
 
-@router.get("/positions/{position_id}/history", response_model=list[PositionHistoryItem])
+@router.get("/positions/{position_id}/history")
 async def get_position_history(
     position_id: uuid.UUID,
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-) -> list[PositionHistoryItem]:
-    """Return the full movement history for a position (newest first)."""
+) -> list:
+    """
+    Position history endpoint — returns empty list.
+    History tracking for approval_roles will be added via the audit log in a future milestone.
+    """
     tenant_id = _require_tenant(current_user)
-
-    # Verify position belongs to tenant
-    pos_res = await db.execute(
-        select(Position.id).where(Position.id == position_id, Position.tenant_id == tenant_id)
+    res = await db.execute(
+        select(OrgRole.id).where(OrgRole.id == position_id, OrgRole.tenant_id == tenant_id)
     )
-    if not pos_res.scalar_one_or_none():
+    if not res.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Position not found.")
-
-    hist_res = await db.execute(
-        select(PositionHistory)
-        .where(PositionHistory.position_id == position_id)
-        .order_by(PositionHistory.created_at.desc())
-    )
-    return [
-        PositionHistoryItem(
-            id=str(h.id),
-            old_cost_center_id=str(h.old_cost_center_id) if h.old_cost_center_id else None,
-            new_cost_center_id=str(h.new_cost_center_id) if h.new_cost_center_id else None,
-            old_title=h.old_title,
-            new_title=h.new_title,
-            old_org_role_id=str(h.old_org_role_id) if h.old_org_role_id else None,
-            new_org_role_id=str(h.new_org_role_id) if h.new_org_role_id else None,
-            effective_date=h.effective_date,
-            change_type=h.change_type,
-            change_reason=h.change_reason,
-            is_retrospective=h.is_retrospective,
-            changed_by=str(h.changed_by) if h.changed_by else None,
-            created_at=h.created_at,
-        )
-        for h in hist_res.scalars().all()
-    ]
+    return []
 
 
 # ── Employee Position Assignment Endpoints ────────────────────────────────────
@@ -1877,15 +1772,11 @@ async def assign_employee_to_position(
     Assign an employee to a position (hire, transfer, promotion, acting, secondment).
 
     For substantive assignments:
-      - Closes any existing active substantive assignment (sets effective_to = payload.effective_from - 1 day)
-      - Updates employee.cost_center_id to the new position's cost centre (denorm sync)
-      - Updates employee.approval_role_id to the position's org_role_id
+      - Closes any existing active substantive assignment
+      - Updates employee.cost_center_id and employee.approval_role_id (denorm sync)
 
     For acting / secondment:
       - Does NOT close the primary substantive assignment
-      - Adds a secondary assignment record
-
-    Retrospective: allowed but requires is_retrospective=True in the payload.
     """
     _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
@@ -1900,32 +1791,33 @@ async def assign_employee_to_position(
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found.")
 
-    # Validate position
-    pos_res = await db.execute(
-        select(Position).where(Position.id == payload.position_id, Position.tenant_id == tenant_id)
+    # Validate role / position
+    role_res = await db.execute(
+        select(OrgRole).where(OrgRole.id == payload.approval_role_id, OrgRole.tenant_id == tenant_id)
     )
-    pos = pos_res.scalar_one_or_none()
-    if not pos:
+    role = role_res.scalar_one_or_none()
+    if not role:
         raise HTTPException(status_code=404, detail="Position not found.")
-    if not pos.is_active:
-        raise HTTPException(status_code=409, detail="Cannot assign to an archived position.")
+    if not role.is_active:
+        raise HTTPException(status_code=409, detail="Cannot assign to an inactive position.")
 
-    # Check position capacity
-    occ_count_res = await db.execute(
-        select(EmployeePositionAssignment).where(
-            EmployeePositionAssignment.position_id == payload.position_id,
-            EmployeePositionAssignment.effective_to.is_(None),
+    # Check capacity
+    if role.max_occupants is not None:
+        occ_count_res = await db.execute(
+            select(EmployeePositionAssignment).where(
+                EmployeePositionAssignment.approval_role_id == payload.approval_role_id,
+                EmployeePositionAssignment.effective_to.is_(None),
+            )
         )
-    )
-    active_count = len(occ_count_res.scalars().all())
-    if active_count >= pos.max_occupants:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Position is at capacity ({pos.max_occupants} occupant(s)). "
-                   "Archive the position or increase max_occupants first.",
-        )
+        active_count = len(occ_count_res.scalars().all())
+        if active_count >= role.max_occupants:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Position is at capacity ({role.max_occupants} occupant(s)). "
+                       "Increase max_occupants or end an existing assignment first.",
+            )
 
-    # Close existing active substantive assignment if this is a substantive move
+    # Close existing substantive assignment
     if payload.assignment_type == "substantive":
         existing_res = await db.execute(
             select(EmployeePositionAssignment).where(
@@ -1936,14 +1828,13 @@ async def assign_employee_to_position(
         )
         existing = existing_res.scalar_one_or_none()
         if existing:
-            # Close the previous assignment one day before the new one starts
             existing.effective_to = payload.effective_from - timedelta(days=1)
 
     # Create new assignment
     asgn = EmployeePositionAssignment(
         tenant_id=tenant_id,
         employee_id=employee_id,
-        position_id=payload.position_id,
+        approval_role_id=payload.approval_role_id,
         effective_from=payload.effective_from,
         effective_to=None,
         assignment_type=payload.assignment_type,
@@ -1954,19 +1845,18 @@ async def assign_employee_to_position(
     )
     db.add(asgn)
 
-    # Sync denormalised fields on Employee for substantive assignments
+    # Sync denorm fields on Employee
     if payload.assignment_type == "substantive":
-        emp.cost_center_id = pos.cost_center_id
-        emp.approval_role_id = pos.org_role_id
+        emp.cost_center_id = role.cost_center_id
+        emp.approval_role_id = role.id
 
     await db.commit()
     await db.refresh(asgn)
 
-    # Resolve cost centre name for response
     cc_name = None
-    if pos.cost_center_id:
+    if role.cost_center_id:
         cc_res = await db.execute(
-            select(OrgStructureNode).where(OrgStructureNode.id == pos.cost_center_id)
+            select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
         )
         cc = cc_res.scalar_one_or_none()
         cc_name = cc.name if cc else None
@@ -1974,9 +1864,9 @@ async def assign_employee_to_position(
     return EmployeeAssignmentResponse(
         id=str(asgn.id),
         employee_id=str(asgn.employee_id),
-        position_id=str(asgn.position_id),
-        position_title=pos.title,
-        cost_center_id=str(pos.cost_center_id) if pos.cost_center_id else None,
+        approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
+        role_name=role.name,
+        cost_center_id=str(role.cost_center_id) if role.cost_center_id else None,
         cost_center_name=cc_name,
         effective_from=asgn.effective_from,
         effective_to=asgn.effective_to,
@@ -2004,8 +1894,8 @@ async def get_employee_assignments(
         raise HTTPException(status_code=404, detail="Employee not found.")
 
     asgn_res = await db.execute(
-        select(EmployeePositionAssignment, Position)
-        .join(Position, Position.id == EmployeePositionAssignment.position_id)
+        select(EmployeePositionAssignment, OrgRole)
+        .join(OrgRole, OrgRole.id == EmployeePositionAssignment.approval_role_id, isouter=True)
         .where(
             EmployeePositionAssignment.employee_id == employee_id,
             EmployeePositionAssignment.tenant_id == tenant_id,
@@ -2014,20 +1904,20 @@ async def get_employee_assignments(
     )
 
     result = []
-    for asgn, pos in asgn_res.all():
+    for asgn, role in asgn_res.all():
         cc_name = None
-        if pos.cost_center_id:
+        if role and role.cost_center_id:
             cc_res = await db.execute(
-                select(OrgStructureNode).where(OrgStructureNode.id == pos.cost_center_id)
+                select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
             )
             cc = cc_res.scalar_one_or_none()
             cc_name = cc.name if cc else None
         result.append(EmployeeAssignmentResponse(
             id=str(asgn.id),
             employee_id=str(asgn.employee_id),
-            position_id=str(asgn.position_id),
-            position_title=pos.title,
-            cost_center_id=str(pos.cost_center_id) if pos.cost_center_id else None,
+            approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
+            role_name=role.name if role else None,
+            cost_center_id=str(role.cost_center_id) if (role and role.cost_center_id) else None,
             cost_center_name=cc_name,
             effective_from=asgn.effective_from,
             effective_to=asgn.effective_to,
@@ -2050,8 +1940,8 @@ async def get_employee_current_position(
     tenant_id = _require_tenant(current_user)
 
     asgn_res = await db.execute(
-        select(EmployeePositionAssignment, Position)
-        .join(Position, Position.id == EmployeePositionAssignment.position_id)
+        select(EmployeePositionAssignment, OrgRole)
+        .join(OrgRole, OrgRole.id == EmployeePositionAssignment.approval_role_id, isouter=True)
         .where(
             EmployeePositionAssignment.employee_id == employee_id,
             EmployeePositionAssignment.tenant_id == tenant_id,
@@ -2060,4 +1950,31 @@ async def get_employee_current_position(
         )
         .limit(1)
     )
-    row = a
+    row = asgn_res.first()
+    if not row:
+        return None
+
+    asgn, role = row
+    cc_name = None
+    if role and role.cost_center_id:
+        cc_res = await db.execute(
+            select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
+        )
+        cc = cc_res.scalar_one_or_none()
+        cc_name = cc.name if cc else None
+
+    return EmployeeAssignmentResponse(
+        id=str(asgn.id),
+        employee_id=str(asgn.employee_id),
+        approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
+        role_name=role.name if role else None,
+        cost_center_id=str(role.cost_center_id) if (role and role.cost_center_id) else None,
+        cost_center_name=cc_name,
+        effective_from=asgn.effective_from,
+        effective_to=asgn.effective_to,
+        assignment_type=asgn.assignment_type,
+        transfer_reason=asgn.transfer_reason,
+        is_retrospective=asgn.is_retrospective,
+        notes=asgn.notes,
+        created_at=asgn.created_at,
+    )

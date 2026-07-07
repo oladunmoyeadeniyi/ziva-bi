@@ -3,15 +3,16 @@
 /**
  * Positions — /dashboard/business/settings/positions
  *
- * People v1: Position-based org model.
- * Allows tenant admins to:
- *   - View all positions with current occupants
- *   - Create new positions (linked to cost centre + org role)
- *   - Edit position metadata
- *   - Move a position (org restructure) with effective date + prospective/retrospective choice
- *   - Archive a position (blocked if occupied)
- *   - View position movement history
- *   - Assign an employee to a position (hire / transfer / acting / secondment)
+ * Single source of truth: approval_roles table.
+ * Any role created here appears in the Role Hierarchy and vice versa —
+ * both views query the same backend table via their respective endpoints.
+ *
+ * Positions page focuses on the occupancy / slot management lens:
+ *   - View all org roles with current occupants
+ *   - Create / edit positions (writes to approval_roles)
+ *   - Move a position (updates parent_role_id)
+ *   - Archive a position (marks is_active = false)
+ *   - Assign an employee to a position
  */
 
 import { useEffect, useState } from "react";
@@ -35,35 +36,25 @@ interface PositionOccupant {
 
 interface Position {
   id: string;
-  title: string;
-  position_code: string | null;
+  name: string;                    // role title
+  code: string | null;             // position code e.g. "CFO-001"
+  grade: string | null;            // salary/job grade e.g. "G8", "Director"
+  description: string | null;
+  display_order: number;
+  is_active: boolean;
+  parent_role_id: string | null;
+  parent_role_name: string | null;
   cost_center_id: string | null;
   cost_center_name: string | null;
   cost_center_code: string | null;
-  parent_position_id: string | null;
-  parent_position_title: string | null;
-  org_role_id: string | null;
-  org_role_name: string | null;
-  function_code: string | null;
-  grade: string | null;
-  is_head_of_cost_center: boolean;
-  max_occupants: number;
-  is_active: boolean;
+  entity_node_id: string | null;
+  max_occupants: number | null;    // null = unlimited
+  designation: string | null;
+  area: string | null;
+  sub_area: string | null;
+  employment_type: string | null;
+  occupant_count: number;
   occupants: PositionOccupant[];
-  created_at: string;
-}
-
-interface PositionHistoryItem {
-  id: string;
-  old_cost_center_id: string | null;
-  new_cost_center_id: string | null;
-  old_title: string | null;
-  new_title: string | null;
-  effective_date: string;
-  change_type: string;
-  change_reason: string | null;
-  is_retrospective: boolean;
-  changed_by: string | null;
   created_at: string;
 }
 
@@ -71,12 +62,6 @@ interface CostCenterOption {
   id: string;
   code: string;
   name: string;
-}
-
-interface OrgRole {
-  id: string;
-  name: string;
-  level: number;
 }
 
 interface Employee {
@@ -89,10 +74,8 @@ interface Employee {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const FUNCTION_CODES = ["finance", "hr", "procurement", "operations", "it", "sales", "legal", "audit"];
 const ASSIGNMENT_TYPES = ["substantive", "acting", "secondment"] as const;
 const TRANSFER_REASONS = ["hire", "promotion", "lateral", "restructure", "acting", "secondment", "termination"] as const;
-const CHANGE_TYPES = ["restructure", "reclassify", "rename", "role_change"] as const;
 
 function badge(text: string, color: string) {
   return (
@@ -111,6 +94,28 @@ function assignmentBadge(type: string) {
   return badge(type, map[type] ?? "bg-gray-100 text-gray-700");
 }
 
+function desigLabel(d: string | null) {
+  const map: Record<string, string> = {
+    individual_contributor: "Contributor",
+    team_lead: "Team Lead",
+    manager: "Manager",
+    head_of_department: "HoD",
+    head_of_entity: "HoE",
+  };
+  return d ? (map[d] ?? d) : null;
+}
+
+function desigColor(d: string | null) {
+  const map: Record<string, string> = {
+    individual_contributor: "bg-gray-100 text-gray-700",
+    team_lead: "bg-teal-100 text-teal-800",
+    manager: "bg-orange-100 text-orange-800",
+    head_of_department: "bg-violet-100 text-violet-800",
+    head_of_entity: "bg-blue-100 text-blue-800",
+  };
+  return map[d ?? ""] ?? "bg-gray-100 text-gray-700";
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function PositionsPage() {
@@ -125,12 +130,7 @@ export default function PositionsPage() {
 
   // Reference data
   const [costCenters, setCostCenters] = useState<CostCenterOption[]>([]);
-  const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
-
-  // Import from role hierarchy
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ created: number; skipped: number } | null>(null);
 
   // Modal state
   const [showCreate, setShowCreate] = useState(false);
@@ -138,29 +138,29 @@ export default function PositionsPage() {
   const [movePos, setMovePos] = useState<Position | null>(null);
   const [historyPos, setHistoryPos] = useState<Position | null>(null);
   const [assignPos, setAssignPos] = useState<Position | null>(null);
-  const [history, setHistory] = useState<PositionHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   // Form state — create/edit
-  const [fTitle, setFTitle] = useState("");
+  const [fName, setFName] = useState("");
   const [fCode, setFCode] = useState("");
+  const [fGrade, setFGrade] = useState("");
+  const [fDescription, setFDescription] = useState("");
   const [fCostCenter, setFCostCenter] = useState("");
   const [fParent, setFParent] = useState("");
-  const [fOrgRole, setFOrgRole] = useState("");
-  const [fFunctionCode, setFFunctionCode] = useState("");
-  const [fGrade, setFGrade] = useState("");
-  const [fIsHead, setFIsHead] = useState(false);
-  const [fMaxOccupants, setFMaxOccupants] = useState(1);
+  const [fDesignation, setFDesignation] = useState("");
+  const [fEmploymentType, setFEmploymentType] = useState("permanent");
+  const [fCapacity, setFCapacity] = useState<"single" | "unlimited" | "custom">("single");
+  const [fCustomN, setFCustomN] = useState("2");
+  const [fArea, setFArea] = useState("");
+  const [fSubArea, setFSubArea] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   // Form state — move
   const [mCostCenter, setMCostCenter] = useState("");
   const [mParent, setMParent] = useState("");
-  const [mTitle, setMTitle] = useState("");
-  const [mOrgRole, setMOrgRole] = useState("");
+  const [mName, setMName] = useState("");
   const [mEffectiveDate, setMEffectiveDate] = useState(new Date().toISOString().split("T")[0]);
-  const [mChangeType, setMChangeType] = useState<string>("restructure");
   const [mChangeReason, setMChangeReason] = useState("");
   const [mRetrospective, setMRetrospective] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
@@ -196,15 +196,12 @@ export default function PositionsPage() {
   }, [filterActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    // Load reference data once
     Promise.all([
       apiFetch<CostCenterOption[]>("/api/hr/cost-centers/options", { token }),
-      apiFetch<OrgRole[]>("/api/hr/roles", { token }),
       apiFetch<{ employees: Employee[] }>("/api/hr/employees?limit=500", { token }),
     ])
-      .then(([cc, roles, empData]) => {
+      .then(([cc, empData]) => {
         setCostCenters(cc);
-        setOrgRoles(roles);
         setEmployees(empData.employees ?? []);
       })
       .catch(() => {/* non-fatal */});
@@ -216,78 +213,54 @@ export default function PositionsPage() {
     if (!searchQ) return true;
     const q = searchQ.toLowerCase();
     return (
-      p.title.toLowerCase().includes(q) ||
-      (p.position_code ?? "").toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q) ||
+      (p.code ?? "").toLowerCase().includes(q) ||
       (p.cost_center_name ?? "").toLowerCase().includes(q) ||
-      (p.function_code ?? "").toLowerCase().includes(q)
+      (p.grade ?? "").toLowerCase().includes(q) ||
+      (p.designation ?? "").toLowerCase().includes(q)
     );
   });
 
-  // ── CRUD actions ────────────────────────────────────────────────────────────
-
-  const handleImportFromRoles = async () => {
-    if (orgRoles.length === 0) {
-      alert("No org roles found. Set up your Role Hierarchy first, then import.");
-      return;
-    }
-    if (!confirm(
-      `This will create a Position for each of your ${orgRoles.length} org roles that doesn't already have one. Continue?`
-    )) return;
-
-    setImporting(true);
-    setImportResult(null);
-    let created = 0;
-    let skipped = 0;
-
-    const existingRoleIds = new Set(positions.map((p) => p.org_role_id).filter(Boolean));
-
-    for (const role of orgRoles) {
-      if (existingRoleIds.has(role.id)) { skipped++; continue; }
-      try {
-        await apiFetch("/api/hr/positions", {
-          token,
-          method: "POST",
-          body: { title: role.name, org_role_id: role.id },
-        });
-        created++;
-      } catch {
-        skipped++;
-      }
-    }
-
-    setImportResult({ created, skipped });
-    setImporting(false);
-    loadPositions();
+  // ── Derived max_occupants from capacity toggle ───────────────────────────────
+  const capacityToMaxOcc = () => {
+    if (fCapacity === "single") return 1;
+    if (fCapacity === "unlimited") return null;
+    return parseInt(fCustomN) || 2;
   };
 
+  // ── Open helpers ────────────────────────────────────────────────────────────
+
   const openCreate = () => {
-    setFTitle(""); setFCode(""); setFCostCenter(""); setFParent("");
-    setFOrgRole(""); setFFunctionCode(""); setFGrade(""); setFIsHead(false); setFMaxOccupants(1);
+    setFName(""); setFCode(""); setFGrade(""); setFDescription("");
+    setFCostCenter(""); setFParent(""); setFDesignation(""); setFEmploymentType("permanent");
+    setFCapacity("single"); setFCustomN("2"); setFArea(""); setFSubArea("");
     setFormError(null);
     setShowCreate(true);
   };
 
   const openEdit = (pos: Position) => {
-    setFTitle(pos.title);
-    setFCode(pos.position_code ?? "");
-    setFCostCenter(pos.cost_center_id ?? "");
-    setFParent(pos.parent_position_id ?? "");
-    setFOrgRole(pos.org_role_id ?? "");
-    setFFunctionCode(pos.function_code ?? "");
+    setFName(pos.name);
+    setFCode(pos.code ?? "");
     setFGrade(pos.grade ?? "");
-    setFIsHead(pos.is_head_of_cost_center);
-    setFMaxOccupants(pos.max_occupants);
+    setFDescription(pos.description ?? "");
+    setFCostCenter(pos.cost_center_id ?? "");
+    setFParent(pos.parent_role_id ?? "");
+    setFDesignation(pos.designation ?? "");
+    setFEmploymentType(pos.employment_type ?? "permanent");
+    const cap = pos.max_occupants === 1 ? "single" : pos.max_occupants === null ? "unlimited" : "custom";
+    setFCapacity(cap as "single" | "unlimited" | "custom");
+    setFCustomN(String(pos.max_occupants ?? 2));
+    setFArea(pos.area ?? "");
+    setFSubArea(pos.sub_area ?? "");
     setFormError(null);
     setEditPos(pos);
   };
 
   const openMove = (pos: Position) => {
     setMCostCenter(pos.cost_center_id ?? "");
-    setMParent(pos.parent_position_id ?? "");
-    setMTitle(pos.title);
-    setMOrgRole(pos.org_role_id ?? "");
+    setMParent(pos.parent_role_id ?? "");
+    setMName(pos.name);
     setMEffectiveDate(new Date().toISOString().split("T")[0]);
-    setMChangeType("restructure");
     setMChangeReason("");
     setMRetrospective(false);
     setMoveError(null);
@@ -296,16 +269,8 @@ export default function PositionsPage() {
 
   const openHistory = async (pos: Position) => {
     setHistoryPos(pos);
-    setHistory([]);
     setHistoryLoading(true);
-    try {
-      const data = await apiFetch<PositionHistoryItem[]>(`/api/hr/positions/${pos.id}/history`, { token });
-      setHistory(data);
-    } catch {
-      setHistory([]);
-    } finally {
-      setHistoryLoading(false);
-    }
+    setTimeout(() => setHistoryLoading(false), 400); // history endpoint returns [] — audit log future
   };
 
   const openAssign = (pos: Position) => {
@@ -319,23 +284,28 @@ export default function PositionsPage() {
     setAssignPos(pos);
   };
 
+  // ── CRUD actions ────────────────────────────────────────────────────────────
+
   const handleCreate = async () => {
-    if (!fTitle.trim()) { setFormError("Title is required."); return; }
+    if (!fName.trim()) { setFormError("Role name is required."); return; }
+    if (!fDesignation) { setFormError("Designation is required."); return; }
     setSaving(true); setFormError(null);
     try {
       await apiFetch("/api/hr/positions", {
         token,
         method: "POST",
         body: {
-          title: fTitle.trim(),
-          position_code: fCode.trim() || undefined,
-          cost_center_id: fCostCenter || undefined,
-          parent_position_id: fParent || undefined,
-          org_role_id: fOrgRole || undefined,
-          function_code: fFunctionCode || undefined,
+          name: fName.trim(),
+          code: fCode.trim() || undefined,
           grade: fGrade.trim() || undefined,
-          is_head_of_cost_center: fIsHead,
-          max_occupants: fMaxOccupants,
+          description: fDescription.trim() || undefined,
+          cost_center_id: fCostCenter || undefined,
+          parent_role_id: fParent || undefined,
+          designation: (fDesignation === "regular" || !fDesignation) ? null : fDesignation,
+          employment_type: fEmploymentType || "permanent",
+          max_occupants: capacityToMaxOcc(),
+          area: fArea.trim() || undefined,
+          sub_area: fSubArea.trim() || undefined,
         },
       });
       setShowCreate(false);
@@ -349,21 +319,24 @@ export default function PositionsPage() {
 
   const handleEdit = async () => {
     if (!editPos) return;
+    if (!fName.trim()) { setFormError("Role name is required."); return; }
     setSaving(true); setFormError(null);
     try {
       await apiFetch(`/api/hr/positions/${editPos.id}`, {
         token,
         method: "PATCH",
         body: {
-          title: fTitle.trim() || undefined,
-          position_code: fCode.trim() || undefined,
-          cost_center_id: fCostCenter || undefined,
-          parent_position_id: fParent || undefined,
-          org_role_id: fOrgRole || undefined,
-          function_code: fFunctionCode || undefined,
-          grade: fGrade.trim() || undefined,
-          is_head_of_cost_center: fIsHead,
-          max_occupants: fMaxOccupants,
+          name: fName.trim(),
+          code: fCode.trim() || null,
+          grade: fGrade.trim() || null,
+          description: fDescription.trim() || null,
+          cost_center_id: fCostCenter || null,
+          parent_role_id: fParent || null,
+          designation: (fDesignation === "regular" || !fDesignation) ? null : fDesignation,
+          employment_type: fEmploymentType || "permanent",
+          max_occupants: capacityToMaxOcc(),
+          area: fArea.trim() || null,
+          sub_area: fSubArea.trim() || null,
         },
       });
       setEditPos(null);
@@ -376,7 +349,7 @@ export default function PositionsPage() {
   };
 
   const handleArchive = async (pos: Position) => {
-    if (!confirm(`Archive position "${pos.title}"? This cannot be undone unless re-activated manually.`)) return;
+    if (!confirm(`Archive "${pos.name}"? Occupants remain but no new assignments can be made.`)) return;
     try {
       await apiFetch(`/api/hr/positions/${pos.id}`, { token, method: "DELETE" });
       loadPositions();
@@ -395,11 +368,9 @@ export default function PositionsPage() {
         method: "POST",
         body: {
           new_cost_center_id: mCostCenter || undefined,
-          new_parent_position_id: mParent || undefined,
-          new_title: mTitle !== movePos.title ? mTitle : undefined,
-          new_org_role_id: mOrgRole !== movePos.org_role_id ? mOrgRole || undefined : undefined,
+          new_parent_role_id: mParent || undefined,
+          new_name: mName !== movePos.name ? mName : undefined,
           effective_date: mEffectiveDate,
-          change_type: mChangeType,
           change_reason: mChangeReason || undefined,
           is_retrospective: mRetrospective,
         },
@@ -423,7 +394,7 @@ export default function PositionsPage() {
         token,
         method: "POST",
         body: {
-          position_id: assignPos.id,
+          approval_role_id: assignPos.id,
           effective_from: aEffectiveDate,
           assignment_type: aAssignType,
           transfer_reason: aTransferReason,
@@ -440,22 +411,26 @@ export default function PositionsPage() {
     }
   };
 
-  // ── Shared form UI ──────────────────────────────────────────────────────────
+  // ── Shared position form ─────────────────────────────────────────────────────
 
   const positionFormFields = () => (
     <div className="space-y-4">
+      {/* Name */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Title <span className="text-red-500">*</span>
+          Role / Position name <span className="text-red-500">*</span>
         </label>
         <input
           type="text"
-          value={fTitle}
-          onChange={(e) => setFTitle(e.target.value)}
+          value={fName}
+          onChange={(e) => setFName(e.target.value)}
           placeholder="e.g. Head of Finance"
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          autoFocus
         />
       </div>
+
+      {/* Code + Grade */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Position code</label>
@@ -463,7 +438,7 @@ export default function PositionsPage() {
             type="text"
             value={fCode}
             onChange={(e) => setFCode(e.target.value)}
-            placeholder="Auto-generated if blank"
+            placeholder="e.g. CFO-001"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -473,11 +448,25 @@ export default function PositionsPage() {
             type="text"
             value={fGrade}
             onChange={(e) => setFGrade(e.target.value)}
-            placeholder="e.g. L5, Senior"
+            placeholder="e.g. G8, Director"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
       </div>
+
+      {/* Description */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Description <span className="text-xs text-gray-400 font-normal">(optional)</span></label>
+        <input
+          type="text"
+          value={fDescription}
+          onChange={(e) => setFDescription(e.target.value)}
+          placeholder="Brief description of this role"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      {/* Cost centre */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Cost centre</label>
         <select
@@ -487,73 +476,124 @@ export default function PositionsPage() {
         >
           <option value="">— None —</option>
           {costCenters.map((cc) => (
-            <option key={cc.id} value={cc.id}>{cc.name} ({cc.code})</option>
+            <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
           ))}
         </select>
       </div>
+
+      {/* Reports to */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Reports to (parent position)</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Reports to</label>
         <select
           value={fParent}
           onChange={(e) => setFParent(e.target.value)}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">— None (top-level) —</option>
-          {positions.filter((p) => p.is_active).map((p) => (
-            <option key={p.id} value={p.id}>{p.title}</option>
+          {positions.filter((p) => p.is_active && p.id !== editPos?.id).map((p) => (
+            <option key={p.id} value={p.id}>{p.name}{p.cost_center_name ? ` · ${p.cost_center_name}` : ""}</option>
           ))}
         </select>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Org role (approval authority)</label>
-          <select
-            value={fOrgRole}
-            onChange={(e) => setFOrgRole(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">— None —</option>
-            {orgRoles.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Function</label>
-          <select
-            value={fFunctionCode}
-            onChange={(e) => setFFunctionCode(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">— None —</option>
-            {FUNCTION_CODES.map((fc) => (
-              <option key={fc} value={fc}>{fc.charAt(0).toUpperCase() + fc.slice(1)}</option>
-            ))}
-          </select>
+
+      {/* Designation */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Designation <span className="text-red-500">*</span></label>
+        <div className="grid grid-cols-5 rounded-lg border border-gray-300 overflow-hidden text-xs">
+          {([
+            { value: "individual_contributor", label: "Contributor", activeClass: "bg-gray-500 text-white" },
+            { value: "team_lead",              label: "Team Lead",   activeClass: "bg-teal-600 text-white" },
+            { value: "manager",                label: "Manager",     activeClass: "bg-orange-500 text-white" },
+            { value: "head_of_department",     label: "HoD",         activeClass: "bg-violet-600 text-white" },
+            { value: "head_of_entity",         label: "HoE",         activeClass: "bg-blue-600 text-white" },
+          ] as const).map((opt, idx) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setFDesignation(opt.value)}
+              className={`px-1 py-2 font-medium transition-colors text-center ${
+                fDesignation === opt.value ? opt.activeClass : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${idx > 0 ? "border-l border-gray-300" : ""}`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
+
+      {/* Employment Type */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Employment type</label>
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          {([
+            { value: "permanent",  label: "Permanent",  cls: "bg-green-600 text-white" },
+            { value: "contract",   label: "Contract",   cls: "bg-amber-500 text-white" },
+            { value: "outsourced", label: "Outsourced", cls: "bg-slate-500 text-white" },
+          ] as const).map((opt, idx) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setFEmploymentType(opt.value)}
+              className={`flex-1 px-3 py-2 font-medium transition-colors ${
+                fEmploymentType === opt.value ? opt.cls : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${idx > 0 ? "border-l border-gray-300" : ""}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Capacity */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Capacity</label>
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+          {([
+            { value: "single",    label: "Single person" },
+            { value: "unlimited", label: "Multiple" },
+            { value: "custom",    label: "Fixed count" },
+          ] as const).map((opt, idx) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setFCapacity(opt.value)}
+              className={`flex-1 px-3 py-2 font-medium transition-colors ${
+                fCapacity === opt.value ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+              } ${idx > 0 ? "border-l border-gray-300" : ""}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {fCapacity === "custom" && (
+          <input
+            type="number" min={2} value={fCustomN}
+            onChange={(e) => setFCustomN(e.target.value)}
+            className="w-full mt-2 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Max number of persons"
+          />
+        )}
+      </div>
+
+      {/* Area + Sub area */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Max occupants</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Area / Location <span className="text-xs text-gray-400 font-normal">(optional)</span></label>
           <input
-            type="number"
-            min={1}
-            max={50}
-            value={fMaxOccupants}
-            onChange={(e) => setFMaxOccupants(Number(e.target.value))}
+            type="text" value={fArea}
+            onChange={(e) => setFArea(e.target.value)}
+            placeholder="e.g. Lagos Region"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
-        <div className="flex items-end pb-1">
-          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={fIsHead}
-              onChange={(e) => setFIsHead(e.target.checked)}
-              className="rounded"
-            />
-            Head of cost centre
-          </label>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Sub area <span className="text-xs text-gray-400 font-normal">(optional)</span></label>
+          <input
+            type="text" value={fSubArea}
+            onChange={(e) => setFSubArea(e.target.value)}
+            placeholder="e.g. Mainland"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
       </div>
     </div>
@@ -565,20 +605,12 @@ export default function PositionsPage() {
     <PageContainer>
       <PageHeading
         title="Positions"
-        subtitle="Position-based org model — durable slots that survive attrition. Assign employees to positions; approval routing and GL coding follow the position."
+        subtitle="Org roles and position slots — shared with the Role Hierarchy. Changes here reflect there and vice versa."
         actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleImportFromRoles} disabled={importing}>
-              {importing ? "Importing…" : "↓ Import from role hierarchy"}
-            </Button>
-            <Button onClick={openCreate} size="sm">+ New position</Button>
-          </div>
+          <Button onClick={openCreate} size="sm">+ New position</Button>
         }
       />
 
-      {importResult && (
-        <Banner type="success" message={`Import complete: ${importResult.created} created, ${importResult.skipped} skipped.`} className="mb-4" />
-      )}
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
@@ -610,7 +642,7 @@ export default function PositionsPage() {
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <p className="text-base font-medium mb-1">No positions yet</p>
-          <p className="text-sm">Create your first position to start building the org structure.</p>
+          <p className="text-sm">Create a position here, or add a role in Organisation → Role Hierarchy — they share the same data.</p>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -620,7 +652,7 @@ export default function PositionsPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Position</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Cost centre</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Reports to</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Org role</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Grade / Designation</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Occupants</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
                 <th className="px-4 py-3" />
@@ -630,17 +662,12 @@ export default function PositionsPage() {
               {filtered.map((pos) => (
                 <tr key={pos.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">{pos.title}</div>
-                    {pos.position_code && (
-                      <div className="text-xs text-gray-400 font-mono">{pos.position_code}</div>
+                    <div className="font-medium text-gray-900">{pos.name}</div>
+                    {pos.code && (
+                      <div className="text-xs text-gray-400 font-mono">{pos.code}</div>
                     )}
-                    {pos.function_code && (
-                      <div className="text-xs text-gray-500 mt-0.5">{pos.function_code}</div>
-                    )}
-                    {pos.is_head_of_cost_center && (
-                      <span className="inline-block mt-0.5 text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
-                        Head of CC
-                      </span>
+                    {pos.area && (
+                      <div className="text-xs text-gray-500 mt-0.5">{pos.area}{pos.sub_area ? ` · ${pos.sub_area}` : ""}</div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-700">
@@ -650,13 +677,22 @@ export default function PositionsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">
-                    {pos.parent_position_title ?? <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 text-xs">
-                    {pos.org_role_name ?? <span className="text-gray-300">—</span>}
+                    {pos.parent_role_name ?? <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-3">
-                    {pos.occupants.length === 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {pos.grade && (
+                        <span className="text-xs font-mono text-gray-700">{pos.grade}</span>
+                      )}
+                      {pos.designation && (
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${desigColor(pos.designation)}`}>
+                          {desigLabel(pos.designation)}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {pos.occupant_count === 0 ? (
                       <span className="text-xs text-amber-600 font-medium">Vacant</span>
                     ) : (
                       <div className="space-y-1">
@@ -669,7 +705,7 @@ export default function PositionsPage() {
                       </div>
                     )}
                     <div className="text-xs text-gray-400 mt-0.5">
-                      {pos.occupants.length}/{pos.max_occupants}
+                      {pos.occupant_count}/{pos.max_occupants ?? "∞"}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -681,28 +717,24 @@ export default function PositionsPage() {
                     <div className="flex items-center gap-1.5 justify-end">
                       <button
                         onClick={() => openAssign(pos)}
-                        title="Assign employee"
                         className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
                       >
                         Assign
                       </button>
                       <button
                         onClick={() => openEdit(pos)}
-                        title="Edit"
                         className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => openMove(pos)}
-                        title="Restructure / move"
                         className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100"
                       >
                         Move
                       </button>
                       <button
                         onClick={() => openHistory(pos)}
-                        title="History"
                         className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100"
                       >
                         History
@@ -710,7 +742,6 @@ export default function PositionsPage() {
                       {pos.is_active && (
                         <button
                           onClick={() => handleArchive(pos)}
-                          title="Archive"
                           className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
                         >
                           Archive
@@ -728,11 +759,16 @@ export default function PositionsPage() {
       {/* ── Create modal ──────────────────────────────────────────────────── */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-5">New position</h2>
-            {positionFormFields()}
-            {formError && <Banner type="error" message={formError} className="mt-4" />}
-            <div className="flex justify-end gap-3 mt-6">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-gray-100 flex-shrink-0">
+              <h2 className="text-lg font-semibold text-gray-900">New position</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Also appears immediately in Organisation → Role Hierarchy.</p>
+            </div>
+            <div className="overflow-y-auto flex-1 p-6">
+              {positionFormFields()}
+              {formError && <Banner type="error" message={formError} className="mt-4" />}
+            </div>
+            <div className="flex justify-end gap-3 p-6 border-t border-gray-100 flex-shrink-0">
               <Button variant="outline" onClick={() => setShowCreate(false)} disabled={saving}>Cancel</Button>
               <Button onClick={handleCreate} disabled={saving}>
                 {saving ? "Creating…" : "Create position"}
@@ -745,11 +781,16 @@ export default function PositionsPage() {
       {/* ── Edit modal ────────────────────────────────────────────────────── */}
       {editPos && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-5">Edit — {editPos.title}</h2>
-            {positionFormFields()}
-            {formError && <Banner type="error" message={formError} className="mt-4" />}
-            <div className="flex justify-end gap-3 mt-6">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-gray-100 flex-shrink-0">
+              <h2 className="text-lg font-semibold text-gray-900">Edit — {editPos.name}</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Changes also update the Role Hierarchy view.</p>
+            </div>
+            <div className="overflow-y-auto flex-1 p-6">
+              {positionFormFields()}
+              {formError && <Banner type="error" message={formError} className="mt-4" />}
+            </div>
+            <div className="flex justify-end gap-3 p-6 border-t border-gray-100 flex-shrink-0">
               <Button variant="outline" onClick={() => setEditPos(null)} disabled={saving}>Cancel</Button>
               <Button onClick={handleEdit} disabled={saving}>
                 {saving ? "Saving…" : "Save changes"}
@@ -763,10 +804,9 @@ export default function PositionsPage() {
       {movePos && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-1">Restructure — {movePos.title}</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Restructure — {movePos.name}</h2>
             <p className="text-sm text-gray-500 mb-5">
-              Moving a position updates its cost centre and/or parent in the hierarchy.
-              Transactions before the effective date are unaffected.
+              Move this position to a new parent or cost centre. The Role Hierarchy tree updates automatically.
             </p>
             <div className="space-y-4">
               <div>
@@ -778,12 +818,12 @@ export default function PositionsPage() {
                 >
                   <option value="">— No change —</option>
                   {costCenters.map((cc) => (
-                    <option key={cc.id} value={cc.id}>{cc.name} ({cc.code})</option>
+                    <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">New parent position</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New reports-to</label>
                 <select
                   value={mParent}
                   onChange={(e) => setMParent(e.target.value)}
@@ -791,43 +831,29 @@ export default function PositionsPage() {
                 >
                   <option value="">— No change / top-level —</option>
                   {positions.filter((p) => p.is_active && p.id !== movePos.id).map((p) => (
-                    <option key={p.id} value={p.id}>{p.title}</option>
+                    <option key={p.id} value={p.id}>{p.name}{p.cost_center_name ? ` · ${p.cost_center_name}` : ""}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">New title (optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">New name (optional)</label>
                 <input
                   type="text"
-                  value={mTitle}
-                  onChange={(e) => setMTitle(e.target.value)}
+                  value={mName}
+                  onChange={(e) => setMName(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Effective date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={mEffectiveDate}
-                    onChange={(e) => setMEffectiveDate(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Change type</label>
-                  <select
-                    value={mChangeType}
-                    onChange={(e) => setMChangeType(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {CHANGE_TYPES.map((ct) => (
-                      <option key={ct} value={ct}>{ct}</option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Effective date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={mEffectiveDate}
+                  onChange={(e) => setMEffectiveDate(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reason / notes</label>
@@ -871,38 +897,18 @@ export default function PositionsPage() {
       {/* ── History modal ─────────────────────────────────────────────────── */}
       {historyPos && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">History — {historyPos.title}</h2>
+              <h2 className="text-lg font-semibold text-gray-900">History — {historyPos.name}</h2>
               <button onClick={() => setHistoryPos(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
             </div>
             {historyLoading ? (
               <div className="text-center py-8 text-gray-400 text-sm">Loading…</div>
-            ) : history.length === 0 ? (
-              <div className="text-center py-8 text-gray-400 text-sm">No history recorded yet.</div>
             ) : (
-              <div className="space-y-3">
-                {history.map((h) => (
-                  <div key={h.id} className="border border-gray-200 rounded-lg p-3 text-sm">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-mono text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{h.change_type}</span>
-                      <span className="text-gray-500">{h.effective_date}</span>
-                      {h.is_retrospective && (
-                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">retrospective</span>
-                      )}
-                    </div>
-                    {h.old_title && h.new_title && h.old_title !== h.new_title && (
-                      <div className="text-gray-600">Title: <span className="line-through text-gray-400">{h.old_title}</span> → <strong>{h.new_title}</strong></div>
-                    )}
-                    {h.new_cost_center_id && (
-                      <div className="text-gray-600">Cost centre changed</div>
-                    )}
-                    {h.change_reason && (
-                      <div className="text-gray-500 mt-1 italic">"{h.change_reason}"</div>
-                    )}
-                    <div className="text-xs text-gray-400 mt-1">{new Date(h.created_at).toLocaleString()}</div>
-                  </div>
-                ))}
+              <div className="text-center py-8 text-gray-400 text-sm">
+                <i className="ti ti-clock-history block mb-2" style={{ fontSize: 28 }} />
+                <p>Full change history is recorded in the audit log.</p>
+                <p className="text-xs mt-1">Audit log module coming in a future release.</p>
               </div>
             )}
           </div>
@@ -913,10 +919,10 @@ export default function PositionsPage() {
       {assignPos && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-1">Assign to — {assignPos.title}</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Assign to — {assignPos.name}</h2>
             <p className="text-sm text-gray-500 mb-5">
-              For substantive assignments, the employee&apos;s previous substantive assignment will be closed.
-              Acting/secondment adds a secondary assignment without closing the primary.
+              Substantive assignments close any previous substantive role.
+              Acting / secondment adds a secondary assignment without closing the primary.
             </p>
             <div className="space-y-4">
               <div>
