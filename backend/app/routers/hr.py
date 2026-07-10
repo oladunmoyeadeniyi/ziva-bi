@@ -244,10 +244,25 @@ async def download_employee_template(
 
     # Load org roles for template dropdown
     from app.models.approvals import ApprovalRole as AR
-    role_names_q = await db.execute(
-        select(AR.name).where(AR.tenant_id == tenant_id, AR.is_active.is_(True)).order_by(AR.display_order, AR.name)
+    role_rows_q = await db.execute(
+        select(AR.id, AR.name, AR.cost_center_id).where(AR.tenant_id == tenant_id, AR.is_active.is_(True)).order_by(AR.display_order, AR.name)
     )
-    role_names_for_template = [n for (n,) in role_names_q.all()]
+    role_rows = role_rows_q.all()
+    # Fetch CC codes for disambiguation (name collisions across departments)
+    cc_code_map: dict[uuid.UUID, str] = {}
+    if cc_nodes_all:
+        cc_code_map = {n.id: (_cc_node_code(n) or "") for n in cc_nodes_all if _cc_node_code(n)}
+    # Build display names: append CC code when name is not unique
+    from collections import Counter as _Counter
+    name_counts = _Counter(r.name for r in role_rows)
+    role_display_names: dict[uuid.UUID, str] = {}
+    for r in role_rows:
+        if name_counts[r.name] > 1:
+            cc_suffix = cc_code_map.get(r.cost_center_id, "") if r.cost_center_id else ""
+            role_display_names[r.id] = f"{r.name} [{cc_suffix}]" if cc_suffix else f"{r.name} [#{str(r.id)[:6]}]"
+        else:
+            role_display_names[r.id] = r.name
+    role_names_for_template = list(role_display_names.values())
 
     headers = [
         ("Org Role*", True),
@@ -795,7 +810,21 @@ async def upload_employees(
     ar_result = await db.execute(
         select(AR).where(AR.tenant_id == tenant_id, AR.is_active.is_(True))
     )
-    roles_by_name: dict[str, AR] = {r.name.lower().strip(): r for r in ar_result.scalars().all()}
+    all_roles = ar_result.scalars().all()
+    # Build display-name → role map (same disambiguation logic as the template)
+    from collections import Counter as _Counter2
+    _name_counts2 = _Counter2(r.name for r in all_roles)
+    roles_by_name: dict[str, AR] = {}
+    for r in all_roles:
+        # Plain-name key (always registered; last-one-wins when duplicates exist)
+        roles_by_name[r.name.lower().strip()] = r
+        # Disambiguated key "Name [CC Code]" (overwrites plain when collision)
+        if _name_counts2[r.name] > 1:
+            _cc_suffix2 = cc_by_code  # cc_by_code is keyed by code.lower() → node
+            _role_cc_code = next((code.upper() for code, node in cc_by_code.items()
+                                   if node.id == r.cost_center_id), "") if r.cost_center_id else ""
+            if _role_cc_code:
+                roles_by_name[f"{r.name.lower().strip()} [{_role_cc_code.lower()}]"] = r
 
     # Pre-load current occupant counts per role (for capacity enforcement)
     from sqlalchemy import func as sqlfunc

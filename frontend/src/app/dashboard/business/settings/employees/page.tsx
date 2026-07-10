@@ -162,7 +162,7 @@ function EmployeesPage() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
 
-  const [activeTab, setActiveTab] = useState<EmpTab>("add");
+  const [activeTab, setActiveTab] = useState<EmpTab>("list");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<CostCenterOption[]>([]);
   const [approvalRoles, setApprovalRoles] = useState<ApprovalRole[]>([]);
@@ -463,14 +463,14 @@ function EmployeesPage() {
   );
 
   const EMP_TABS: { key: EmpTab; label: string }[] = [
-    { key: "add", label: "Add employees" },
     { key: "list", label: "Employee list" },
+    { key: "add", label: "Add employees" },
     { key: "transfers", label: "Transfers & changes" },
     { key: "config", label: "Code config" },
   ];
 
-  const REQUIRED_COLS = ["First name *", "Last name *", "Email *"];
-  const OPTIONAL_COLS = ["Employee code", "Cost center code ⬇", "Line manager email", "Other name", "Preferred name", "Phone", "Start date", "Head of Cost Center (Y/N)"];
+  const REQUIRED_COLS = ["Org role *", "First name *", "Last name *", "Email *", "Resumption date *"];
+  const OPTIONAL_COLS = ["Employee code", "Cost center code ⬇", "Other name", "Preferred name", "Phone"];
 
   // ── CC dropdown helper ──────────────────────────────────────────────────────
   const CostCenterSelect = ({ value, onChange, placeholder = "— Select cost center —" }: { value: string; onChange: (v: string) => void; placeholder?: string }) => (
@@ -1121,4 +1121,18 @@ function EmployeesPage() {
                 loading={inviting}>
                 {inviting ? "Sending…" : "Send invite"}
               </Button>
-            <
+            </div>
+          </div>
+        </div>
+      )}
+    </PageContainer>
+  );
+}
+
+export default function EmployeesPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+      <EmployeesPage />
+    </Suspense>
+  );
+}
