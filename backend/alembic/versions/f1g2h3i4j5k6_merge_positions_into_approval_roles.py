@@ -11,19 +11,23 @@ a FK. This migration merges them: approval_roles is the single source of truth f
 every named slot in the org chart.
 
 Changes:
-  approval_roles          — adds code VARCHAR(50) and grade VARCHAR(50)
-  employee_position_assignments — position_id FK → approval_role_id FK (approval_roles)
-  position_history        — dropped (history is now tracked via audit log on approval_roles)
-  positions               — dropped (all slot data now lives in approval_roles)
-  approval_roles.position_id — drops the reverse FK that the previous migration added
+  approval_roles               — adds code VARCHAR(50) and grade VARCHAR(50)
+  approval_roles.position_id   — dropped (was a reverse-FK to positions added by e3f4a5b6c7d8)
+  employee_position_assignments — adds approval_role_id FK → approval_roles; drops position_id
+  position_history             — dropped (history tracked via audit log on approval_roles)
+  positions                    — dropped (all slot data now lives in approval_roles)
 
-No data is lost because positions and employee_position_assignments were empty at the
-time of this migration (People v1 was never used in production with real data).
+Implementation notes:
+  - Uses raw SQL with IF NOT EXISTS / IF EXISTS / CASCADE throughout.
+  - Avoids try/except: a failed SQL statement aborts the whole PostgreSQL transaction, and
+    Python catching the exception does NOT un-abort it, causing all subsequent statements to
+    fail with InFailedSQLTransactionError. Raw SQL guards are the correct pattern.
+  - DROP TABLE ... CASCADE removes all FK constraints referencing positions (position_history,
+    EPA, approval_roles) automatically, so we only need DROP COLUMN IF EXISTS afterward.
 """
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+
 
 # revision identifiers
 revision = "f1g2h3i4j5k6"
@@ -33,47 +37,18 @@ depends_on = None
 
 def upgrade() -> None:
     # ── 1. Add code + grade to approval_roles ─────────────────────────────────
-    op.add_column(
-        "approval_roles",
-        sa.Column("code", sa.String(50), nullable=True,
-                  comment="Short position code e.g. 'CFO-001', 'DPM-LAG'"),
-    )
-    op.add_column(
-        "approval_roles",
-        sa.Column("grade", sa.String(50), nullable=True,
-                  comment="Salary/job grade e.g. 'G8', 'SM', 'Director'"),
-    )
+    op.execute("ALTER TABLE approval_roles ADD COLUMN IF NOT EXISTS code VARCHAR(50)")
+    op.execute("ALTER TABLE approval_roles ADD COLUMN IF NOT EXISTS grade VARCHAR(50)")
 
-    # ── 2. Drop position_id FK that was added to approval_roles by previous migration ──
-    # First drop the FK constraint, then the column
-    try:
-        op.drop_constraint(
-            "fk_approval_roles_position_id",
-            "approval_roles",
-            type_="foreignkey",
-        )
-    except Exception:
-        pass  # constraint may not exist if previous migration was never applied
-    try:
-        op.drop_column("approval_roles", "position_id")
-    except Exception:
-        pass  # column may not exist
+    # ── 2. Add approval_role_id to employee_position_assignments ───────────────
+    op.execute("""
+        ALTER TABLE employee_position_assignments
+        ADD COLUMN IF NOT EXISTS approval_role_id UUID
+        REFERENCES approval_roles(id) ON DELETE SET NULL
+    """)
 
-    # ── 3. Retarget employee_position_assignments ──────────────────────────────
-    # Add approval_role_id column
-    op.add_column(
-        "employee_position_assignments",
-        sa.Column(
-            "approval_role_id",
-            postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("approval_roles.id", ondelete="SET NULL"),
-            nullable=True,
-            index=True,
-            comment="Which approval_role (org position) this employee occupies",
-        ),
-    )
-
-    # Copy any existing data (position_id → approval_role_id via positions.org_role_id)
+    # ── 3. Copy data: EPA.position_id → EPA.approval_role_id via positions.org_role_id ──
+    # Safe even if positions is empty or org_role_id is null.
     op.execute("""
         UPDATE employee_position_assignments epa
         SET approval_role_id = p.org_role_id
@@ -82,26 +57,17 @@ def upgrade() -> None:
           AND p.org_role_id IS NOT NULL
     """)
 
-    # Drop old FK + column
-    try:
-        op.drop_constraint(
-            "fk_epa_position_id",
-            "employee_position_assignments",
-            type_="foreignkey",
-        )
-    except Exception:
-        pass
-    try:
-        op.drop_column("employee_position_assignments", "position_id")
-    except Exception:
-        pass
+    # ── 4. Drop positions tables — CASCADE removes all FK constraints pointing to them ──
+    # This drops:
+    #   - position_history.position_id  FK (table being dropped anyway)
+    #   - EPA.position_id               FK (constraint on employee_position_assignments)
+    #   - approval_roles.position_id    FK (fk_approval_roles_position_id on approval_roles)
+    op.execute("DROP TABLE IF EXISTS position_history CASCADE")
+    op.execute("DROP TABLE IF EXISTS positions CASCADE")
 
-    # ── 4. Drop position_history (no FK dependents) ───────────────────────────
-    op.drop_table("position_history")
-
-    # ── 5. Drop positions ─────────────────────────────────────────────────────
-    # employee_position_assignments no longer references positions so this is safe
-    op.drop_table("positions")
+    # ── 5. Drop orphaned columns (FK constraints already removed by CASCADE) ───
+    op.execute("ALTER TABLE approval_roles DROP COLUMN IF EXISTS position_id")
+    op.execute("ALTER TABLE employee_position_assignments DROP COLUMN IF EXISTS position_id")
 
 
 def downgrade() -> None:
