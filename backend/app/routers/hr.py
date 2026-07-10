@@ -250,16 +250,16 @@ async def download_employee_template(
     role_names_for_template = [n for (n,) in role_names_q.all()]
 
     headers = [
+        ("Org Role*", True),
         ("First Name*", True), ("Last Name*", True), ("Email*", True),
         ("Other Name", False), ("Preferred Name", False),
         ("Employee Code", False), ("Phone", False),
-        ("Cost Center Code", False), ("Line Manager Email", False),
-        ("Resumption Date (dd/mm/yyyy)", False),
-        ("Head of Cost Center (Y/N)", False),
-        ("Org Role", False),
+        ("Cost Center Code", False),
+        ("Resumption Date (dd/mm/yyyy)*", True),
     ]
-    # Examples now go in cell comments on header cells, not in a data row
+    # Examples go in cell comments on header cells
     header_examples = [
+        f"Select the employee's org chart role (mandatory).\ne.g. {role_names_for_template[0] if role_names_for_template else 'Finance Manager'}\nControls approval authority and org-chart placement.",
         "e.g. Adeniyi",
         "e.g. Oladunmoye",
         "e.g. adeniyi@company.com",
@@ -267,11 +267,8 @@ async def download_employee_template(
         "e.g. Ade (display name on expense forms)",
         "e.g. EMP-00001 (leave blank to auto-generate)",
         "e.g. +234-801-234-5678",
-        f"Select from the dropdown (org structure cost centers).\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'N22341FI'}",
-        "e.g. manager@company.com\nMust match an existing employee email.",
-        "e.g. 01/01/2024 (dd/mm/yyyy)",
-        "Enter Y if this employee is the head of their cost center.\nLeave blank if not.",
-        f"Select the employee\'s org chart role.\ne.g. {role_names_for_template[0] if role_names_for_template else 'Finance Manager'}",
+        f"Optional if the role has a fixed cost centre (auto-assigns).\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'N22341FI'}",
+        "Date the employee started (mandatory). Format: dd/mm/yyyy.\ne.g. 01/01/2024",
     ]
 
     # Row 1: headers with cell comments (no inline instruction/example rows per format standard)
@@ -310,7 +307,7 @@ async def download_employee_template(
                 promptTitle="Cost Center Code",
             )
             ws.add_data_validation(dv_cc)
-            dv_cc.sqref = "H2:H10002"
+            dv_cc.sqref = "I2:I10002"
         else:
             # Too many CC codes for an inline formula — use a hidden helper sheet
             ws_cc = wb.create_sheet("_CC_Codes")
@@ -326,9 +323,9 @@ async def download_employee_template(
                 errorTitle="Invalid Cost Center",
             )
             ws.add_data_validation(dv_cc)
-            dv_cc.sqref = "H2:H10002"
+            dv_cc.sqref = "I2:I10002"
 
-    # Org Role column (L = col 12): dropdown from role names.
+    # Org Role column (A = col 1; first column): dropdown from role names.
     # Same hidden-sheet guard as CC codes — inline DV formula1 is capped at 255 chars.
     if role_names_for_template:
         role_inline = '"' + ",".join(role_names_for_template) + '"'
@@ -341,7 +338,7 @@ async def download_employee_template(
                 errorTitle="Invalid Org Role",
             )
             ws.add_data_validation(role_dv)
-            role_dv.sqref = "L2:L10002"
+            role_dv.sqref = "A2:A10002"
         else:
             ws_roles = wb.create_sheet("_Role_Names")
             for ri, rname in enumerate(role_names_for_template, 1):
@@ -356,24 +353,13 @@ async def download_employee_template(
                 errorTitle="Invalid Org Role",
             )
             ws.add_data_validation(role_dv)
-            role_dv.sqref = "L2:L10002"
-
-    # Head of Cost Center column (K = col 11): Y or blank
-    dv_head = DataValidation(
-        type="list",
-        formula1='"Y"',
-        showDropDown=False,
-        showErrorMessage=True,
-        error="Enter Y to mark as head, or leave blank.",
-        errorTitle="Invalid value",
-    )
-    ws.add_data_validation(dv_head)
-    dv_head.sqref = "K2:K10002"
+            role_dv.sqref = "A2:A10002"
 
     # Sheet 2 — Instructions
     ws2 = wb.create_sheet("Instructions")
     rows = [
         ["COLUMN", "REQUIRED", "DESCRIPTION"],
+        ["Org Role", "Yes", "Position in the role hierarchy this employee occupies. Must match an existing role exactly. Controls approval authority and org-chart placement."],
         ["First Name", "Yes", "Employee's first name."],
         ["Last Name", "Yes", "Employee's last name."],
         ["Email", "Yes", "Employee's work email. Must be unique per company."],
@@ -381,13 +367,12 @@ async def download_employee_template(
         ["Preferred Name", "No", "Name to display on expense forms (defaults to First Name)."],
         ["Employee Code", "No", "Required if auto-generate is turned off in HR settings."],
         ["Phone", "No", "Phone number including country code."],
-        ["Cost Center Code", "No", "Select from the dropdown list of valid cost center codes. Must exactly match."],
-        ["Line Manager Email", "No", "Must match the email of an existing employee in this upload or already in the system."],
-        ["Resumption Date", "No", "Date the employee joined. Format: dd/mm/yyyy."],
-        ["Head of Cost Center", "No", "Enter Y if this employee is the head of their cost center. Leave blank if not. Sets them as head in the Cost Centers section."],
+        ["Cost Center Code", "No", "Leave blank to auto-assign from the role's cost centre. If provided, must match the cost centre assigned to the selected role."],
+        ["Resumption Date", "Yes", "Date the employee started (mandatory). Format: dd/mm/yyyy. Determines when the account becomes active."],
         ["", "", ""],
         ["DATA START ROW", "", "Enter your data starting at row 2. Row 1 is the header row."],
         ["CELL COMMENTS", "", "Hover over each header cell (row 1) for example values and guidance."],
+        ["CAPACITY LIMIT", "", "Upload is blocked when a role's headcount limit is reached. Check Role Hierarchy for capacity settings."],
     ]
     ws2.column_dimensions["A"].width = 22
     ws2.column_dimensions["B"].width = 12
@@ -733,10 +718,10 @@ async def upload_employees(
     """
     Bulk upload employees from .xlsx or .csv.
 
-    Required columns: First Name, Last Name, Email.
-    Optional: Other Name, Preferred Name, Employee Code, Phone,
-              Cost Center Code, Line Manager Email, Resumption Date.
+    Required columns: First Name, Last Name, Email, Org Role, Resumption Date.
+    Optional: Other Name, Preferred Name, Employee Code, Phone, Cost Center Code.
     Duplicate email = update existing record.
+    Capacity and cost-centre/role alignment are enforced on upload.
     """
     tenant_id = _require_tenant(current_user)
     _require_admin(current_user)
@@ -787,15 +772,18 @@ async def upload_employees(
     code_col = col("employee code")
     ph_col = col("phone")
     cc_col = col("cost center code")
-    mgr_col = col("line manager email")
     res_col = col("resumption date (dd/mm/yyyy)") or col("resumption date")
-    hoc_col = col("head of cost center (y/n)") or col("head of cost center")
     org_role_col = col("org role")
 
     if fn_col is None or ln_col is None or em_col is None:
         raise HTTPException(
             status_code=400,
             detail="File must have 'First Name', 'Last Name', and 'Email' columns.",
+        )
+    if org_role_col is None:
+        raise HTTPException(
+            status_code=400,
+            detail="File must have an 'Org Role' column. Download the latest template.",
         )
 
     # Load cost center nodes from org_structure (single source of truth).
@@ -809,6 +797,16 @@ async def upload_employees(
     )
     roles_by_name: dict[str, AR] = {r.name.lower().strip(): r for r in ar_result.scalars().all()}
 
+    # Pre-load current occupant counts per role (for capacity enforcement)
+    from sqlalchemy import func as sqlfunc
+    occ_res = await db.execute(
+        select(Employee.approval_role_id, sqlfunc.count(Employee.id))
+        .where(Employee.tenant_id == tenant_id, Employee.approval_role_id.isnot(None))
+        .group_by(Employee.approval_role_id)
+    )
+    role_occupant_counts: dict[uuid.UUID, int] = {r: c for r, c in occ_res.all()}
+    batch_role_additions: dict[uuid.UUID, int] = {}  # tracks new occupants added in this batch
+
     # Fetch registration date floor for resumption date validation.
     from app.models.setup import TenantOrgConfig
     org_res = await db.execute(
@@ -819,11 +817,8 @@ async def upload_employees(
 
     imported = 0
     updated = 0
-    head_assignments = 0
     errors: list[dict] = []
-    email_to_emp: dict[str, Employee] = {}  # track newly created employees for mgr lookup
-    # {email: cost_center_id} for rows flagged as head of cost center
-    head_flags: dict[str, uuid.UUID] = {}
+    email_to_emp: dict[str, Employee] = {}
 
     from datetime import datetime as _dt3
 
@@ -855,9 +850,18 @@ async def upload_employees(
         employee_code = get(code_col) or None
         phone = get(ph_col) or None
         cc_code = get(cc_col)
-        mgr_email = get(mgr_col)
         res_str = get(res_col)
         org_role_name = get(org_role_col)
+
+        # Org Role is mandatory
+        if not org_role_name:
+            errors.append({"row": i, "reason": "Org Role is required. Select a role from the dropdown."})
+            continue
+
+        # Resumption Date is mandatory
+        if not res_str:
+            errors.append({"row": i, "reason": "Resumption Date is required. Enter the date in dd/mm/yyyy format."})
+            continue
 
         cost_center_id = None
         if cc_code:
@@ -866,14 +870,6 @@ async def upload_employees(
                 errors.append({"row": i, "reason": f"Cost center code '{cc_code}' not found in organisation structure."})
             else:
                 cost_center_id = cc_node.id
-
-        # Head-of-cost-center flag — collect for pass-2 resolution
-        hoc_value = get(hoc_col).upper() if hoc_col is not None else ""
-        if hoc_value == "Y":
-            if cost_center_id is None:
-                errors.append({"row": i, "reason": "Head of Cost Center = Y but no valid Cost Center Code on this row."})
-            else:
-                head_flags[email.lower()] = cost_center_id
 
         resumption_date = None
         if res_str:
@@ -905,14 +901,47 @@ async def upload_employees(
             )
         )
         emp_obj = existing_result.scalar_one_or_none()
-        # Resolve org role
-        org_role_id = None
-        if org_role_name:
-            matched_role = roles_by_name.get(org_role_name.lower().strip())
-            if matched_role:
-                org_role_id = matched_role.id
-            else:
-                errors.append({"row": i, "reason": f"Org Role '{org_role_name}' not found. Check spelling or create the role first."})
+        # Resolve org role (mandatory — already checked above)
+        matched_role = roles_by_name.get(org_role_name.lower().strip())
+        if not matched_role:
+            errors.append({"row": i, "reason": f"Org Role '{org_role_name}' not found. Check spelling or create the role first."})
+            continue
+        org_role_id = matched_role.id
+
+        # Capacity enforcement
+        if matched_role.max_occupants is not None:
+            current_count = role_occupant_counts.get(matched_role.id, 0)
+            batch_count = batch_role_additions.get(matched_role.id, 0)
+            is_already_in_role = emp_obj is not None and getattr(emp_obj, "approval_role_id", None) == matched_role.id
+            if not is_already_in_role and (current_count + batch_count) >= matched_role.max_occupants:
+                cap_label = "occupant" if matched_role.max_occupants == 1 else "occupants"
+                errors.append({"row": i, "reason": (
+                    f"Role '{matched_role.name}' is at capacity "
+                    f"({current_count + batch_count}/{matched_role.max_occupants} {cap_label}). "
+                    f"Increase the role's headcount limit or choose a different role."
+                )})
+                continue
+
+        # Role vs Cost Center validation
+        if matched_role.cost_center_id:
+            if cost_center_id and cost_center_id != matched_role.cost_center_id:
+                expected_cc_code = next(
+                    (code.upper() for code, node in cc_by_code.items() if node.id == matched_role.cost_center_id),
+                    "the role's assigned cost centre"
+                )
+                errors.append({"row": i, "reason": (
+                    f"Cost Centre mismatch: role '{matched_role.name}' belongs to '{expected_cc_code}'. "
+                    f"Remove the Cost Centre Code or enter '{expected_cc_code}'."
+                )})
+                continue
+            if not cost_center_id:
+                # Auto-assign cost centre from role
+                cost_center_id = matched_role.cost_center_id
+
+        # Track this batch addition for capacity (only if new to this role)
+        is_already_in_role = emp_obj is not None and getattr(emp_obj, "approval_role_id", None) == matched_role.id
+        if not is_already_in_role:
+            batch_role_additions[matched_role.id] = batch_role_additions.get(matched_role.id, 0) + 1
 
         if emp_obj:
             emp_obj.first_name = first_name
@@ -959,66 +988,11 @@ async def upload_employees(
         full_name_emp = f"{emp_obj.first_name} {emp_obj.last_name}".strip()
         await _ensure_portal_account(email, full_name_emp, emp_obj.first_name, tenant_id, db)
 
-    # Second pass — resolve line manager emails
-    for i, row in enumerate(rows, start=4):
-        if not any((c or "").strip() for c in row):
-            continue
-
-        def get2(idx: Optional[int]) -> str:
-            if idx is None or idx >= len(row):
-                return ""
-            return (row[idx] or "").strip()
-
-        email = get2(em_col)
-        mgr_email = get2(mgr_col)
-        if not email or not mgr_email:
-            continue
-
-        emp_obj = email_to_emp.get(email.lower())
-        mgr_obj = email_to_emp.get(mgr_email.lower())
-        if not mgr_obj:
-            # Check DB
-            mgr_result = await db.execute(
-                select(Employee).where(
-                    Employee.tenant_id == tenant_id,
-                    Employee.email == mgr_email,
-                )
-            )
-            mgr_obj = mgr_result.scalar_one_or_none()
-        if mgr_obj and emp_obj:
-            emp_obj.line_manager_id = mgr_obj.id
-        elif emp_obj:
-            errors.append({"row": i, "reason": f"Line manager '{mgr_email}' not found."})
-
-    # Pass 2b — resolve head-of-cost-center flags and upsert CostCenterConfig rows
-    for emp_email, cc_id in head_flags.items():
-        emp_obj = email_to_emp.get(emp_email)
-        if not emp_obj:
-            # Should not happen if pass-1 succeeded, but guard anyway
-            continue
-        cfg_res = await db.execute(
-            select(CostCenterConfig).where(
-                CostCenterConfig.tenant_id == tenant_id,
-                CostCenterConfig.cost_center_id == cc_id,
-            )
-        )
-        cfg = cfg_res.scalar_one_or_none()
-        if cfg:
-            cfg.head_employee_id = emp_obj.id
-        else:
-            db.add(CostCenterConfig(
-                tenant_id=tenant_id,
-                cost_center_id=cc_id,
-                head_employee_id=emp_obj.id,
-                head_user_id=None,
-            ))
-        head_assignments += 1
-
     await db.flush()
     skipped = max(0, len([r for r in rows if any((c or "").strip() for c in r)]) - imported - updated)
     return EmployeeUploadResult(
         imported=imported, updated=updated, skipped=skipped,
-        errors=errors, head_assignments=head_assignments,
+        errors=errors, head_assignments=0,
     )
 
 
