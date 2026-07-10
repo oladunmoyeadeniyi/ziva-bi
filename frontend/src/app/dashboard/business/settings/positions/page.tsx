@@ -119,7 +119,7 @@ function desigColor(d: string | null) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function PositionsPage() {
-  const { token } = useAuth();
+  const { accessToken } = useAuth();
 
   // List state
   const [positions, setPositions] = useState<Position[]>([]);
@@ -182,7 +182,7 @@ export default function PositionsPage() {
     try {
       const isActiveParam = filterActive === "active" ? "true" : filterActive === "archived" ? "false" : undefined;
       const qs = isActiveParam ? `?is_active=${isActiveParam}` : "";
-      const data = await apiFetch<Position[]>(`/api/hr/positions${qs}`, { token });
+      const data = await apiFetch<Position[]>(`/api/hr/positions${qs}`, { token: accessToken ?? undefined });
       setPositions(data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load positions.");
@@ -196,14 +196,11 @@ export default function PositionsPage() {
   }, [filterActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    Promise.all([
-      apiFetch<CostCenterOption[]>("/api/hr/cost-centers/options", { token }),
-      apiFetch<{ employees: Employee[] }>("/api/hr/employees?limit=500", { token }),
-    ])
-      .then(([cc, empData]) => {
-        setCostCenters(cc);
-        setEmployees(empData.employees ?? []);
-      })
+    apiFetch<CostCenterOption[]>("/api/hr/cost-centers/options", { token: accessToken ?? undefined })
+      .then((cc) => setCostCenters(cc))
+      .catch(() => {/* non-fatal */});
+    apiFetch<{ employees: Employee[] }>("/api/hr/employees?limit=500", { token: accessToken ?? undefined })
+      .then((d) => setEmployees(d.employees ?? []))
       .catch(() => {/* non-fatal */});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -292,7 +289,7 @@ export default function PositionsPage() {
     setSaving(true); setFormError(null);
     try {
       await apiFetch("/api/hr/positions", {
-        token,
+        token: accessToken ?? undefined,
         method: "POST",
         body: {
           name: fName.trim(),
@@ -323,7 +320,7 @@ export default function PositionsPage() {
     setSaving(true); setFormError(null);
     try {
       await apiFetch(`/api/hr/positions/${editPos.id}`, {
-        token,
+        token: accessToken ?? undefined,
         method: "PATCH",
         body: {
           name: fName.trim(),
@@ -351,7 +348,7 @@ export default function PositionsPage() {
   const handleArchive = async (pos: Position) => {
     if (!confirm(`Archive "${pos.name}"? Occupants remain but no new assignments can be made.`)) return;
     try {
-      await apiFetch(`/api/hr/positions/${pos.id}`, { token, method: "DELETE" });
+      await apiFetch(`/api/hr/positions/${pos.id}`, { token: accessToken ?? undefined, method: "DELETE" });
       loadPositions();
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Failed to archive position.");
@@ -364,7 +361,7 @@ export default function PositionsPage() {
     setSaving(true); setMoveError(null);
     try {
       await apiFetch(`/api/hr/positions/${movePos.id}/move`, {
-        token,
+        token: accessToken ?? undefined,
         method: "POST",
         body: {
           new_cost_center_id: mCostCenter || undefined,
@@ -391,7 +388,7 @@ export default function PositionsPage() {
     setSaving(true); setAssignError(null);
     try {
       await apiFetch(`/api/hr/employees/${aEmployee}/assign`, {
-        token,
+        token: accessToken ?? undefined,
         method: "POST",
         body: {
           approval_role_id: assignPos.id,
@@ -433,7 +430,7 @@ export default function PositionsPage() {
       {/* Code + Grade */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Position code</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Position code <span className="text-xs text-gray-400 font-normal">(optional)</span></label>
           <input
             type="text"
             value={fCode}
@@ -443,7 +440,7 @@ export default function PositionsPage() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Grade / band</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Grade / band <span className="text-xs text-gray-400 font-normal">(optional)</span></label>
           <input
             type="text"
             value={fGrade}
@@ -634,7 +631,7 @@ export default function PositionsPage() {
         <span className="text-sm text-gray-500">{filtered.length} position{filtered.length !== 1 ? "s" : ""}</span>
       </div>
 
-      {error && <Banner type="error" message={error} className="mb-4" />}
+      {error && <Banner variant="error" className="mb-4">{error}</Banner>}
 
       {/* Positions table */}
       {loading ? (
@@ -766,10 +763,10 @@ export default function PositionsPage() {
             </div>
             <div className="overflow-y-auto flex-1 p-6">
               {positionFormFields()}
-              {formError && <Banner type="error" message={formError} className="mt-4" />}
+              {formError && <Banner variant="error" className="mt-4">{formError}</Banner>}
             </div>
             <div className="flex justify-end gap-3 p-6 border-t border-gray-100 flex-shrink-0">
-              <Button variant="outline" onClick={() => setShowCreate(false)} disabled={saving}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={saving}>Cancel</Button>
               <Button onClick={handleCreate} disabled={saving}>
                 {saving ? "Creating…" : "Create position"}
               </Button>
@@ -788,10 +785,10 @@ export default function PositionsPage() {
             </div>
             <div className="overflow-y-auto flex-1 p-6">
               {positionFormFields()}
-              {formError && <Banner type="error" message={formError} className="mt-4" />}
+              {formError && <Banner variant="error" className="mt-4">{formError}</Banner>}
             </div>
             <div className="flex justify-end gap-3 p-6 border-t border-gray-100 flex-shrink-0">
-              <Button variant="outline" onClick={() => setEditPos(null)} disabled={saving}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setEditPos(null)} disabled={saving}>Cancel</Button>
               <Button onClick={handleEdit} disabled={saving}>
                 {saving ? "Saving…" : "Save changes"}
               </Button>
@@ -883,9 +880,9 @@ export default function PositionsPage() {
                 </label>
               </div>
             </div>
-            {moveError && <Banner type="error" message={moveError} className="mt-4" />}
+            {moveError && <Banner variant="error" className="mt-4">{moveError}</Banner>}
             <div className="flex justify-end gap-3 mt-6">
-              <Button variant="outline" onClick={() => setMovePos(null)} disabled={saving}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setMovePos(null)} disabled={saving}>Cancel</Button>
               <Button onClick={handleMove} disabled={saving}>
                 {saving ? "Moving…" : "Confirm move"}
               </Button>
@@ -1007,9 +1004,9 @@ export default function PositionsPage() {
                 </label>
               </div>
             </div>
-            {assignError && <Banner type="error" message={assignError} className="mt-4" />}
+            {assignError && <Banner variant="error" className="mt-4">{assignError}</Banner>}
             <div className="flex justify-end gap-3 mt-6">
-              <Button variant="outline" onClick={() => setAssignPos(null)} disabled={saving}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setAssignPos(null)} disabled={saving}>Cancel</Button>
               <Button onClick={handleAssign} disabled={saving}>
                 {saving ? "Assigning…" : "Confirm assignment"}
               </Button>
