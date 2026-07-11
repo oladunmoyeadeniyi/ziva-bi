@@ -42,6 +42,20 @@ class ExpenseDocument(Base):
     """
 
     __tablename__ = "expense_documents"
+    __table_args__ = (
+        # Composite partial index matching migration k2l3m4n5o6p7.
+        # Drives the dedup lookup: WHERE tenant_id = :tid AND file_hash = :hash
+        # Partial (WHERE file_hash IS NOT NULL) excludes pre-migration NULL rows,
+        # keeping index size small.
+        # WARNING: if you change this, update the migration to match, or
+        # 'alembic revision --autogenerate' will drop the old one and recreate.
+        Index(
+            "ix_expense_documents_tenant_file_hash",
+            "tenant_id",
+            "file_hash",
+            postgresql_where="file_hash IS NOT NULL",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -77,7 +91,7 @@ class ExpenseDocument(Base):
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1000), nullable=False)
     # SHA-256 hex digest of the original (pre-compression) file bytes.
-    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     file_hash_algorithm: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # Mandatory retention expiry: 15-year platform minimum (exceeds FIRS 6-year floor,
     # NDPR 2019, CAMA 2020). Duration driven by tenant_org_config.document_retention_years
