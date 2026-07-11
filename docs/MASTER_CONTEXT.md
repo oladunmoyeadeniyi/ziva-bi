@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-06-30 (M9.3b User Impersonation close-out — see §5, §9, §10)
+> Last updated: 2026-07-11 (Three-Mode Architecture + Document Security decisions — see §7, §9, §10; briefs: `docs/BRIEF_three_mode_architecture.md`, `docs/BRIEF_document_storage_security.md`)
 
 ---
 
@@ -449,4 +449,129 @@ This section was significantly out of date relative to shipped code. Fixed:
 
 Architectural invariants that are durable decisions (the WHY):
 - **Cost center source of truth:** cost centers live in `org_structure`, NOT in `dimension_values`. Both `employees.cost_center_id` and `cost_center_config.cost_center_id` FK to `org_structure.id`.
-- **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusivel
+- **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusively in `tenant_org_config`. `tenant_fx_config` holds ONLY FX mechanics (rates, revaluation rules).
+- **Environment isolation:** test tenants are shadow tenants with distinct `tenant_id` values — NOT an environment column on shared tables. This was the explicit architectural choice (Option 3 in the M9 design session) over environment columns (Option 1) and schema-per-env (Option 2).
+- **Tenant lifecycle direction (M9.0.1, 2026-06-29):** signup creates ONLY a test tenant; live is born second, only via explicit super-admin promotion. `parent_tenant_id` runs test→live (live points back at the test it came from) — the inverse of the original live-first/clone design. Test stays active permanently after go-live; it's never archived.
+- **Expense→GL posting is synchronous, same-transaction** at final approval. This is intentional so a GL failure rolls back the approval — no partial state.
+- **Three-mode architecture (2026-07-11 — see `docs/BRIEF_three_mode_architecture.md`):** Every module supports three posting modes: `'lite'` (workflow-only, no GL), `'connected'` (GL coding in Ziva, posts to external ERP via export), `'full_erp'` (GL posts internally). Mode is set by the consultant in SA portal (`tenant_org_config.posting_mode VARCHAR(20) DEFAULT 'full_erp'`) — tenants never see this setting. The `posting_batches` table is the export queue for Connected Mode. Existing tenants default to `'full_erp'` — no migration of existing data.
+- **Module independence:** every module must work standalone. A company subscribing to only one module (e.g. only expense management, only AP) should be production-ready within the hour. CoA/Dimensions/Currencies/Tax are OPTIONAL in Lite/Connected mode and REQUIRED in Full ERP mode. The setup portal shows/hides steps based on `posting_mode` + active modules.
+- **Signup = trial lead (2026-07-11):** the business signup page creates `lifecycle_status = 'trial'`, NOT `'in_implementation'`. Trials get demo seed data. The SA portal "Trials & signups" page is the lead management queue. Consultants activate implementation manually after qualification. This is a one-line change to the signup router.
+- **Consultant config lives in SA portal:** posting mode, module licensing, integration settings (which external ERP) — all set by the consultant in the SA portal tenant detail page BEFORE "Enter Tenant." These are never exposed inside the tenant implementation pages.
+- **Document security invariants (2026-07-11 — see `docs/BRIEF_document_storage_security.md`):** (a) Signed URLs expire in 15 minutes (not 1 hour). (b) All uploaded files are SHA-256 hashed; `file_hash` stored in `expense_documents`. (c) Magic bytes validation on every upload — Content-Type header is not trusted. (d) `retain_until` enforced — deletion of financial documents within the mandatory 6-year retention window is blocked at API level (NDPR 2019 + CAMA 2020 + FIRS). (e) Document access is logged to `document_access_log`. (f) Cloudflare R2 is the target storage provider (zero egress fees vs. Supabase's $0.09/GB) — migrate when tenants > 5 or storage > 5 GB.
+
+---
+
+## 8. CODING STANDARDS (NON-NEGOTIABLE)
+
+### Backend
+- Every file fully commented: purpose, each function, inputs/outputs, edge cases
+- All foreign keys indexed
+- Paginate every list endpoint (default 50 per page)
+- Never SELECT * — specify columns needed
+- Cache tenant config — read constantly, changes rarely
+- Single DB round-trip for validation where possible
+- Return field-level errors, not generic 400s
+
+### Frontend
+- No full page reload on data changes
+- Debounce all search inputs (300ms)
+- Lazy load heavy components
+- Comma-format ALL amount fields everywhere in the app
+- Drag-and-drop upload zones on all file upload areas
+- Amount inputs: type="text" inputMode="decimal" with fmtCommaInput/stripCommas helpers
+
+### Performance targets
+- CoA template generation: under 3 seconds
+- Suggestions endpoint: under 200ms
+- GL popup category tree: loaded once on page load
+- Dimension cascade lookup: cached per tenant session
+
+---
+
+## 9. NEXT MILESTONE
+
+> M8.3 Backend and M8.4 Tax & Statutory (the previous contents of this section) are both **done** — see §5. This section is rewritten to reflect the real current priority queue, in recommended build order.
+
+### Immediate (cleanup / consolidation, before new features)
+1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
+2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
+3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
+4. ~~UI Polish Milestone~~ — **Fully shipped 2026-06-30.** Phase 1 (commit `0d55ea8`, findings A/B/C) and Phase 2 (commit `300b22d`, findings D–H) both done and independently verified — see §5 for both entries.
+5. ~~Default-CoA feature~~ — **Shipped 2026-06-30, commit `7965f33`** — see §5 "Default-CoA Templates." Core DB-level facts verified; live endpoint/UI smoke test still outstanding (not blocking, but do it before treating this as fully closed).
+6. ~~M9.3b — User Impersonation~~ — **Shipped 2026-06-30, commit `1a60a1c`** — see §5 "M9.3b User Impersonation."
+
+### Next feature work (in this order)
+
+6. **Three-Mode Architecture Foundation** — Phase 1 (backend): `posting_mode` migration, `posting_batches` table, `expense_posting.py` routing, export endpoint. Phase 2 (SA portal): signup trial flow, consultant config panel, "Trials & signups" page. Phase 3 (setup sequence + CoA): mode-aware setup portal, simplified CoA template, GL group hierarchy path in picker. Full spec: `docs/BRIEF_three_mode_architecture.md`.
+7. **Document Security Hardening** — Phase 1: signed URL expiry → 15 min, SHA-256 hash, magic bytes validation, image/PDF compression, deduplication, retention policy enforcement, access audit log. Phase 2 (later): Cloudflare R2 migration. Full spec: `docs/BRIEF_document_storage_security.md`.
+8. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
+9. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
+10. **M11 — Accounts Payable**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable**, **M16 — Budget Engine**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory & Warehouse**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
+
+**Also completed since last §9 rewrite (now closed):**
+- ~~Role Hierarchy Enhancements~~ — **Done** (commits `3d2cf71`–`68608fd`, ~2026-07-01 to 2026-07-05). See §5.
+- ~~Finance Review Workflow~~ — **Done** (commits `6cbbf09`–`57e05a8`, ~2026-07-05). See §5.
+- ~~System Function Mapping~~ — **Done** (commits `290945a`–`7aa91bc`, ~2026-07-05). See §5.
+- ~~People Module v1 (Positions + Transfers)~~ — **Done** (commits `a2c0b35`, `a000794`, ~2026-07-06). See §5.
+- ~~Single Source of Truth merge (Positions → approval_roles)~~ — **Done** (commits `71025bd`–`1ddeaba`, ~2026-07-07). See §5.
+- ~~People Module Polish + Employee-User Link~~ — **Done** (commits `b8c4709`–`a656f65`, 2026-07-10/11). See §5.
+
+---
+
+## 10. FUTURE MILESTONES (recommended order)
+
+1. **Three-Mode Architecture Foundation** — backend + SA portal + setup sequence (see `docs/BRIEF_three_mode_architecture.md`)
+2. **Document Security Hardening** — Phase 1: security/integrity/compression; Phase 2: Cloudflare R2 migration (see `docs/BRIEF_document_storage_security.md`)
+3. Currencies & FX / BDC completeness decision
+4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
+5. M11 — Accounts Payable
+6. M13 — Bank Reconciliation
+7. M14 — Accounts Receivable
+8. M16 — Budget Engine
+9. M19 — Tax Engine
+10. M10 — OCR & Receipt Scanning (Anthropic Vision API)
+11. M15 — Payroll & HR
+12. M17 — Inventory & Warehouse
+13. M18 — Fixed Assets
+14. M20 — AI Intelligence Layer (98%+ accuracy target)
+
+### Infrastructure (do in parallel with feature work, not as a blocker)
+- Upgrade Render PostgreSQL to Standard ($50/month) — before launch
+- Audit all `(tenant_id, ...)` composite DB indexes — as part of Three-Mode migration
+- Redis caching for tenant config (org_config, modules, dimensions) — at 10+ tenants
+- Cloudflare R2 migration — before > 5 tenants or > 5 GB stored (see §7 invariants)
+
+---
+
+## 11. KNOWN ISSUES / TECH DEBT
+
+> Current issues register (with severity, evidence, and fix guidance) is maintained in **`docs/PROJECT_STATE.md §8 Known Issues Register`**. Only durable, architectural-level notes belong here.
+
+- **UI polish deferred to dedicated milestone** — do not fix UI piecemeal across feature milestones. One dedicated UI polish milestone will do a global overhaul.
+- **role_tier enforcement is incomplete** — `role_tier` column exists on `user_tenants` and is included in the JWT, but full gate enforcement (blocking power_admin from overriding consultant-locked sections) is not wired end to end.
+- **"Invalid or expired token" errors** on some admin pages after extended sessions — restart backend + re-login resolves it. Root cause is token expiry without smooth refresh; will be addressed in a dedicated session management improvement.
+- **Documentation maintenance lapsed** — the rule in `CLAUDE.md` ("update MASTER_CONTEXT.md after every completed milestone") was not followed for roughly 10 consecutive milestones, which is why this document required the 2026-06-29 reconciliation in §5. Going forward, every completed milestone gets an entry here in the same session it ships, not retroactively.
+
+---
+
+## 12. CURRENCY SINGLE SOURCE OF TRUTH (June 2026)
+
+Migration `f2g3h4i5j6k7` consolidated all currency identity into `tenant_org_config`:
+
+- `tenant_org_config.functional_currency` — THE authority (protected since M8.2 post-release)
+- `tenant_org_config.enabled_currencies` — NEW JSONB column: sorted list of ISO codes the tenant transacts in (e.g. `["EUR", "NGN", "USD"]`). Functional currency is always included.
+- `tenant_org_config.reporting_currency` — single authority (was duplicated in fx_config; fx_config copy dropped)
+
+`tenant_fx_config` now holds ONLY FX mechanics: `fx_rates` and `revaluation_rules`.
+
+Dropped from `tenant_fx_config`: `functional_currency`, `additional_currencies`, `reporting_currency`.
+
+Canonical read endpoint: `GET /api/setup/currencies` returns all three currency fields from `tenant_org_config` plus `fx_rates`/`revaluation_rules` from `tenant_fx_config`.
+
+`PATCH /api/setup/currencies` routes `enabled_currencies` and `reporting_currency` to `org_config`; `fx_rates`/`revaluation_rules` to `fx_config`.
+
+Bank-accounts page now reads `enabled_currencies` from the single canonical endpoint — no more multi-source merge.
+
+---
+
+*End of Master Context. Last updated: 2026-07-11 (People Module Polish + Employee-User Link close-out — §5 entries added for Role Hierarchy Enhancements, Finance Review Workflow, System Function Mapping, People Module v1, Single Source of Truth merge, and People Module Polish/Employee-User Link; §9 closed-out items added; last pushed commit `a656f65`, confirmed against `origin/main`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
