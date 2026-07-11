@@ -69,6 +69,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.auth import AuditLog, UserTenant, User, Tenant
+from app.models.account_mapping import TenantAccountMapping, PostingRole
+from app.models.bank_account import BankAccount
 from app.services.periods import (
     ALLOWED_MODULES,
     add_months,
@@ -390,6 +392,7 @@ async def get_progress(
     org = org_result.scalar_one_or_none()
     org_config = org.org_configuration if org and org.org_configuration else {}
     use_multi_currency = org_config.get("use_multi_currency", True)
+    posting_mode = org.posting_mode if org else "lite"
     # Sync with org_configuration — org_configuration is the source of truth
     if org_config:
         use_dimensions = org_config.get("use_dimensions")
@@ -483,11 +486,54 @@ async def get_progress(
     ec = ec_result.scalar_one_or_none()
     module_setup_complete = ec is not None
 
-    # Go-live blocking items
-    blocking_complete = all([
-        org_complete, modules_complete, coa_complete, dims_complete,
-        employees_complete, tax_complete, roles_complete, workflows_complete,
-    ])
+    # Account mapping: ALL system PostingRoles must be mapped.
+    # am_count vs total_roles distinguishes not_started / in_progress / complete.
+    # This prevents a tenant going live with gaps in the posting rule matrix.
+    total_roles_result = await db.execute(select(sqlfunc.count(PostingRole.role_key)))
+    total_roles = total_roles_result.scalar_one() or 0
+    am_count_result = await db.execute(
+        select(sqlfunc.count(TenantAccountMapping.id)).where(
+            TenantAccountMapping.tenant_id == tenant_id
+        )
+    )
+    am_count = am_count_result.scalar_one() or 0
+    account_mapping_complete = total_roles > 0 and am_count >= total_roles
+    account_mapping_in_progress = 0 < am_count < total_roles
+
+    # Bank accounts (at least 1 active)
+    ba_count_result = await db.execute(
+        select(sqlfunc.count(BankAccount.id)).where(
+            BankAccount.tenant_id == tenant_id,
+            BankAccount.is_active.is_(True),
+        )
+    )
+    ba_count = ba_count_result.scalar_one() or 0
+    bank_accounts_complete = ba_count > 0
+
+    # Accounting periods (at least 1 period generated)
+    per_count_result = await db.execute(
+        select(sqlfunc.count(AccountingPeriod.id)).where(
+            AccountingPeriod.tenant_id == tenant_id
+        )
+    )
+    per_count = per_count_result.scalar_one() or 0
+    periods_complete = per_count > 0
+
+    # Go-live blocking items — scope depends on posting_mode.
+    # lite: no GL work needed; connected: CoA + account_mapping blocking;
+    # full_erp: CoA + dims + account_mapping blocking.
+    _base_blocking = [
+        org_complete, modules_complete, employees_complete,
+        tax_complete, roles_complete, workflows_complete,
+    ]
+    if posting_mode == "lite":
+        blocking_complete = all(_base_blocking)
+    elif posting_mode == "connected":
+        blocking_complete = all(_base_blocking + [coa_complete, account_mapping_complete])
+    else:  # full_erp
+        blocking_complete = all(
+            _base_blocking + [coa_complete, dims_complete, account_mapping_complete]
+        )
 
     # Locked/unlocked sequence per brief
     def _s(
@@ -527,69 +573,129 @@ async def get_progress(
     # - Module setup: unlocked after CoA + Dimensions
     # - Go-live: unlocked when all blocking complete
 
+    # GL-tier unlock logic (only relevant for connected / full_erp)
     dims_locked = not org_complete
-    coa_locked = not (dims_complete or dims_not_applicable) or dims_locked
-    employees_locked = not coa_complete or coa_locked
+    coa_locked = (
+        (not (dims_complete or dims_not_applicable) or dims_locked)
+        if posting_mode == "full_erp"
+        else not org_complete
+    )
+    account_mapping_locked = not coa_complete or coa_locked
+    bank_accounts_locked = not org_complete
+    periods_locked = not org_complete
+    # In lite mode employees unlock after org; in GL modes they unlock after CoA
+    employees_locked = (
+        (not coa_complete or coa_locked)
+        if posting_mode != "lite"
+        else not org_complete
+    )
     currencies_locked = not org_complete
     tax_locked = not org_complete
     roles_locked = not employees_complete or employees_locked
     workflows_locked = not roles_complete or roles_locked
     docs_locked = not modules_complete
-    module_setup_locked = not (coa_complete and (dims_complete or dims_not_applicable))
+    module_setup_locked = (
+        not (coa_complete and (dims_complete or dims_not_applicable))
+        if posting_mode != "lite"
+        else not modules_complete
+    )
     golive_locked = not blocking_complete
 
-    sections = [
+    # ── Core sections (always shown) ─────────────────────────────────────────
+    sections: list = [
         _s("organisation", "Organisation", org_complete,
            f"Legal name: {org.legal_name}" if org_complete else "Not configured",
            "/dashboard/business/setup/organisation"),
         _s("modules", "Module activation", modules_complete,
            f"{len(active_modules)} module(s) active" if modules_complete else "No modules activated",
            "/dashboard/business/setup/modules"),
-        *([
-            _s("dimensions", "Dimensions", dims_complete,
-               f"{dim_count} dimension(s) configured" if dims_complete else "Not configured",
-               "/dashboard/business/settings/dimensions",
-               locked=dims_locked, in_progress=dims_in_progress),
-        ] if not dims_not_applicable else []),
-        _s("coa", "Chart of accounts", coa_complete,
-           f"{coa_count:,} GL accounts loaded" if coa_complete else ("Requires Dimensions first" if coa_locked else "No accounts loaded"),
-           "/dashboard/business/settings/chart-of-accounts",
-           locked=coa_locked),
+    ]
+
+    # ── GL sections (connected + full_erp only) ───────────────────────────────
+    if posting_mode in ("connected", "full_erp"):
+        if not dims_not_applicable and posting_mode == "full_erp":
+            sections.append(
+                _s("dimensions", "Dimensions", dims_complete,
+                   f"{dim_count} dimension(s) configured" if dims_complete else "Not configured",
+                   "/dashboard/business/settings/dimensions",
+                   locked=dims_locked, in_progress=dims_in_progress)
+            )
+        sections.append(
+            _s("coa", "Chart of accounts", coa_complete,
+               f"{coa_count:,} GL accounts loaded" if coa_complete else (
+                   "Requires Dimensions first" if coa_locked else "No accounts loaded"),
+               "/dashboard/business/settings/chart-of-accounts",
+               locked=coa_locked)
+        )
+        sections.append(
+            _s("account_mapping", "Account mapping", account_mapping_complete,
+               f"{am_count} of {total_roles} role(s) mapped" if am_count > 0 else (
+                   "Requires CoA first" if account_mapping_locked else "No mappings configured"),
+               "/dashboard/business/setup/account-mapping",
+               locked=account_mapping_locked,
+               in_progress=account_mapping_in_progress)
+        )
+
+    # ── full_erp-only GL sections ──────────────────────────────────────────────
+    if posting_mode == "full_erp":
+        sections.extend([
+            _s("periods", "Accounting periods", periods_complete,
+               f"{per_count} period(s) generated" if periods_complete else (
+                   "Requires Organisation first" if periods_locked else "No periods generated"),
+               "/dashboard/business/setup/periods", blocking=False,
+               locked=periods_locked),
+            _s("bank_accounts", "Bank accounts", bank_accounts_complete,
+               f"{ba_count} account(s) configured" if bank_accounts_complete else (
+                   "Requires Organisation first" if bank_accounts_locked else "Not configured"),
+               "/dashboard/business/setup/bank-accounts", blocking=False,
+               locked=bank_accounts_locked),
+        ])
+
+    # ── Remaining core sections ────────────────────────────────────────────────
+    sections.extend([
         _s("employees", "Employees", employees_complete,
-           f"{emp_count:,} employee(s) loaded" if employees_complete else ("Requires CoA first" if employees_locked else "No employees loaded"),
+           f"{emp_count:,} employee(s) loaded" if employees_complete else (
+               "Requires CoA first" if employees_locked and posting_mode != "lite"
+               else ("Requires Organisation first" if employees_locked else "No employees loaded")),
            "/dashboard/business/settings/employees",
            locked=employees_locked),
-        *([
-            _s("currencies", "Currencies & FX", currencies_complete,
-               f"Functional: {org.functional_currency}" if currencies_complete else ("Requires Organisation first" if currencies_locked else "Not configured"),
+        *([_s("currencies", "Currencies & FX", currencies_complete,
+               f"Functional: {org.functional_currency}" if currencies_complete else (
+                   "Requires Organisation first" if currencies_locked else "Not configured"),
                "/dashboard/business/setup/currencies", blocking=False,
                locked=currencies_locked),
         ] if use_multi_currency else []),
         _s("tax", "Tax & statutory", tax_complete,
-           "Tax rules configured" if tax_complete else ("Requires Organisation first" if tax_locked else "Not configured"),
+           "Tax rules configured" if tax_complete else (
+               "Requires Organisation first" if tax_locked else "Not configured"),
            "/dashboard/business/setup/tax",
            locked=tax_locked),
         _s("roles", "Roles & permissions", roles_complete,
-           f"{pa_count} Power Admin(s) assigned" if roles_complete else ("Requires Employees first" if roles_locked else "No Power Admin assigned"),
+           f"{pa_count} Power Admin(s) assigned" if roles_complete else (
+               "Requires Employees first" if roles_locked else "No Power Admin assigned"),
            "/dashboard/business/setup/roles",
            locked=roles_locked),
         _s("workflows", "Approval workflows", workflows_complete,
-           "Workflows configured" if workflows_complete else ("Requires Roles first" if workflows_locked else "Not configured"),
+           "Workflows configured" if workflows_complete else (
+               "Requires Roles first" if workflows_locked else "Not configured"),
            "/dashboard/business/settings/approval-matrix",
            locked=workflows_locked),
         _s("documents", "Document rules", docs_complete,
-           "Marked complete" if docs_complete else ("Requires Module activation first" if docs_locked else "Not marked complete"),
+           "Marked complete" if docs_complete else (
+               "Requires Module activation first" if docs_locked else "Not marked complete"),
            "/dashboard/business/setup/documents", blocking=False,
            locked=docs_locked),
         _s("module_setup", "Module setup", module_setup_complete,
-           "Expense module configured" if module_setup_complete else ("Requires CoA & Dimensions first" if module_setup_locked else "No modules configured"),
+           "Modules configured" if module_setup_complete else (
+               "Requires CoA & Dimensions first" if module_setup_locked and posting_mode != "lite"
+               else ("Requires Module activation first" if module_setup_locked else "Not configured")),
            "/dashboard/business/settings/expense-config", blocking=False,
            locked=module_setup_locked),
         _s("golive", "Go-live", blocking_complete,
            "All blocking items complete" if blocking_complete else "Blocking items incomplete",
            "/dashboard/business/setup/go-live",
            locked=golive_locked),
-    ]
+    ])
 
     completed = sum(1 for s in sections if s.status == "complete")
     total = len(sections)
@@ -598,6 +704,7 @@ async def get_progress(
     return ProgressResponse(
         sections=sections, total=total, completed=completed, percentage=pct,
         lifecycle_status=tenant.lifecycle_status if tenant else "in_implementation",
+        posting_mode=posting_mode,
     )
 
 

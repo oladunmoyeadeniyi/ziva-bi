@@ -34,6 +34,7 @@ class ProgressResponse(BaseModel):
     completed: int
     percentage: int
     lifecycle_status: str = "in_implementation"
+    posting_mode: str = "lite"  # lite | connected | full_erp
 
 
 # ── Organisation Identity ──────────────────────────────────────────────────────

@@ -30,22 +30,39 @@ interface ProgressResponse {
   total: number;
   completed: number;
   percentage: number;
+  lifecycle_status: string;
+  posting_mode: string; // "lite" | "connected" | "full_erp"
 }
 
 // Tabler outline icon names per section key
 const SECTION_ICONS: Record<string, string> = {
-  organisation:  "building",
-  modules:       "puzzle",
-  coa:           "file-spreadsheet",
-  dimensions:    "vector",
-  employees:     "users",
-  currencies:    "currency-dollar",
-  tax:           "receipt-tax",
-  roles:         "key",
-  workflows:     "git-merge",
-  documents:     "file-check",
-  module_setup:  "settings",
-  golive:        "rocket",
+  organisation:    "building",
+  modules:         "puzzle",
+  coa:             "file-spreadsheet",
+  dimensions:      "vector",
+  employees:       "users",
+  currencies:      "currency-dollar",
+  tax:             "receipt-tax",
+  roles:           "key",
+  workflows:       "git-merge",
+  documents:       "file-check",
+  module_setup:    "settings",
+  account_mapping: "arrows-exchange",
+  bank_accounts:   "building-bank",
+  periods:         "calendar-stats",
+  golive:          "rocket",
+};
+
+const MODE_LABELS: Record<string, string> = {
+  lite:      "Lite",
+  connected: "Connected",
+  full_erp:  "Full ERP",
+};
+
+const MODE_COLORS: Record<string, string> = {
+  lite:      "bg-gray-100 text-gray-600",
+  connected: "bg-blue-50 text-blue-700",
+  full_erp:  "bg-purple-50 text-purple-700",
 };
 
 function SectionIcon({ sectionKey }: { sectionKey: string }) {
@@ -78,6 +95,22 @@ export default function SetupDashboardPage() {
   return (
     <PageContainer maxWidth="5xl">
       <PageHeading title="Setup dashboard" />
+
+      {/* Mode badge */}
+      {progress && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${MODE_COLORS[progress.posting_mode] ?? "bg-gray-100 text-gray-600"}`}>
+            <i className="ti ti-layers-subtract" style={{ fontSize: 12 }} />
+            {MODE_LABELS[progress.posting_mode] ?? progress.posting_mode} mode
+          </span>
+          <span className="text-xs text-gray-400">
+            {progress.posting_mode === "lite" && "Expense management only — no internal GL"}
+            {progress.posting_mode === "connected" && "Expenses + GL export to external accounting system"}
+            {progress.posting_mode === "full_erp" && "Full internal general ledger + all modules"}
+          </span>
+        </div>
+      )}
+
       <p className="text-sm text-gray-500 mb-6">
         Complete all sections to go live. Required sections must be done before go-live.
       </p>
