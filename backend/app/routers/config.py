@@ -105,6 +105,8 @@ from app.schemas.config import (
     BulkRemapResult,
     BulkRemapRow,
     GlRemapHistoryEntry,
+    GLGroupNode,
+    GLGroupSubgroup,
     GLSearchResult,
     InlineNewAccountFields,
     RemapRequest,
@@ -3754,12 +3756,20 @@ async def remove_gl_mapping(
 @router.get("/gl/search", response_model=list[GLSearchResult])
 async def search_gl_accounts(
     q: str = Query(default="", description="Search term matched against GL number or name"),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=200),
+    gl_group: str | None = Query(default=None, description="Filter by GL group (exact match)"),
+    gl_subgroup: str | None = Query(default=None, description="Filter by GL subgroup (exact match)"),
+    gl_sub_subgroup: str | None = Query(default=None, description="Filter by GL sub-subgroup (exact match)"),
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[GLSearchResult]:
     """
     Search active GL accounts by number or name for the expense form GL picker.
+
+    Supports two modes:
+    - Text search: pass q= to match against GL number or name.
+    - Hierarchy browse: pass gl_group / gl_subgroup / gl_sub_subgroup to filter
+      by group hierarchy level (used by the "By GL Group" tab in the picker).
 
     Returns accounts with their per-dimension requirements so the form can render
     the correct dimension dropdowns immediately after GL selection.
@@ -3783,9 +3793,107 @@ async def search_gl_accounts(
         query = query.where(
             ChartOfAccount.gl_number.ilike(term) | ChartOfAccount.gl_name.ilike(term)
         )
+    if gl_group is not None:
+        query = query.where(ChartOfAccount.gl_group == gl_group)
+    if gl_subgroup is not None:
+        query = query.where(ChartOfAccount.gl_subgroup == gl_subgroup)
+    if gl_sub_subgroup is not None:
+        query = query.where(ChartOfAccount.gl_sub_subgroup == gl_sub_subgroup)
 
     result = await db.execute(query)
     return [GLSearchResult.from_orm(g) for g in result.scalars().all()]
+
+
+@router.get("/gl/groups", response_model=list[GLGroupNode])
+async def get_gl_groups(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[GLGroupNode]:
+    """
+    Return the full GL group hierarchy for the tenant.
+
+    Queries distinct gl_group / gl_subgroup / gl_sub_subgroup combinations
+    from the active chart of accounts, then assembles them into a tree.
+    One round-trip; the frontend caches the result for the picker session.
+    Tenant-scoped; available to all authenticated business users.
+    """
+    from sqlalchemy import func as sqlfunc, distinct
+
+    tenant_id = _require_tenant(current_user)
+
+    # Pull distinct (group, subgroup, sub_subgroup) rows — only where gl_group is set
+    rows_result = await db.execute(
+        select(
+            ChartOfAccount.gl_group,
+            ChartOfAccount.gl_subgroup,
+            ChartOfAccount.gl_sub_subgroup,
+            sqlfunc.count(ChartOfAccount.id).label("cnt"),
+        )
+        .where(
+            ChartOfAccount.tenant_id == tenant_id,
+            ChartOfAccount.is_active == True,  # noqa: E712
+            ChartOfAccount.gl_group.isnot(None),
+            ChartOfAccount.gl_group != "",
+        )
+        .group_by(
+            ChartOfAccount.gl_group,
+            ChartOfAccount.gl_subgroup,
+            ChartOfAccount.gl_sub_subgroup,
+        )
+        .order_by(
+            ChartOfAccount.gl_group,
+            ChartOfAccount.gl_subgroup,
+            ChartOfAccount.gl_sub_subgroup,
+        )
+    )
+    rows = rows_result.all()
+
+    # Assemble tree: group → subgroup → sub_subgroups
+    from collections import defaultdict, OrderedDict
+
+    # group_name → {subgroup_name → {sub_subgroup_name → count}}
+    tree: dict[str, dict[str, dict[str, int]]] = OrderedDict()
+    group_totals: dict[str, int] = defaultdict(int)
+
+    for row in rows:
+        g = row.gl_group or ""
+        sg = row.gl_subgroup or ""
+        ssg = row.gl_sub_subgroup or ""
+        cnt = row.cnt
+
+        if g not in tree:
+            tree[g] = OrderedDict()
+        if sg not in tree[g]:
+            tree[g][sg] = OrderedDict()
+        if ssg:
+            tree[g][sg][ssg] = tree[g][sg].get(ssg, 0) + cnt
+        group_totals[g] += cnt
+
+    result_nodes: list[GLGroupNode] = []
+    for g_name, subgroups_dict in tree.items():
+        subgroup_nodes: list[GLGroupSubgroup] = []
+        for sg_name, ssg_dict in subgroups_dict.items():
+            if sg_name == "":
+                # Accounts in this group have no subgroup — skip subgroup node
+                # (they will still appear when user drills into the group directly)
+                continue
+            ssg_count = sum(ssg_dict.values()) if ssg_dict else 0
+            subgroup_nodes.append(
+                GLGroupSubgroup(
+                    name=sg_name,
+                    sub_subgroups=sorted(ssg_dict.keys()),
+                    account_count=ssg_count if ssg_count else 0,
+                )
+            )
+        result_nodes.append(
+            GLGroupNode(
+                name=g_name,
+                subgroups=subgroup_nodes,
+                account_count=group_totals[g_name],
+            )
+        )
+
+    return result_nodes
 
 
 @router.patch(

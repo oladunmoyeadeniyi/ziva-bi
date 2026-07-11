@@ -11,7 +11,9 @@ then commit and push — or flag discrepancies for Adeniyi.
 ```
 Read docs/MASTER_CONTEXT.md
 ```
-This is the single source of truth — owner, vision, stack, Three-Mode Architecture, milestone status, and design decisions. Use it to judge whether new code is consistent with the project direction, not just syntactically correct.
+This is the single source of truth — owner, vision, stack, Three-Mode Architecture,
+milestone status, and design decisions. Use it to judge whether new code is consistent
+with the project direction, not just syntactically correct.
 
 ### 1. Read the pending commit brief
 ```
@@ -19,31 +21,53 @@ Read docs/PENDING_COMMIT.md
 ```
 This contains: intent summary, files changed, what to verify, and the suggested commit message.
 
-### 2. Read each changed file in full
+### 2. Check for unexpected file changes
+Run:
+```bash
+git diff --name-only HEAD
+git status --short
+```
+Compare the output against the files listed in PENDING_COMMIT.md.
+- If a file is modified but NOT in the brief → flag it. It may be a truncation bug or
+  an accidental edit. Do not commit it unless Cowork explicitly lists it.
+- If a file is in the brief but NOT modified → flag it. The brief may be wrong, or
+  the change may not have been written.
+- CRLF-only changes (line endings) on files not in the brief are noise — ignore them.
+
+### 3. Read each changed file in full
 For every file listed in PENDING_COMMIT.md, read it completely. Cross-check:
 - Does the code match the stated intent?
 - Are there obvious bugs, missing error handling, or logic gaps?
 - Do new backend endpoints match the schema they return?
 - Do new frontend components call the correct API paths?
 
-### 3. Run syntax and type checks
+### 4. Run syntax, import, and type checks
 ```bash
-# Backend — py_compile every changed .py file
+# Backend — py_compile (syntax only)
 cd backend
-python -m py_compile <each changed file>
+python -m py_compile <each changed .py file>
+
+# Backend — import-time check (catches NameError, missing imports, circular deps)
+# Run for each changed router/service/model
+python -c "from app.routers.<module> import router"
+python -c "from app.models.<module> import <Model>"
+# (adjust import path per changed file)
+
+# Migration chain validation (if any migration files changed)
+alembic check
 
 # Frontend — full type check
 cd frontend
 npx tsc --noEmit
 ```
 
-### 4. Run ruff on changed Python files (if installed)
+### 5. Run ruff on changed Python files (if installed)
 ```bash
 cd backend
 ruff check <changed files> --select E,F,W --ignore E501
 ```
 
-### 5. Architectural review (do this every time — not optional)
+### 6. Architectural review (do this every time — not optional)
 
 For every changed Python file, check:
 
@@ -56,53 +80,56 @@ For every changed Python file, check:
 - Is `blocking_complete` / any completion gate actually strict? Could a tenant reach
   go-live with a gap (e.g., partial mappings, missing required config)?
 - Are new nullable columns handled defensively everywhere they're read?
-- If a config field changes (e.g., `posting_mode` upgraded from lite → full_erp), do
+- If a config field changes (e.g., `posting_mode` upgraded lite → full_erp), do
   existing rows break or behave unexpectedly?
 
 **Correctness of counts/conditions**
-- Are count-based completion checks (`am_count > 0`) meaningful, or could they pass
-  with partial data? Flag if "at least one" is being used where "all" is required.
-- Are `total_roles = 0` or empty-catalogue edge cases handled without false positives?
+- Are count-based completion checks meaningful, or could they pass with partial data?
+  Flag if "at least one" is used where "all" is required.
+- Are empty-catalogue edge cases handled without false positives?
 
 **Query efficiency**
-- Does a new endpoint run N+1 queries in a loop? Not a blocker but flag it as a note.
-- Are new `WHERE` clauses on columns that have indexes?
+- Does a new endpoint run N+1 queries in a loop? Not a blocker but flag as a note.
+- Are new WHERE clauses on indexed columns?
 
 **API contract consistency**
 - Does the new endpoint follow the same auth pattern, error codes, and response shape
   as existing endpoints in the same router?
-- Are 404 vs 400 vs 403 used correctly (not-found vs bad-state vs unauthorized)?
+- Are 404 vs 400 vs 403 used correctly?
 
 **Backwards compatibility**
 - Does a schema change break existing frontend pages that call the same endpoint?
 - Is a new required field added without a default, which would break old callers?
 
 **Known deferred issues**
-- The brief may list known issues that are deliberately deferred. Accept these but
-  still list them in the CC_RESULT notes so they're tracked.
+- The brief may list known issues deliberately deferred. Accept these but list them
+  in CC_RESULT notes so they're tracked.
 
-### 6. Decision
+### 7. Decision
 
-**If everything checks out** (intent matches code, no syntax errors, no TS errors, no architectural blockers):
+**If everything checks out:**
 - `git add` exactly the files listed in PENDING_COMMIT.md
+- If `.claude/commands/review-commit.md` is modified (untracked or changed), include it too
 - `git commit -m "<suggested message from PENDING_COMMIT.md>"`
 - `git push`
-- Delete `docs/PENDING_COMMIT.md` (it is now stale)
-- Write `docs/CC_RESULT.md` with status PASSED (see format below)
+- Delete `docs/PENDING_COMMIT.md` (stale once pushed)
+- Archive the result: `cp docs/CC_RESULT.md docs/cc_results/CC_RESULT_$(date +%Y%m%d_%H%M%S).md`
+  (create `docs/cc_results/` if it doesn't exist)
+- Write `docs/CC_RESULT.md` with status PASSED
 
-**If something is wrong** (intent mismatch, bug, type error, syntax error, architectural blocker):
+**If something is wrong:**
 - Do NOT commit
 - Leave `docs/PENDING_COMMIT.md` in place
-- Write `docs/CC_RESULT.md` with status FAILED (see format below)
+- Write `docs/CC_RESULT.md` with status FAILED
 
-### 7. After committing — always verify
+### 8. After committing — always verify
 ```bash
 git log --oneline -3
 git status
 ```
-Confirm the working tree is clean and the commit is on the correct branch (main).
+Confirm the working tree is clean and the commit is on main.
 
-### 8. Always write docs/CC_RESULT.md
+### 9. Always write docs/CC_RESULT.md
 
 Write this file as the **last action** every time, whether pass or fail.
 Cowork reads this file so Adeniyi does not need to copy-paste terminal output.
@@ -118,15 +145,18 @@ Cowork reads this file so Adeniyi does not need to copy-paste terminal output.
 
 ## Checks
 - py_compile: OK
+- import-time check: OK (or "skipped — module path unclear")
+- alembic check: OK / not applicable (no migration changes)
 - tsc --noEmit: OK
 - ruff: OK (or "skipped — not installed")
+- Unexpected file changes: none (or list any CRLF-only noise ignored)
 - Intent vs code: matched
 
 ## Architectural notes
-<any non-blocking observations about query efficiency, edge cases, future concerns>
+<any non-blocking observations — efficiency, edge cases, future concerns>
 
 ## Post-commit actions needed
-<any follow-up e.g. "run alembic upgrade head" — or "none">
+<e.g. "run alembic upgrade head" — or "none">
 ```
 
 **Format — FAILED:**
@@ -138,10 +168,10 @@ Cowork reads this file so Adeniyi does not need to copy-paste terminal output.
 **Timestamp:** <date and time>
 
 ## Issues Found
-<file path, line number, description of problem, suggested fix>
+<file path, line number or context, description, suggested fix>
 
 ## Architectural concerns (non-blocking)
-<observations that are not blockers but worth noting>
+<observations that are not blockers>
 
 ## Next step
 Cowork must fix the issues above, then trigger /review-commit again.
@@ -150,5 +180,5 @@ Cowork must fix the issues above, then trigger /review-commit again.
 ## What you are NOT doing
 - Do not rewrite or refactor code — only review and commit
 - Do not change the commit message without flagging it first
-- Do not commit files not listed in PENDING_COMMIT.md
+- Do not commit files not listed in PENDING_COMMIT.md (except review-commit.md itself)
 - Do not push if any check fails

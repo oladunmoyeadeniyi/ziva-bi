@@ -28,7 +28,9 @@ import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import ExpenseItemPicker, {
   type CategoryForForm,
+  type GLGroupNode,
   type GLSearchResult,
+  type SearchGLFilters,
   type PickerResult,
 } from "@/components/expenses/ExpenseItemPicker";
 import SplitLinePanel, {
@@ -321,9 +323,29 @@ export default function NewExpensePage() {
     if (!accessToken) return [];
     try {
       return await apiFetch<GLSearchResult[]>(
-        `/api/config/gl/search?q=${encodeURIComponent(q)}&limit=20`,
+        `/api/config/gl/search?q=${encodeURIComponent(q)}&limit=50`,
         { token: accessToken }
       );
+    } catch { return []; }
+  }, [accessToken]);
+
+  const doFetchGLGroups = useCallback(async (): Promise<GLGroupNode[]> => {
+    if (!accessToken) return [];
+    try {
+      return await apiFetch<GLGroupNode[]>("/api/config/gl/groups", { token: accessToken });
+    } catch { return []; }
+  }, [accessToken]);
+
+  const doSearchGLFiltered = useCallback(async (filters: SearchGLFilters): Promise<GLSearchResult[]> => {
+    if (!accessToken) return [];
+    try {
+      const params = new URLSearchParams();
+      if (filters.q) params.set("q", filters.q);
+      if (filters.gl_group) params.set("gl_group", filters.gl_group);
+      if (filters.gl_subgroup) params.set("gl_subgroup", filters.gl_subgroup);
+      if (filters.gl_sub_subgroup) params.set("gl_sub_subgroup", filters.gl_sub_subgroup);
+      params.set("limit", "200");
+      return await apiFetch<GLSearchResult[]>(`/api/config/gl/search?${params.toString()}`, { token: accessToken });
     } catch { return []; }
   }, [accessToken]);
 
@@ -916,6 +938,8 @@ export default function NewExpensePage() {
           onSelect={handlePickerSelect}
           onClose={() => setPickerFor(null)}
           searchGL={doSearchGL}
+          fetchGLGroups={doFetchGLGroups}
+          searchGLFiltered={doSearchGLFiltered}
         />
       )}
 

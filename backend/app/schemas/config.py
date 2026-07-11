@@ -531,6 +531,9 @@ class GLSearchResult(BaseModel):
     gl_name: str
     account_type: str
     dimension_requirements: list[dict]  # [{dimension_id, requirement}]
+    gl_group: str | None = None
+    gl_subgroup: str | None = None
+    gl_sub_subgroup: str | None = None
 
     @classmethod
     def from_orm(cls, gl: object) -> "GLSearchResult":
@@ -546,7 +549,38 @@ class GLSearchResult(BaseModel):
                 {"dimension_id": str(req.dimension_id), "requirement": req.requirement}
                 for req in (g.dimension_requirements or [])
             ],
+            gl_group=g.gl_group,
+            gl_subgroup=g.gl_subgroup,
+            gl_sub_subgroup=g.gl_sub_subgroup,
         )
+
+
+# ── M9: GL Group hierarchy (expense form "By GL Group" tab) ──────────────────
+
+class GLGroupSubgroup(BaseModel):
+    """
+    One subgroup node in the GL hierarchy tree.
+
+    sub_subgroups lists distinct gl_sub_subgroup values within this subgroup,
+    or empty list if none are set on any account in this subgroup.
+    """
+
+    name: str
+    sub_subgroups: list[str]
+    account_count: int
+
+
+class GLGroupNode(BaseModel):
+    """
+    Top-level GL group node returned by GET /api/config/gl/groups.
+
+    Contains nested subgroups so the frontend can build the drill-down
+    hierarchy in one round-trip.
+    """
+
+    name: str
+    subgroups: list[GLGroupSubgroup]
+    account_count: int
 
 
 # ── M8.1: Bulk Actions ────────────────────────────────────────────────────────
