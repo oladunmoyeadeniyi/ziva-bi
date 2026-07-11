@@ -318,6 +318,102 @@ Brief: `docs/BRIEF_impersonation.md` (spec: `docs/IMPERSONATION_DESIGN.md`). Ext
 
 ---
 
+### Role Hierarchy Enhancements (commits `3d2cf71`–`68608fd`, ~2026-07-01 to 2026-07-05)
+
+Iterative build-out of the Role Hierarchy page (`/setup/roles`) across ~12 commits:
+
+- **Layout** — 3-column PA / FA / UA layout; chip-based role cards with HoD auto-assigned to FA tier; collapsible Unassigned Roles section (collapsed by default).
+- **Role disambiguation** — roles are now distinguished by `area` + `sub_area` (not cost center) — same-name roles in different areas are correctly treated as separate roles rather than collapsed.
+- **Composite key** — `(name, area, sub_area)` uniqueness on `approval_roles` prevents same-area roles from collapsing on upload/display.
+- **Role-based permission assignments** — users are assigned to roles via the org role page, not a separate user tab. Permission scope is per org role.
+- **Occupant avatars** — org chart nodes show initials/avatars for current occupants.
+- **Org chart UX** — collapse/expand at HoD level by default; one-level expand; Expand All / Collapse All; zoom + fullscreen; `localStorage` persistence of expand state.
+- **10-column employee template** — rich header tooltips, Instructions sheet, no-cache header, asterisk stripping on upload.
+- **Org Role in employee upload** — employee template now includes Org Role column; upload parser maps it to the role assignment.
+- **Backend** — `approval_roles` gained `sub_area`, `area`, `composite uniqueness constraint (l9m0n1o2p3q4)`, and `permission_tier (c2d3e4f5a6b7)` columns via separate migrations; `role_tier` migration ID renamed to avoid conflict.
+
+**Key architectural decision:** Role variants are identified by `(name, area, sub_area)` — NOT by cost center or code. This allows the same role name (e.g. "Finance Reviewer") to exist in multiple areas without conflict. Cost center is a PLACEMENT attribute, not an IDENTITY attribute.
+
+---
+
+### Finance Review Workflow (commits `6cbbf09`, `6736981`, `57e05a8`, ~2026-07-05)
+
+Built the Finance Review step builder UI and backend, completing the approval chain integration:
+
+- **Model/migration** — `finance_review_steps` table (`migration b0c1d2e3f4a5`): `tenant_id`, `function_code`, `step_order`, `reviewer_type` (role/person), `reviewer_id`. Migration chained off impersonation head.
+- **API** — `GET /api/setup/functions/{code}/users` for reviewer lookup. Full CRUD for steps under `/api/hr/finance-review`.
+- **Frontend** — step builder UI in Finance Review settings page: drag-and-drop step ordering, add/edit/delete steps, reviewer autocomplete (role or person), function-scoped (one chain per business function).
+- **Integration** — approval chain resolver uses the function mapping (§ below) to determine which finance review chain applies to each expense report.
+
+---
+
+### System Function Mapping (commits `290945a`, `2a6540e`, `4e9a9c4`, `7aa91bc`, ~2026-07-05)
+
+Maps business functions to org structure nodes (departments / cost centers), which drives Finance Review chain scoping:
+
+- **Model/migration** — `system_function_mappings` table (`migration c1d2e3f4a5b6`): `tenant_id`, `function_code` (enum: `finance`, `hr`, `procurement`, `operations`, `legal`, `sales`), `org_node_id` (FK → `org_structure`).
+- **API** — full CRUD under `/api/setup/functions`. Filtering: only `department` and `cost_centre` node types are mappable (team/sub-team excluded). Cross-function exclusivity enforced (a node can only be mapped to one function).
+- **Frontend** — "Function Mapping" tab on the Organisation page (`/setup/organisation`): displays function list with assigned org nodes; inline assign/unassign; node shown with code for clarity.
+- **Finance Review wiring** — when an expense is submitted, the function mapping resolves which function the submitter's cost center belongs to, then looks up the corresponding finance review chain.
+
+---
+
+### People Module v1 — Positions + Transfers (commit `a2c0b35`, `a000794`, ~2026-07-06)
+
+First version of the People module with Positions and enhanced employee transfer tracking:
+
+- **Positions** — `positions` and `position_history` tables (migration `e3f4a5b6c7d8`): named positions attached to org nodes, with history tracking.
+- **Employee Position Assignments** — `employee_position_assignments` table: links employees to positions, with `effective_from`/`effective_to`.
+- **Transfers enhancement** — `employee_transfers` gained `change_type` (transfer/promotion/demotion/regrade/secondment/return) and `is_retrospective` fields.
+- **Positions API** — full CRUD + `POST /{id}/move` + history endpoint under `/api/hr/positions`. Employees can be assigned to positions.
+- **Positions frontend page** — `/settings/positions`: view all positions with occupants, role hierarchy import, assign employees.
+- **Employee Transfers tab updated** — shows change_type, retrospective flag.
+
+---
+
+### Single Source of Truth — Positions Merged into Approval Roles (commits `71025bd`, `dcf1147`, `195cc83`, `1ddeaba`, ~2026-07-07)
+
+Eliminated the `positions` / `position_history` tables as a separate concept. Role Hierarchy (`approval_roles`) IS the position registry:
+
+- **Migration `f1g2h3i4j5k6`** — adds `code` and `grade` columns to `approval_roles`; retargets `employee_position_assignments.approval_role_id` → `approval_roles.id`; drops `positions`, `position_history` tables using `DROP TABLE IF EXISTS ... CASCADE` (raw SQL, transactionally safe). Rewritten to use IF EXISTS / CASCADE throughout to avoid PostgreSQL transaction aborts.
+- **`employee_position_assignments`** now FKs to `approval_roles` directly — no separate positions table.
+- **`/api/hr/positions`** rewritten to query `approval_roles` — transparently bridges old Positions frontend page to the new single source.
+- **`/api/approvals/roles`** extended — returns `code`, `grade`, `occupant_count` per role.
+- **Positions frontend page** — updated for `approval_roles` field names; Import from Role Hierarchy button generates positions from the current role hierarchy.
+
+**Key architectural decision:** "Position" and "Role" are the same concept in Ziva BI — defined by `(name, area, sub_area)` on `approval_roles`. `code` and `grade` on `approval_roles` carry the job-grading information. No separate positions table needed.
+
+---
+
+### People Module Polish + Employee-User Link (commits `b8c4709`, `95a0a22`, `68a6a77`, `fd7304c`, `6458fcd`, `a656f65`, 2026-07-10/11)
+
+Final polish on the People module plus the employee-to-user-account architecture:
+
+**Display format changes:**
+- Cost center dropdowns everywhere: changed from `CODE — Name` (em-dash) to `CODE - Name` (hyphen). Affects employee template, positions template, expenses form, SplitLinePanel, organisation page.
+- Role dropdowns (app UI + XLSX template + upload parser): now show `Role Name - CC Name [Area > Sub-area]` for unambiguous identification. Upload parser accepts all variants for backward compat.
+- Cost Centers nav item removed from sidebar; `settings/cost-centers/page.tsx` replaced with a redirect to `setup/organisation`.
+
+**Employee template redesign (`b8c4709`):**
+- Org Role column moved to first position and made mandatory.
+- Resumption Date made mandatory (was optional).
+- Employee capacity enforcement on upload (role capacity vs. current occupants).
+- Role vs. cost-centre validation (role's CC must match employee's CC).
+- Line Manager Email + Head of CC columns removed from template.
+
+**Employee-User link (`6458fcd`, `a656f65`):**
+- **Migration `g1h2i3j4k5l6`** — adds `employees.user_id UUID FK → users.id ON DELETE SET NULL` and `user_tenants.user_type VARCHAR(20) DEFAULT 'employee'`.
+- `user_type = 'employee' | 'external'` — distinguishes internal staff from externally-invited users on a tenant.
+- Employee deactivation cascades to `UserTenant.is_active = False` + session revocation.
+- Employee reactivation (approve onboarding) reactivates the `UserTenant`.
+- Pre-go-live hard delete: if no live-env activity → hard-delete `User` (CASCADE removes UserTenant/sessions); if live-env activity → only deactivate `UserTenant`.
+- Rehire handling: `_ensure_portal_account` reactivates existing inactive `UserTenant` instead of creating a duplicate.
+- SA portal tenant detail page: shows Staff/External badge (blue/amber) per user; Impersonate button gated on `is_active`.
+
+**GitHub head after this session:** `a656f65` | **DB migration head:** `g1h2i3j4k5l6`
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -353,105 +449,4 @@ This section was significantly out of date relative to shipped code. Fixed:
 
 Architectural invariants that are durable decisions (the WHY):
 - **Cost center source of truth:** cost centers live in `org_structure`, NOT in `dimension_values`. Both `employees.cost_center_id` and `cost_center_config.cost_center_id` FK to `org_structure.id`.
-- **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusively in `tenant_org_config`. `tenant_fx_config` holds ONLY FX mechanics (rates, revaluation rules).
-- **Environment isolation:** test tenants are shadow tenants with distinct `tenant_id` values — NOT an environment column on shared tables. This was the explicit architectural choice (Option 3 in the M9 design session) over environment columns (Option 1) and schema-per-env (Option 2).
-- **Tenant lifecycle direction (M9.0.1, 2026-06-29):** signup creates ONLY a test tenant; live is born second, only via explicit super-admin promotion. `parent_tenant_id` runs test→live (live points back at the test it came from) — the inverse of the original live-first/clone design. Test stays active permanently after go-live; it's never archived.
-- **Expense→GL posting is synchronous, same-transaction** at final approval. This is intentional so a GL failure rolls back the approval — no partial state.
-
----
-
-## 8. CODING STANDARDS (NON-NEGOTIABLE)
-
-### Backend
-- Every file fully commented: purpose, each function, inputs/outputs, edge cases
-- All foreign keys indexed
-- Paginate every list endpoint (default 50 per page)
-- Never SELECT * — specify columns needed
-- Cache tenant config — read constantly, changes rarely
-- Single DB round-trip for validation where possible
-- Return field-level errors, not generic 400s
-
-### Frontend
-- No full page reload on data changes
-- Debounce all search inputs (300ms)
-- Lazy load heavy components
-- Comma-format ALL amount fields everywhere in the app
-- Drag-and-drop upload zones on all file upload areas
-- Amount inputs: type="text" inputMode="decimal" with fmtCommaInput/stripCommas helpers
-
-### Performance targets
-- CoA template generation: under 3 seconds
-- Suggestions endpoint: under 200ms
-- GL popup category tree: loaded once on page load
-- Dimension cascade lookup: cached per tenant session
-
----
-
-## 9. NEXT MILESTONE
-
-> M8.3 Backend and M8.4 Tax & Statutory (the previous contents of this section) are both **done** — see §5. This section is rewritten to reflect the real current priority queue, in recommended build order.
-
-### Immediate (cleanup / consolidation, before new features)
-1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
-2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
-3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
-4. ~~UI Polish Milestone~~ — **Fully shipped 2026-06-30.** Phase 1 (commit `0d55ea8`, findings A/B/C) and Phase 2 (commit `300b22d`, findings D–H) both done and independently verified — see §5 for both entries.
-5. ~~Default-CoA feature~~ — **Shipped 2026-06-30, commit `7965f33`** — see §5 "Default-CoA Templates." Core DB-level facts verified; live endpoint/UI smoke test still outstanding (not blocking, but do it before treating this as fully closed).
-6. ~~M9.3b — User Impersonation~~ — **Shipped 2026-06-30, commit `1a60a1c`** — see §5 "M9.3b User Impersonation."
-
-### Next feature work
-6. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
-7. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
-8. **M11 — Accounts Payable**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable**, **M16 — Budget Engine**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory & Warehouse**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
-
----
-
-## 10. FUTURE MILESTONES (recommended order)
-
-1. Currencies & FX / BDC completeness decision
-3. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
-4. M11 — Accounts Payable
-5. M13 — Bank Reconciliation
-6. M14 — Accounts Receivable
-7. M16 — Budget Engine
-8. M19 — Tax Engine
-9. M10 — OCR & Receipt Scanning (Anthropic Vision API)
-10. M15 — Payroll & HR
-11. M17 — Inventory & Warehouse
-12. M18 — Fixed Assets
-13. M20 — AI Intelligence Layer (98%+ accuracy target)
-
----
-
-## 11. KNOWN ISSUES / TECH DEBT
-
-> Current issues register (with severity, evidence, and fix guidance) is maintained in **`docs/PROJECT_STATE.md §8 Known Issues Register`**. Only durable, architectural-level notes belong here.
-
-- **UI polish deferred to dedicated milestone** — do not fix UI piecemeal across feature milestones. One dedicated UI polish milestone will do a global overhaul.
-- **role_tier enforcement is incomplete** — `role_tier` column exists on `user_tenants` and is included in the JWT, but full gate enforcement (blocking power_admin from overriding consultant-locked sections) is not wired end to end.
-- **"Invalid or expired token" errors** on some admin pages after extended sessions — restart backend + re-login resolves it. Root cause is token expiry without smooth refresh; will be addressed in a dedicated session management improvement.
-- **Documentation maintenance lapsed** — the rule in `CLAUDE.md` ("update MASTER_CONTEXT.md after every completed milestone") was not followed for roughly 10 consecutive milestones, which is why this document required the 2026-06-29 reconciliation in §5. Going forward, every completed milestone gets an entry here in the same session it ships, not retroactively.
-
----
-
-## 12. CURRENCY SINGLE SOURCE OF TRUTH (June 2026)
-
-Migration `f2g3h4i5j6k7` consolidated all currency identity into `tenant_org_config`:
-
-- `tenant_org_config.functional_currency` — THE authority (protected since M8.2 post-release)
-- `tenant_org_config.enabled_currencies` — NEW JSONB column: sorted list of ISO codes the tenant transacts in (e.g. `["EUR", "NGN", "USD"]`). Functional currency is always included.
-- `tenant_org_config.reporting_currency` — single authority (was duplicated in fx_config; fx_config copy dropped)
-
-`tenant_fx_config` now holds ONLY FX mechanics: `fx_rates` and `revaluation_rules`.
-
-Dropped from `tenant_fx_config`: `functional_currency`, `additional_currencies`, `reporting_currency`.
-
-Canonical read endpoint: `GET /api/setup/currencies` returns all three currency fields from `tenant_org_config` plus `fx_rates`/`revaluation_rules` from `tenant_fx_config`.
-
-`PATCH /api/setup/currencies` routes `enabled_currencies` and `reporting_currency` to `org_config`; `fx_rates`/`revaluation_rules` to `fx_config`.
-
-Bank-accounts page now reads `enabled_currencies` from the single canonical endpoint — no more multi-source merge.
-
----
-
-*End of Master Context. Last updated: 2026-06-30 (UI Polish Phase 1 close-out — §5 entry added, §9 item 4 updated, §10 item 1 removed (CoA fix shipped `2eda43f`), §10 renumbered; last pushed commit `0d55ea8`, confirmed against `origin/main`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+- **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusivel
