@@ -120,18 +120,17 @@ async def _ensure_portal_account(
     first_name: str | None,
     tenant_id: uuid.UUID,
     db: AsyncSession,
+    employee: "Employee | None" = None,
 ) -> None:
     """
     Idempotently ensure that a Ziva portal account (User + UserTenant) exists
-    for the given employee email.
+    for the given employee email. Supports rehire: if the UserTenant was previously
+    deactivated (e.g. employee resigned), it is reactivated.
 
-    Called every time an employee is created or imported. If neither a User nor
-    a UserTenant membership already exists for this email + tenant, both are
-    created with a random unusable password — the employee must use the
-    forgot-password flow to set a real password before logging in directly.
+    Also sets employee.user_id (direct FK) when an Employee object is supplied,
+    and marks the UserTenant as user_type='employee'.
 
-    For SA impersonation (M9.3b), the account works immediately — the backend
-    issues a JWT directly; no password check is performed.
+    Called every time an employee is created or imported.
     """
     from app.models.auth import User as UserModel, UserTenant as UserTenantModel, AccountType
     from app.core.security import hash_password as _hash
@@ -149,21 +148,32 @@ async def _ensure_portal_account(
         db.add(user)
         await db.flush()
 
+    # Link employee → user (direct FK, replaces email-based joins)
+    if employee is not None and employee.user_id != user.id:
+        employee.user_id = user.id
+
     ut_result = await db.execute(
         select(UserTenantModel).where(
             UserTenantModel.user_id == user.id,
             UserTenantModel.tenant_id == tenant_id,
         )
     )
-    if not ut_result.scalar_one_or_none():
+    existing_ut = ut_result.scalar_one_or_none()
+    if existing_ut is None:
         user_tenant = UserTenantModel(
             user_id=user.id,
             tenant_id=tenant_id,
+            user_type="employee",
             # Random unusable password — employee activates account via forgot-password.
             password_hash=_hash(secrets.token_hex(32)),
         )
         db.add(user_tenant)
-        await db.flush()
+    else:
+        # Rehire: reactivate a previously deactivated UserTenant
+        if not existing_ut.is_active:
+            existing_ut.is_active = True
+        existing_ut.user_type = "employee"
+    await db.flush()
 
 
 async def _get_employee_or_404(
@@ -540,7 +550,7 @@ async def create_employee(
     # Auto-provision portal account so the employee can log in (and SA can impersonate them)
     # without a separate manual invite step.
     full_name = f"{data.first_name} {data.last_name}".strip()
-    await _ensure_portal_account(data.email, full_name, data.first_name, tenant_id, db)
+    await _ensure_portal_account(data.email, full_name, data.first_name, tenant_id, db, employee=emp)
 
     orm_obj = await _get_employee_or_404(emp.id, tenant_id, db)
     return EmployeeResponse.from_orm(orm_obj)
@@ -565,6 +575,100 @@ async def update_employee(
     await db.flush()
     orm_obj = await _get_employee_or_404(employee_id, tenant_id, db)
     return EmployeeResponse.from_orm(orm_obj)
+
+
+async def _cascade_employee_deactivate(
+    emp: Employee, tenant_id: uuid.UUID, db: AsyncSession
+) -> None:
+    """
+    Deactivate the portal user account linked to an employee.
+    Also revokes all active sessions for that user in this tenant.
+    Safe to call even if emp.user_id is None.
+    """
+    if not emp.user_id:
+        return
+    from app.models.auth import UserTenant as UserTenantModel
+    from app.models.auth import Session as SessionModel
+
+    # Deactivate the UserTenant membership
+    ut_res = await db.execute(
+        select(UserTenantModel).where(
+            UserTenantModel.user_id == emp.user_id,
+            UserTenantModel.tenant_id == tenant_id,
+        )
+    )
+    ut = ut_res.scalar_one_or_none()
+    if ut:
+        ut.is_active = False
+
+    # Revoke all active sessions for this user in this tenant
+    _sqldelete = __import__("sqlalchemy", fromlist=["delete"]).delete
+    await db.execute(
+        _sqldelete(SessionModel).where(
+            SessionModel.user_id == emp.user_id,
+            SessionModel.tenant_id == tenant_id,
+        )
+    )
+
+
+async def _cascade_employee_reactivate(
+    emp: Employee, tenant_id: uuid.UUID, db: AsyncSession
+) -> None:
+    """
+    Reactivate the portal user account linked to an employee.
+    Safe to call even if emp.user_id is None.
+    """
+    if not emp.user_id:
+        return
+    from app.models.auth import UserTenant as UserTenantModel
+
+    ut_res = await db.execute(
+        select(UserTenantModel).where(
+            UserTenantModel.user_id == emp.user_id,
+            UserTenantModel.tenant_id == tenant_id,
+        )
+    )
+    ut = ut_res.scalar_one_or_none()
+    if ut and not ut.is_active:
+        ut.is_active = True
+
+
+async def _cascade_employee_hard_delete(
+    emp: Employee, tenant_id: uuid.UUID, db: AsyncSession
+) -> None:
+    """
+    On pre-go-live hard-delete: clean up the portal User and all their UserTenant
+    rows IF the user has no activity in any LIVE tenant (test activity doesn't count).
+
+    'Activity in a live tenant' means any UserTenant row whose tenant has
+    environment='live'. If found, we only deactivate the current test-tenant
+    UserTenant instead of deleting the User entirely.
+    """
+    if not emp.user_id:
+        return
+    from app.models.auth import UserTenant as UserTenantModel, User as UserModel, Tenant
+
+    # Check if this user is a member of any LIVE tenant (other than the current one)
+    live_check = await db.execute(
+        select(UserTenantModel)
+        .join(Tenant, Tenant.id == UserTenantModel.tenant_id)
+        .where(
+            UserTenantModel.user_id == emp.user_id,
+            UserTenantModel.tenant_id != tenant_id,
+            Tenant.environment == "live",
+        )
+    )
+    has_live_activity = live_check.scalar_one_or_none() is not None
+
+    if has_live_activity:
+        # User has live-tenant activity — only deactivate this test tenant's membership
+        await _cascade_employee_deactivate(emp, tenant_id, db)
+    else:
+        # No live-tenant activity — hard-delete the User (cascades to UserTenant, sessions, etc.)
+        user_res = await db.execute(select(UserModel).where(UserModel.id == emp.user_id))
+        user = user_res.scalar_one_or_none()
+        if user:
+            await db.delete(user)
 
 
 @router.delete("/employees/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -595,22 +699,18 @@ async def delete_employee(
     is_live = tenant_row is not None and tenant_row.lifecycle_status == "live"
 
     if is_live:
-        # Post-go-live: soft-delete only
+        # Post-go-live: soft-delete only — deactivate employee AND their portal account
         emp.is_active = False
+        await _cascade_employee_deactivate(emp, tenant_id, db)
     else:
         # Pre-go-live: hard-delete (remove the row entirely)
+        # Clean up portal user if they have no activity in any live tenant.
+        await _cascade_employee_hard_delete(emp, tenant_id, db)
         # Also cascade-clean dependent rows that have no operational meaning yet
         from app.models.master_data import EmployeeCodeHistory, EmployeeTransfer
-        await db.execute(
-            __import__("sqlalchemy", fromlist=["delete"]).delete(EmployeeCodeHistory)
-            .where(EmployeeCodeHistory.employee_id == emp.id)
-        )
-        await db.execute(
-            __import__("sqlalchemy", fromlist=["delete"]).delete(EmployeeTransfer)
-            .where(
-                (EmployeeTransfer.employee_id == emp.id)
-            )
-        )
+        _sqldelete = __import__("sqlalchemy", fromlist=["delete"]).delete
+        await db.execute(_sqldelete(EmployeeCodeHistory).where(EmployeeCodeHistory.employee_id == emp.id))
+        await db.execute(_sqldelete(EmployeeTransfer).where(EmployeeTransfer.employee_id == emp.id))
         await db.delete(emp)
 
     await db.flush()
@@ -1037,7 +1137,7 @@ async def upload_employees(
 
         # Auto-provision portal account for both new and updated employees.
         full_name_emp = f"{emp_obj.first_name} {emp_obj.last_name}".strip()
-        await _ensure_portal_account(email, full_name_emp, emp_obj.first_name, tenant_id, db)
+        await _ensure_portal_account(email, full_name_emp, emp_obj.first_name, tenant_id, db, employee=emp_obj)
 
     await db.flush()
     skipped = max(0, len([r for r in rows if any((c or "").strip() for c in r)]) - imported - updated)
@@ -1077,7 +1177,7 @@ async def sync_employee_portal_accounts(
 
     for emp in employees:
         full_name = f"{emp.first_name} {emp.last_name}".strip()
-        await _ensure_portal_account(emp.email, full_name, emp.first_name, tenant_id, db)
+        await _ensure_portal_account(emp.email, full_name, emp.first_name, tenant_id, db, employee=emp)
 
     await db.flush()
 
@@ -1479,6 +1579,7 @@ async def approve_employee_onboarding(
         raise HTTPException(status_code=404, detail="Employee not found.")
 
     emp.is_active = True
+    await _cascade_employee_reactivate(emp, tenant_id, db)
     await db.commit()
     return {"message": "Employee onboarding approved. Account is now active."}
 
@@ -1909,97 +2010,4 @@ async def get_employee_assignments(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[EmployeeAssignmentResponse]:
-    """Return the full position assignment history for an employee (newest first)."""
-    tenant_id = _require_tenant(current_user)
-
-    emp_res = await db.execute(
-        select(Employee.id).where(Employee.id == employee_id, Employee.tenant_id == tenant_id)
-    )
-    if not emp_res.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Employee not found.")
-
-    asgn_res = await db.execute(
-        select(EmployeePositionAssignment, OrgRole)
-        .join(OrgRole, OrgRole.id == EmployeePositionAssignment.approval_role_id, isouter=True)
-        .where(
-            EmployeePositionAssignment.employee_id == employee_id,
-            EmployeePositionAssignment.tenant_id == tenant_id,
-        )
-        .order_by(EmployeePositionAssignment.effective_from.desc())
-    )
-
-    result = []
-    for asgn, role in asgn_res.all():
-        cc_name = None
-        if role and role.cost_center_id:
-            cc_res = await db.execute(
-                select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
-            )
-            cc = cc_res.scalar_one_or_none()
-            cc_name = cc.name if cc else None
-        result.append(EmployeeAssignmentResponse(
-            id=str(asgn.id),
-            employee_id=str(asgn.employee_id),
-            approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
-            role_name=role.name if role else None,
-            cost_center_id=str(role.cost_center_id) if (role and role.cost_center_id) else None,
-            cost_center_name=cc_name,
-            effective_from=asgn.effective_from,
-            effective_to=asgn.effective_to,
-            assignment_type=asgn.assignment_type,
-            transfer_reason=asgn.transfer_reason,
-            is_retrospective=asgn.is_retrospective,
-            notes=asgn.notes,
-            created_at=asgn.created_at,
-        ))
-    return result
-
-
-@router.get("/employees/{employee_id}/position", response_model=EmployeeAssignmentResponse | None)
-async def get_employee_current_position(
-    employee_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> EmployeeAssignmentResponse | None:
-    """Return the current substantive position assignment for an employee, or null."""
-    tenant_id = _require_tenant(current_user)
-
-    asgn_res = await db.execute(
-        select(EmployeePositionAssignment, OrgRole)
-        .join(OrgRole, OrgRole.id == EmployeePositionAssignment.approval_role_id, isouter=True)
-        .where(
-            EmployeePositionAssignment.employee_id == employee_id,
-            EmployeePositionAssignment.tenant_id == tenant_id,
-            EmployeePositionAssignment.assignment_type == "substantive",
-            EmployeePositionAssignment.effective_to.is_(None),
-        )
-        .limit(1)
-    )
-    row = asgn_res.first()
-    if not row:
-        return None
-
-    asgn, role = row
-    cc_name = None
-    if role and role.cost_center_id:
-        cc_res = await db.execute(
-            select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
-        )
-        cc = cc_res.scalar_one_or_none()
-        cc_name = cc.name if cc else None
-
-    return EmployeeAssignmentResponse(
-        id=str(asgn.id),
-        employee_id=str(asgn.employee_id),
-        approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
-        role_name=role.name if role else None,
-        cost_center_id=str(role.cost_center_id) if (role and role.cost_center_id) else None,
-        cost_center_name=cc_name,
-        effective_from=asgn.effective_from,
-        effective_to=asgn.effective_to,
-        assignment_type=asgn.assignment_type,
-        transfer_reason=asgn.transfer_reason,
-        is_retrospective=asgn.is_retrospective,
-        notes=asgn.notes,
-        created_at=asgn.created_at,
-    )
+    """Re

@@ -425,6 +425,14 @@ class Employee(Base):
     resumption_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     employee_code_auto_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Direct FK to the portal user account. Set by _ensure_portal_account; used for
+    # cascade deactivation/deletion and O(1) rehire detection.
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -855,13 +863,4 @@ class UserFunctionalScope(Base):
     )
     user_tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False, index=True
-    )
-    section: Mapped[str] = mapped_column(String(120), nullable=False)
-    access_level: Mapped[str] = mapped_column(String(50), nullable=False, default="read_only")
-
-    __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "user_tenant_id", "section",
-            name="uq_user_functional_scope",
-        ),
-    )
+  

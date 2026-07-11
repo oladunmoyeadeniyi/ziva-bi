@@ -29,6 +29,7 @@ interface TenantUserSummary {
   email: string;
   role_tier: string | null;
   is_active: boolean;
+  user_type: "employee" | "external";
 }
 
 interface TestEnvSummary {
@@ -686,7 +687,16 @@ export default function TenantDetailPage() {
             <tbody>
               {displayedTenantUsers.map((u) => (
                 <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="py-2.5 px-4 font-medium text-gray-800">{u.full_name}</td>
+                  <td className="py-2.5 px-4">
+                    <span className="font-medium text-gray-800">{u.full_name}</span>
+                    <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                      (u.user_type ?? "employee") === "external"
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-blue-50 text-blue-600"
+                    }`}>
+                      {(u.user_type ?? "employee") === "external" ? "External" : "Staff"}
+                    </span>
+                  </td>
                   <td className="py-2.5 px-4 text-gray-500">{u.email}</td>
                   <td className="py-2.5 px-4 text-gray-500">{u.role_tier ?? "—"}</td>
                   <td className="py-2.5 px-4">
