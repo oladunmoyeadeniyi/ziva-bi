@@ -2852,7 +2852,7 @@ function OrganisationPage() {
                       {eligibleNodes.map(n => {
                         const clash = usedByOther[n.id];
                         // Format: "CODE — Name" to match the employee modal dropdown style
-                        const label = n.code ? `${n.code} — ${n.name}` : n.name;
+                        const label = n.code ? `${n.code} - ${n.name}` : n.name;
                         return (
                           <option key={n.id} value={n.id} style={clash ? { color: "#9ca3af" } : undefined}>
                             {label}{clash ? ` (already mapped to ${clash})` : ""}

@@ -245,7 +245,7 @@ async def download_employee_template(
     # Load org roles for template dropdown
     from app.models.approvals import ApprovalRole as AR
     role_rows_q = await db.execute(
-        select(AR.id, AR.name, AR.cost_center_id).where(AR.tenant_id == tenant_id, AR.is_active.is_(True)).order_by(AR.display_order, AR.name)
+        select(AR.id, AR.name, AR.cost_center_id, AR.area, AR.sub_area).where(AR.tenant_id == tenant_id, AR.is_active.is_(True)).order_by(AR.display_order, AR.name)
     )
     role_rows = role_rows_q.all()
     # Fetch CC codes for disambiguation (name collisions across departments)
@@ -254,14 +254,25 @@ async def download_employee_template(
         cc_code_map = {n.id: (_cc_node_code(n) or "") for n in cc_nodes_all if _cc_node_code(n)}
     # Build display names: append CC code when name is not unique
     from collections import Counter as _Counter
-    name_counts = _Counter(r.name for r in role_rows)
+    cc_name_map: dict[uuid.UUID, str] = {}
+    if cc_nodes_all:
+        cc_name_map = {n.id: n.name for n in cc_nodes_all}
+    from collections import Counter as _Counter
     role_display_names: dict[uuid.UUID, str] = {}
     for r in role_rows:
-        if name_counts[r.name] > 1:
-            cc_suffix = cc_code_map.get(r.cost_center_id, "") if r.cost_center_id else ""
-            role_display_names[r.id] = f"{r.name} [{cc_suffix}]" if cc_suffix else f"{r.name} [#{str(r.id)[:6]}]"
-        else:
-            role_display_names[r.id] = r.name
+        label = r.name
+        if r.cost_center_id:
+            cc_n = cc_name_map.get(r.cost_center_id, "")
+            if cc_n:
+                label = f"{r.name} — {cc_n}"
+        parts: list[str] = []
+        if r.area:
+            parts.append(r.area)
+        if r.sub_area:
+            parts.append(r.sub_area)
+        if parts:
+            label = f"{label} [{' > '.join(parts)}]"
+        role_display_names[r.id] = label
     role_names_for_template = list(role_display_names.values())
 
     headers = [
@@ -812,19 +823,30 @@ async def upload_employees(
     )
     all_roles = ar_result.scalars().all()
     # Build display-name → role map (same disambiguation logic as the template)
-    from collections import Counter as _Counter2
-    _name_counts2 = _Counter2(r.name for r in all_roles)
+    # Build a CC name map for the upload parser (id → name)
+    cc_name_map_upload: dict[str, str] = {str(n.id): n.name for n in cc_by_code.values()}
     roles_by_name: dict[str, AR] = {}
     for r in all_roles:
-        # Plain-name key (always registered; last-one-wins when duplicates exist)
+        # 1. Plain name (backward compat — old templates still work)
         roles_by_name[r.name.lower().strip()] = r
-        # Disambiguated key "Name [CC Code]" (overwrites plain when collision)
-        if _name_counts2[r.name] > 1:
-            _cc_suffix2 = cc_by_code  # cc_by_code is keyed by code.lower() → node
-            _role_cc_code = next((code.upper() for code, node in cc_by_code.items()
-                                   if node.id == r.cost_center_id), "") if r.cost_center_id else ""
-            if _role_cc_code:
-                roles_by_name[f"{r.name.lower().strip()} [{_role_cc_code.lower()}]"] = r
+        # 2. "Name — CC Name" (new format)
+        _cc_id_str = str(r.cost_center_id) if r.cost_center_id else None
+        _cc_nm = cc_name_map_upload.get(_cc_id_str, "") if _cc_id_str else ""
+        if _cc_nm:
+            roles_by_name[f"{r.name.lower().strip()} — {_cc_nm.lower()}"] = r
+            # 3. "Name — CC Name [Area]" and "Name — CC Name [Area > Sub-area]"
+            _parts: list[str] = []
+            if r.area:
+                _parts.append(r.area)
+            if r.sub_area:
+                _parts.append(r.sub_area)
+            if _parts:
+                _suffix = " > ".join(_parts)
+                roles_by_name[f"{r.name.lower().strip()} — {_cc_nm.lower()} [{_suffix.lower()}]"] = r
+        elif r.area or r.sub_area:
+            # No CC but has area/sub-area — "Name [Area > Sub-area]"
+            _parts2: list[str] = [x for x in [r.area, r.sub_area] if x]
+            roles_by_name[f"{r.name.lower().strip()} [{(' > '.join(_parts2)).lower()}]"] = r
 
     # Pre-load current occupant counts per role (for capacity enforcement)
     from sqlalchemy import func as sqlfunc

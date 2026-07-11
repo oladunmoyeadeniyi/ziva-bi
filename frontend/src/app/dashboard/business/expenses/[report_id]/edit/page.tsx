@@ -1227,7 +1227,7 @@ export default function EditExpensePage() {
                                   className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 ${missingRequired ? "border-red-400" : "border-gray-300"}`}>
                                   <option value="">Select…</option>
                                   {filteredValues.map((v) => (
-                                    <option key={v.id} value={v.id}>{v.code} — {v.name}</option>
+                                    <option key={v.id} value={v.id}>{v.code} - {v.name}</option>
                                   ))}
                                 </select>
                                 {showPill && pillLabel && canEdit && (

@@ -49,6 +49,8 @@ interface ApprovalRole {
   display_order: number;
   cost_center_name: string | null;
   designation: string | null;
+  area: string | null;
+  sub_area: string | null;
 }
 
 interface CostCenterOption {
@@ -477,7 +479,7 @@ function EmployeesPage() {
     <select value={value} onChange={e => onChange(e.target.value)} className={selectCls}>
       <option value="">{placeholder}</option>
       {costCenterOptions.map(cc => (
-        <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+        <option key={cc.id} value={cc.id}>{cc.code} - {cc.name}</option>
       ))}
     </select>
   );
@@ -623,7 +625,7 @@ function EmployeesPage() {
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All cost centers</option>
               {costCenterOptions.map(cc => (
-                <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+                <option key={cc.id} value={cc.id}>{cc.code} - {cc.name}</option>
               ))}
             </select>
             <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
@@ -825,7 +827,13 @@ function EmployeesPage() {
                   <option value="">— None —</option>
                   {approvalRoles.sort((a, b) => a.display_order - b.display_order).map(r => (
                     <option key={r.id} value={r.id}>
-                      {r.name}{r.cost_center_name ? ` — ${r.cost_center_name}` : ""}
+                      {(() => {
+                      let label = r.name;
+                      if (r.cost_center_name) label += ` - ${r.cost_center_name}`;
+                      const parts = [r.area, r.sub_area].filter(Boolean);
+                      if (parts.length) label += ` [${parts.join(" > ")}]`;
+                      return label;
+                    })()}
                     </option>
                   ))}
                 </select>
@@ -877,7 +885,13 @@ function EmployeesPage() {
                   <option value="">— None —</option>
                   {approvalRoles.sort((a, b) => a.display_order - b.display_order).map(r => (
                     <option key={r.id} value={r.id}>
-                      {r.name}{r.cost_center_name ? ` — ${r.cost_center_name}` : ""}
+                      {(() => {
+                      let label = r.name;
+                      if (r.cost_center_name) label += ` - ${r.cost_center_name}`;
+                      const parts = [r.area, r.sub_area].filter(Boolean);
+                      if (parts.length) label += ` [${parts.join(" > ")}]`;
+                      return label;
+                    })()}
                     </option>
                   ))}
                 </select>

@@ -473,7 +473,7 @@ export default function PositionsPage() {
         >
           <option value="">— None —</option>
           {costCenters.map((cc) => (
-            <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+            <option key={cc.id} value={cc.id}>{cc.code} - {cc.name}</option>
           ))}
         </select>
       </div>
@@ -488,7 +488,13 @@ export default function PositionsPage() {
         >
           <option value="">— None (top-level) —</option>
           {positions.filter((p) => p.is_active && p.id !== editPos?.id).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}{p.cost_center_name ? ` · ${p.cost_center_name}` : ""}</option>
+            <option key={p.id} value={p.id}>{(() => {
+                      let lbl = p.name;
+                      if (p.cost_center_name) lbl += ` - ${p.cost_center_name}`;
+                      const pts = [p.area, p.sub_area].filter(Boolean);
+                      if (pts.length) lbl += ` [${pts.join(" > ")}]`;
+                      return lbl;
+                    })()}</option>
           ))}
         </select>
       </div>
@@ -815,7 +821,7 @@ export default function PositionsPage() {
                 >
                   <option value="">— No change —</option>
                   {costCenters.map((cc) => (
-                    <option key={cc.id} value={cc.id}>{cc.code} — {cc.name}</option>
+                    <option key={cc.id} value={cc.id}>{cc.code} - {cc.name}</option>
                   ))}
                 </select>
               </div>
@@ -828,7 +834,13 @@ export default function PositionsPage() {
                 >
                   <option value="">— No change / top-level —</option>
                   {positions.filter((p) => p.is_active && p.id !== movePos.id).map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}{p.cost_center_name ? ` · ${p.cost_center_name}` : ""}</option>
+                    <option key={p.id} value={p.id}>{(() => {
+                      let lbl = p.name;
+                      if (p.cost_center_name) lbl += ` - ${p.cost_center_name}`;
+                      const pts = [p.area, p.sub_area].filter(Boolean);
+                      if (pts.length) lbl += ` [${pts.join(" > ")}]`;
+                      return lbl;
+                    })()}</option>
                   ))}
                 </select>
               </div>

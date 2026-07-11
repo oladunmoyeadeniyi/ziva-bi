@@ -151,7 +151,7 @@ export default function SplitLinePanel({ parentAmount, splitLines, onAddSplit, o
                           className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
                           <option value="">Select…</option>
                           {dim.values.map((v) => (
-                            <option key={v.id} value={v.id}>{v.code} — {v.name}</option>
+                            <option key={v.id} value={v.id}>{v.code} - {v.name}</option>
                           ))}
                         </select>
                       </div>
