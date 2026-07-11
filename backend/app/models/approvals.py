@@ -162,15 +162,6 @@ class ApprovalRole(Base):
         String(30), nullable=True,
         comment="NULL=no special tier; power_admin; functional_admin — every occupant inherits this tier (union rule)",
     )
-    # Position / slot fields (merged from positions table — single source of truth)
-    code: Mapped[Optional[str]] = mapped_column(
-        String(50), nullable=True,
-        comment="Short position code e.g. 'CFO-001', 'DPM-LAG'",
-    )
-    grade: Mapped[Optional[str]] = mapped_column(
-        String(50), nullable=True,
-        comment="Salary/job grade e.g. 'G8', 'SM', 'Director'",
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

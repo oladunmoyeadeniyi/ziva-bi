@@ -339,9 +339,6 @@ interface OrgRole {
   sub_area: string | null;
   employment_type: string | null;
   permission_tier: string | null;
-  code: string | null;          // position code — shared with Positions page
-  grade: string | null;         // salary/job grade — shared with Positions page
-  occupant_count: number;       // number of active assignments
   occupants: { id: string; full_name: string; initials: string; employee_code: string | null }[];
 }
 
@@ -526,22 +523,6 @@ function RoleChartNode({
         {node.cost_center_name && (
           <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
             {node.cost_center_name}
-          </div>
-        )}
-
-        {/* Position code + Grade */}
-        {(node.code || node.grade) && (
-          <div style={{ display: "flex", gap: 4, justifyContent: "center", flexWrap: "wrap", marginTop: 3 }}>
-            {node.code && (
-              <span style={{ fontSize: 8, fontFamily: "monospace", fontWeight: 600, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 3, padding: "1px 4px" }}>
-                {node.code}
-              </span>
-            )}
-            {node.grade && (
-              <span style={{ fontSize: 8, fontWeight: 600, color: "#854d0e", background: "#fefce8", border: "1px solid #fde047", borderRadius: 3, padding: "1px 4px" }}>
-                {node.grade}
-              </span>
-            )}
           </div>
         )}
 
@@ -984,7 +965,7 @@ function OrganisationPage() {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleParentId, setRoleParentId] = useState<string | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "" as "" | "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "", area: "", sub_area: "", employment_type: "permanent", code: "", grade: "" });
+  const [roleForm, setRoleForm] = useState({ name: "", description: "", capacity: "" as "" | "single" | "multiple" | "unlimited" | "custom", customN: "2", costCenterId: "", entityNodeId: "", designation: "", area: "", sub_area: "", employment_type: "permanent" });
   // Drag-and-drop state
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
@@ -1150,7 +1131,7 @@ function OrganisationPage() {
       const parent = orgRoles.find(r => r.id === parentId);
       if (parent) inheritedArea = parent.sub_area || parent.area || "";
     }
-    setRoleForm({ name: "", description: "", capacity: "", customN: "2", costCenterId: "", entityNodeId: "", designation: "", area: inheritedArea, sub_area: "", employment_type: "permanent", code: "", grade: "" });
+    setRoleForm({ name: "", description: "", capacity: "", customN: "2", costCenterId: "", entityNodeId: "", designation: "", area: inheritedArea, sub_area: "", employment_type: "permanent" });
     setShowRoleModal(true);
   };
 
@@ -1158,7 +1139,7 @@ function OrganisationPage() {
     setEditingRole(role);
     setRoleParentId(role.parent_role_id);
     const cap = role.max_occupants === 1 ? "single" : role.max_occupants === null ? "unlimited" : "custom";
-    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "regular", area: role.area ?? "", sub_area: role.sub_area ?? "", employment_type: role.employment_type ?? "permanent", code: role.code ?? "", grade: role.grade ?? "" });
+    setRoleForm({ name: role.name, description: role.description ?? "", capacity: cap as "single" | "multiple" | "unlimited" | "custom", customN: String(role.max_occupants ?? 2), costCenterId: role.cost_center_id ?? "", entityNodeId: role.entity_node_id ?? "", designation: role.designation ?? "regular", area: role.area ?? "", sub_area: role.sub_area ?? "", employment_type: role.employment_type ?? "permanent" });
     setShowRoleModal(true);
   };
 
@@ -1174,13 +1155,9 @@ function OrganisationPage() {
     const subAreaVal = roleForm.sub_area.trim() || null;
     try {
       if (editingRole) {
-        const codeVal = roleForm.code.trim() || null;
-        const gradeVal = roleForm.grade.trim() || null;
-        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: desig, employment_type: empType, area: areaVal, sub_area: subAreaVal, code: codeVal, grade: gradeVal } });
+        await apiFetch(`/api/approvals/roles/${editingRole.id}`, { method: "PATCH", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: desig, employment_type: empType, area: areaVal, sub_area: subAreaVal } });
       } else {
-        const codeVal = roleForm.code.trim() || null;
-        const gradeVal = roleForm.grade.trim() || null;
-        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: desig, employment_type: empType, area: areaVal, sub_area: subAreaVal, code: codeVal, grade: gradeVal } });
+        await apiFetch("/api/approvals/roles", { method: "POST", token: accessToken, body: { name: roleForm.name.trim(), description: roleForm.description || null, parent_role_id: roleParentId ?? undefined, max_occupants: maxOcc, cost_center_id: ccId, entity_node_id: roleForm.entityNodeId || null, designation: desig, employment_type: empType, area: areaVal, sub_area: subAreaVal } });
       }
       await loadRoles();
       setShowRoleModal(false);
@@ -1861,29 +1838,6 @@ function OrganisationPage() {
                           placeholder="Brief description of this role"
                           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
-                      </div>
-                      {/* Position code + Grade — shared with Positions page */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Position code <span className="text-gray-400 font-normal">(optional)</span></label>
-                          <input
-                            type="text"
-                            value={roleForm.code}
-                            onChange={e => setRoleForm(f => ({ ...f, code: e.target.value }))}
-                            placeholder="e.g. CFO-001"
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Grade <span className="text-gray-400 font-normal">(optional)</span></label>
-                          <input
-                            type="text"
-                            value={roleForm.grade}
-                            onChange={e => setRoleForm(f => ({ ...f, grade: e.target.value }))}
-                            placeholder="e.g. G8, Director"
-                            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
                       </div>
                       {entityOptions.length > 0 && (
                         <div>
@@ -2851,11 +2805,10 @@ function OrganisationPage() {
                       <option value="">&#8212; Select department / cost centre &#8212;</option>
                       {eligibleNodes.map(n => {
                         const clash = usedByOther[n.id];
-                        // Format: "CODE — Name" to match the employee modal dropdown style
-                        const label = n.code ? `${n.code} — ${n.name}` : n.name;
+                        const codeTag = n.code ? ` [${n.code}]` : "";
                         return (
                           <option key={n.id} value={n.id} style={clash ? { color: "#9ca3af" } : undefined}>
-                            {label}{clash ? ` (already mapped to ${clash})` : ""}
+                            {n.name}{codeTag} ({n.node_type}){clash ? ` — already mapped to ${clash}` : ""}
                           </option>
                         );
                       })}

@@ -159,8 +159,6 @@ from app.schemas.setup import (
     FunctionMappingsResponse,
     FunctionTeamMember,
     FunctionTeamResponse,
-    FunctionUserItem,
-    FunctionUsersResponse,
 )
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -3662,81 +3660,6 @@ async def get_function_team(
         function_label=_FUNCTION_CATALOGUE[function_code]["label"],
         cost_centers=cc_names,
         team=team,
-    )
-
-
-@router.get("/functions/{function_code}/users", response_model=FunctionUsersResponse)
-async def get_function_users(
-    function_code: str,
-    current_user: CurrentUser = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-) -> FunctionUsersResponse:
-    """
-    Return all active Ziva users whose Employee record sits in a cost centre mapped to function_code.
-
-    Bridge: Employee.email == User.email (Employee has no direct user_id FK).
-    Returns mapped=False if no cost-centre mapping has been configured for this function.
-    Used by Finance Review Chain and similar features to pre-filter assignee dropdowns.
-    """
-    tenant_id = _require_tenant(current_user)
-
-    if function_code not in _FUNCTION_CATALOGUE:
-        raise HTTPException(status_code=404, detail=f"Unknown function code: {function_code}")
-
-    # Step 1: cost centres mapped to this function
-    mapping_result = await db.execute(
-        select(SystemFunctionMapping, OrgStructureNode)
-        .join(OrgStructureNode, SystemFunctionMapping.cost_center_id == OrgStructureNode.id)
-        .where(
-            SystemFunctionMapping.tenant_id == tenant_id,
-            SystemFunctionMapping.function_code == function_code,
-        )
-    )
-    mapping_rows = mapping_result.all()
-
-    if not mapping_rows:
-        return FunctionUsersResponse(
-            function_code=function_code,
-            function_label=_FUNCTION_CATALOGUE[function_code]["label"],
-            mapped=False,
-            users=[],
-        )
-
-    cc_ids = [m.cost_center_id for m, _ in mapping_rows]
-
-    # Step 2: active employees in those cost centres who have active Ziva user accounts
-    emp_result = await db.execute(
-        select(Employee, User, OrgStructureNode)
-        .join(User, User.email == Employee.email)
-        .outerjoin(OrgStructureNode, OrgStructureNode.id == Employee.cost_center_id)
-        .where(
-            Employee.tenant_id == tenant_id,
-            Employee.cost_center_id.in_(cc_ids),
-            Employee.is_active.is_(True),
-            User.is_active.is_(True),
-        )
-        .order_by(User.full_name)
-    )
-    emp_rows = emp_result.all()
-
-    users = [
-        FunctionUserItem(
-            user_id=str(user.id),
-            full_name=user.full_name,
-            email=user.email,
-            employee_code=emp.employee_code,
-            cost_center_name=node.name if node else "",
-            cost_center_code=node.code if node else "",
-
-        )
-        for emp, user, node in emp_rows
-    ]
-
-    return FunctionUsersResponse(
-        function_code=function_code,
-        function_label=_FUNCTION_CATALOGUE[function_code]["label"],
-        mapped=True,
-        users=users,
     )
 
 

@@ -411,11 +411,7 @@ async def list_approval_roles(
     from app.schemas.approvals import RoleOccupant
     rows = (await db.execute(
         select(ApprovalRole)
-        .options(
-            selectinload(ApprovalRole.cost_center),
-            selectinload(ApprovalRole.entity_node),
-            selectinload(ApprovalRole.parent_role),
-        )
+        .options(selectinload(ApprovalRole.cost_center), selectinload(ApprovalRole.entity_node))
         .where(ApprovalRole.tenant_id == current_user.tenant_id)
         .order_by(ApprovalRole.display_order, ApprovalRole.name)
     )).scalars().all()
@@ -498,20 +494,14 @@ async def create_approval_role(
         area=data.area,
         sub_area=data.sub_area,
         employment_type=data.employment_type or "permanent",
-        code=data.code,
-        grade=data.grade,
     )
     db.add(role)
     await db.commit()
     await db.refresh(role)
-    # reload with relationships eagerly so from_orm can read all names
+    # reload with cost_center eagerly so from_orm can read the name
     role = (await db.execute(
         select(ApprovalRole)
-        .options(
-            selectinload(ApprovalRole.cost_center),
-            selectinload(ApprovalRole.entity_node),
-            selectinload(ApprovalRole.parent_role),
-        )
+        .options(selectinload(ApprovalRole.cost_center), selectinload(ApprovalRole.entity_node))
         .where(ApprovalRole.id == role.id)
     )).scalar_one()
     return ApprovalRoleResponse.from_orm(role)
@@ -560,19 +550,11 @@ async def update_approval_role(
         role.sub_area = data.sub_area
     if "employment_type" in data.model_fields_set:
         role.employment_type = data.employment_type or "permanent"
-    if data.code is not None:
-        role.code = data.code
-    if data.grade is not None:
-        role.grade = data.grade
     await db.commit()
-    # reload with relationships eagerly
+    # reload with cost_center eagerly
     role = (await db.execute(
         select(ApprovalRole)
-        .options(
-            selectinload(ApprovalRole.cost_center),
-            selectinload(ApprovalRole.entity_node),
-            selectinload(ApprovalRole.parent_role),
-        )
+        .options(selectinload(ApprovalRole.cost_center), selectinload(ApprovalRole.entity_node))
         .where(ApprovalRole.id == role.id)
     )).scalar_one()
     return ApprovalRoleResponse.from_orm(role)

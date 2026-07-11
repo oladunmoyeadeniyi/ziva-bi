@@ -72,7 +72,6 @@ const MODULE_ROUTES: Record<string, string> = {
   reporting:        "/dashboard/business/setup/modules/reporting",
 };
 
-
 // ── Impersonation banner ──────────────────────────────────────────────────────
 
 function ImpersonationBanner({
@@ -115,7 +114,6 @@ function ImpersonationBanner({
     </div>
   );
 }
-
 
 export default function BusinessLayout({
   children,
@@ -362,7 +360,6 @@ export default function BusinessLayout({
                 <SectionLabel label="People" />
                 <NavLink href="/dashboard/business/settings/employees" label="Employees" icon="users" />
                 <NavLink href="/dashboard/business/settings/positions" label="Positions" icon="hierarchy" />
-                <NavLink href="/dashboard/business/settings/cost-centers" label="Cost centers" icon="building-community" />
               </div>
 
               {/* WORKFLOW & ACCESS */}
@@ -401,4 +398,9 @@ export default function BusinessLayout({
           )}
         </nav>
 
-        {/* Main cont
+        {/* Main content */}
+        <main className="flex-1 overflow-auto">{children}</main>
+      </div>
+    </div>
+  );
+}

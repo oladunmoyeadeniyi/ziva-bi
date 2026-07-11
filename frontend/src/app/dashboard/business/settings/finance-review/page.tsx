@@ -17,17 +17,6 @@ interface FinanceReviewer {
   created_at: string;
 }
 
-/** User with a Ziva account in the Finance cost centre */
-interface FinanceUser {
-  user_id: string;
-  full_name: string;
-  email: string;
-  employee_code: string | null;
-  cost_center_name: string;
-  cost_center_code: string;
-}
-
-/** Fallback: all tenant users (used when Finance mapping is not yet configured) */
 interface TenantUser {
   id: string;
   email: string;
@@ -54,14 +43,9 @@ export default function FinanceReviewPage() {
     review_level: 1,
     scope: "",
   });
+  const [users, setUsers] = useState<TenantUser[]>([]);
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-
-  // Finance-scoped users (from function mapping)
-  const [financeUsers, setFinanceUsers] = useState<FinanceUser[]>([]);
-  const [financeMapped, setFinanceMapped] = useState<boolean | null>(null); // null = not fetched yet
-  // Fallback: all tenant users when mapping is not configured
-  const [allUsers, setAllUsers] = useState<TenantUser[]>([]);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
@@ -94,28 +78,16 @@ export default function FinanceReviewPage() {
 
   useEffect(() => { fetchReviewers(); }, [fetchReviewers]);
 
-  // Fetch finance-scoped users from function mapping
-  const fetchFinanceUsers = useCallback(async () => {
+  const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/setup/functions/finance/users`, {
+      const res = await fetch(`${API}/api/users`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setFinanceMapped(data.mapped as boolean);
-        setFinanceUsers(data.users as FinanceUser[]);
-        // If not mapped, load all users as fallback
-        if (!data.mapped) {
-          const fallback = await fetch(`${API}/api/users`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (fallback.ok) setAllUsers(await fallback.json());
-        }
-      }
+      if (res.ok) setUsers(await res.json());
     } catch {}
   }, [API, token]);
 
-  useEffect(() => { fetchFinanceUsers(); }, [fetchFinanceUsers]);
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   async function handleAdd() {
     setAddSaving(true);
@@ -184,11 +156,6 @@ export default function FinanceReviewPage() {
   }
 
   const moduleLabel = MODULES.find((m) => m.key === activeModule)?.label ?? activeModule;
-
-  // Determine which users to show in the dropdown and what notice to display
-  const usingFinanceScope = financeMapped === true && financeUsers.length > 0;
-  const usingFallback = financeMapped === false;
-  const mappedButEmpty = financeMapped === true && financeUsers.length === 0;
 
   return (
     <div className="p-6">
@@ -315,42 +282,6 @@ export default function FinanceReviewPage() {
               </div>
             )}
 
-            {/* Finance mapping notices */}
-            {usingFinanceScope && (
-              <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 rounded-lg mb-4 flex items-start gap-2">
-                <span>✦</span>
-                <span>
-                  Showing <strong>{financeUsers.length}</strong> users from your Finance &amp; Accounting department.
-                </span>
-              </div>
-            )}
-            {usingFallback && (
-              <div className="bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2 rounded-lg mb-4 flex items-start gap-2">
-                <span>⚠</span>
-                <span>
-                  Finance department not mapped yet — showing all users.{" "}
-                  <a
-                    href="/dashboard/business/setup/organisation"
-                    className="underline font-medium"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Configure function mapping
-                  </a>{" "}
-                  to filter this list automatically.
-                </span>
-              </div>
-            )}
-            {mappedButEmpty && (
-              <div className="bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2 rounded-lg mb-4 flex items-start gap-2">
-                <span>⚠</span>
-                <span>
-                  Finance department is mapped but no employees have Ziva accounts yet.
-                  Employees must be registered and have logged in at least once before appearing here.
-                </span>
-              </div>
-            )}
-
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">User *</label>
@@ -360,18 +291,11 @@ export default function FinanceReviewPage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">Select a user…</option>
-                  {usingFinanceScope
-                    ? financeUsers.map((u) => (
-                        <option key={u.user_id} value={u.user_id}>
-                          {u.full_name} ({u.email})
-                          {u.employee_code ? ` · ${u.employee_code}` : ""}
-                        </option>
-                      ))
-                    : allUsers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.first_name} {u.last_name} ({u.email})
-                        </option>
-                      ))}
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.first_name} {u.last_name} ({u.email})
+                    </option>
+                  ))}
                 </select>
               </div>
 
