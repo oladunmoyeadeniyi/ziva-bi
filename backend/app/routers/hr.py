@@ -600,7 +600,7 @@ async def _cascade_employee_deactivate(
             select(UserModel.id)
             .join(UserTenantModel, UserModel.id == UserTenantModel.user_id)
             .where(
-                UserModel.email == emp.email,
+                UserModel.email.ilike(emp.email),
                 UserTenantModel.tenant_id == tenant_id,
             )
         )
@@ -621,15 +621,14 @@ async def _cascade_employee_deactivate(
     ut = ut_res.scalar_one_or_none()
     if ut:
         ut.is_active = False
-
-    # Revoke all active sessions for this user in this tenant
-    _sqldelete = __import__("sqlalchemy", fromlist=["delete"]).delete
-    await db.execute(
-        _sqldelete(SessionModel).where(
-            SessionModel.user_id == user_id,
-            SessionModel.tenant_id == tenant_id,
+        # Revoke sessions. Session rows FK via user_tenant_id only —
+        # there is no Session.user_id or Session.tenant_id column.
+        _sqldelete = __import__("sqlalchemy", fromlist=["delete"]).delete
+        await db.execute(
+            _sqldelete(SessionModel).where(
+                SessionModel.user_tenant_id == ut.id,
+            )
         )
-    )
 
 
 async def _cascade_employee_reactivate(
