@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-11 (Three-Mode Architecture + Document Security decisions + implementation Phase 1 — see §5, §7, §9, §10)
+> Last updated: 2026-07-11 (Three-Mode + SA Portal Trials/Signups + Setup Portal mode-aware + GL Group picker tab — see §5, §7, §9, §10)
 
 ---
 
@@ -33,7 +33,7 @@ Ziva BI is an intelligent, fully automated, end-to-end business operations platf
 - **Auth:** JWT (access + refresh tokens)
 - **Local dev:** Backend on localhost:8000, Frontend on localhost:3000
 - **GitHub:** github.com/oladunmoyeadeniyi/ziva-bi
-- **Deployment:** Render (when ready — not yet)
+- **Deployment:** Render (configured — not yet deployed; currently running on localhost for development)
 
 ---
 
@@ -43,8 +43,12 @@ Ziva BI has **two portals**, not one:
 
 ### 3.1 Super Admin Portal (Owner Portal)
 - Used exclusively by the Ziva BI internal team
-- **Partially built.** Tenant lifecycle management is live and working: list/detail, lifecycle transitions, suspend/reactivate, impersonation ("enter" tenant), and the full test↔live promotion engine (diff + apply). Routes under `/api/platform/*`, frontend at `/platform/tenants*`.
-- **Not built:** Billing, Trials (self-service provisioning), Team, Audit, Support, Settings. These have frontend page shells at `/platform/billing`, `/platform/trials`, `/platform/team`, `/platform/audit`, `/platform/support`, `/platform/settings` but **no backend at all** — no routes, no models, no Stripe/payment integration. See §10 (Super Admin Portal backend completion).
+**Built so far:**
+- Tenant lifecycle management: list/detail, lifecycle transitions, suspend/reactivate, impersonation ("enter" tenant), full test↔live promotion engine (diff + apply). Routes under `/api/platform/*`, frontend at `/platform/tenants*`.
+- "Trials & signups" lead management page (`/platform/trials`): lists all `lifecycle_status='trial'` tenants, lead-status tabs (new/contacted/qualified/disqualified), inline notes, search, one-click activation to `'in_implementation'`.
+- Consultant config panel on tenant detail page: set posting mode, module licenses.
+
+**Not yet built:** Billing, self-service provisioning, Team, Audit, Support, Settings — frontend-only shells with no backend.
 - Completely separate from tenant portal
 
 ### 3.2 Tenant Portal (one portal, three role tiers)
@@ -78,24 +82,78 @@ This is the main portal. It serves both implementation consultants and the compa
 
 ---
 
+## 3b. THREE-MODE ARCHITECTURE (core invariant — locked)
+
+Every module supports all three modes from day one. The mode is set by the consultant in the SA Portal **before** entering the tenant. Tenants never see or change this setting.
+
+| Mode | Description | GL posting |
+|---|---|---|
+| **Lite** | Workflow-only. No GL coding. Basic CSV export of approved transactions. | None |
+| **Connected** | Full GL coding + dimensions in Ziva BI, posts to an **external ERP** (download or API sync). | Export queue (`posting_batches`) |
+| **Full ERP** | Everything inside Ziva BI. GL posts to `journal_entries`. Financial statements in-app. | Internal GL |
+
+### Nomenclature (locked — do not rename)
+- **Lite** — not "Standalone", not "Basic", not "Simple"
+- **Connected** — not "Integration Mode", not "Hybrid", not "Bridge"
+- **Full ERP** — not "Enterprise", not "Advanced", not "Standard"
+- Column name: `posting_mode` (on `tenant_org_config`)
+- Export table: `posting_batches`
+
+### Key principle
+The employee/user experience is **identical** across all modes. GL coding fields appear when the tenant needs them. The difference is invisible at the transaction level — it only surfaces at the posting/export step.
+
+### What each mode requires
+- CoA, Dimensions, Currencies, Tax, Document Rules → **Optional** in Lite/Connected, **Required** in Full ERP
+- Account Mapping (posting roles → GL accounts) → Required in Connected and Full ERP
+- Posting Batches page (Connected only) — Finance sees batch queue + download/sync buttons
+- Go-live gate enforces mode-specific blocking steps before activation
+
+### Tenant lifecycle (sealed decision)
+1. **Signup** → `lifecycle_status = 'trial'`; demo seed data loaded **manually** by SA team via `scripts/seed_demo_tenant.py --apply` (not automatic at signup)
+2. **Consultant** sets mode + modules in SA Portal → notes on the lead
+3. **Consultant clicks "Activate"** → `'in_implementation'`; enters tenant; guided setup
+4. **Go-live** when all mode-required steps complete → `'active'` (live environment)
+5. **Test environment** stays active permanently after go-live (never archived)
+
+---
+
 ## 4. IMPLEMENTATION SETUP SEQUENCE
 
-When a new tenant is onboarded, the consultant follows this exact sequence. Sections are locked in the UI until prerequisites are met:
+### 4.1 Pre-implementation: Consultant configuration (SA Portal)
 
-1. Organisation — identity, structure (org tree + cost centers), branding, fiscal year
-2. Module activation — activate/deactivate modules from full list
-3. Chart of Accounts — upload via dynamic template (SOCI/SOFP, FS mappings, dimensions)
-4. Dimensions — optional; define dimensions, value types, upload master data
-5. Employees — upload template (pre-populated with cost centers); line managers assigned here
-6. Currencies & FX — rate sources, realized/unrealized rules, revaluation
-7. Tax & Statutory — VAT, WHT, PAYE, non-resident rules
-8. Roles & Permissions — permission matrix, user assignments
-9. Approval Workflows — per module, drag-and-drop builder
-10. Document Rules — required documents per module/transaction type
-11. Module Setup — one section per activated module
-12. Readiness & Go-live — checklist, mark tenant live
+Before entering a tenant, the consultant sets system-level config in the SA Portal tenant detail page. These settings are never exposed inside the tenant implementation pages:
 
-All 12 sections above are implemented and working (see PROJECT_STATE.md §4.11, §6).
+- **Posting mode** (Lite / Connected / Full ERP) — determines which setup steps are required
+- **Module licensing** — which modules the tenant has subscribed to
+- **Integration settings** — which external ERP (Connected mode only)
+
+### 4.2 In-tenant setup sequence (mode-aware)
+
+The setup portal adapts to `posting_mode` + active modules. Steps are shown/hidden accordingly:
+
+| Setup Step | Lite | Connected | Full ERP |
+|---|---|---|---|
+| 1. Organisation | ✅ required | ✅ required | ✅ required |
+| 2. Module Activation | ✅ required | ✅ required | ✅ required |
+| 3. Chart of Accounts | ❌ hidden | ✅ simplified* | ✅ full |
+| 4. Dimensions | ❌ hidden | Optional | ✅ required |
+| 5. Employees | ✅ required | ✅ required | ✅ required |
+| 6. Currencies & FX | ❌ hidden | Optional | ✅ required |
+| 7. Tax & Statutory | ❌ hidden | Optional | ✅ required |
+| 8. Roles & Permissions | ✅ required | ✅ required | ✅ required |
+| 9. Approval Workflows | ✅ required | ✅ required | ✅ required |
+| 10. Account Mapping | ❌ hidden | ✅ required | ✅ required |
+| 11. Bank Accounts | Optional | Optional | Optional |
+| 12. Accounting Periods | Optional | Optional | Optional |
+| 13. Document Rules | Optional | Optional | ✅ required |
+| 14. Module Setup | Optional | Optional | Optional |
+| 15. Readiness & Go-live | ✅ | ✅ | ✅ |
+
+*Simplified CoA (Connected): GL code + name + account type only. No SOCI/SOFP, FS mapping, or TB mapping required. GL grouping columns (gl_group/subgroup/sub-subgroup) optional but recommended for the GL picker hierarchy tab.
+
+**Employee unlock sequence:** after Organisation (Lite) or after CoA (Connected/Full ERP).
+
+All sections are implemented and working; mode-aware visibility is live (task #51, commit `eac25846`).
 
 ---
 
@@ -159,8 +217,8 @@ Three GL coding modes. All M7 bugs fixed:
 
 ### M9 — Intelligent Expense Form (Employee-facing)
 - All 5 coding levels working on expense form
-- GL popup flow: group to subgroup to GL selection (popup modal)
-- Both "By Category" and "By GL Group" paths in popup
+- GL popup flow: category → subcategory → GL selection (popup modal)
+- Level 4: direct GL search (text search by number or name)
 - Dimension fields render dynamically per selected GL
 - When line has splits: GL and dimensions hidden on parent, live on each split row
 - Dimension type filtering (only valid types per GL shown)
@@ -454,26 +512,81 @@ python scripts/seed_demo_tenant.py --tenant-slug <slug> --apply  # writes to DB
 
 ---
 
-### SA Portal — Consultant Config Panel (#49, uncommitted, pending CC review 2026-07-11)
+### SA Portal — Consultant Config Panel (#49, committed 2026-07-11)
 
 Extended the SA portal tenant detail page with a consultant-only configuration panel. This is the "Three-Mode Phase 2 SA Portal" work from `docs/BRIEF_three_mode_architecture.md`.
 
-**Backend (uncommitted):**
+**Backend:**
 - **`app/schemas/platform.py`** — 3 new schemas: `ModuleLicenseItem`, `SystemConfigResponse`, `SystemConfigUpdate`.
 - **`app/routers/platform.py`** — 2 new endpoints:
   - `GET /api/platform/tenants/{tenant_id}/system-config` → reads `TenantOrgConfig.posting_mode` + all `TenantModule` rows; returns `SystemConfigResponse`.
   - `PATCH /api/platform/tenants/{tenant_id}/system-config` → upserts `posting_mode`, upserts module license flags (revoking license auto-sets `is_active=False`), writes audit log. SA-only.
 - Modules catalogue (`_ALL_MODULES`): 13 modules (expense, ap, ar, payroll, bank_recon, budget, tax_engine, inventory, fixed_assets, posm, vendor_portal, customer_portal, reporting).
 
-**Frontend (uncommitted):**
-- **`frontend/src/app/platform/tenants/[id]/page.tsx`** — new "Consultant Config" section (indigo accent, SA-only): posting mode radio cards (lite/connected/full_erp) + module license checkboxes grid + save button. State: `sysConfig`, `sysConfigSaving`, `pendingMode`, `pendingLicenses`.
+**Frontend:**
+- **`frontend/src/app/platform/tenants/[id]/page.tsx`** — new "Consultant Config" section (indigo accent, SA-only): posting mode radio cards (lite/connected/full_erp) + module license checkboxes grid + save button.
 
-**Workflow tooling (uncommitted):**
-- **`.claude/commands/review-commit.md`** — CC slash command (`/review-commit`): 6-step process (read PENDING_COMMIT.md → read changed files → py_compile + tsc → ruff → commit+push or report → verify with git log).
-- **`docs/PENDING_COMMIT.md`** — current brief for CC's first comprehensive review.
+**Workflow tooling added this session:**
+- **`.claude/commands/review-commit.md`** — upgraded CC slash command: Step 0 (read MASTER_CONTEXT.md), Step 5 (architectural review — security, data integrity, count correctness, query efficiency, API contract, backwards compat), Step 7 (CC writes `docs/CC_RESULT.md` so Adeniyi doesn't need to copy-paste output). Also added: unexpected-file-diff check, import-time NameError check, alembic chain validation, CC_RESULT archiving to `docs/cc_results/`.
+- **`docs/CC_RESULT.md`** pattern — CC writes pass/fail result file; Cowork reads it; user says "CC finished" to resume.
 
-> ⏳ **Waiting for CC commit.** The user will type `/review-commit` in Claude Code to trigger the review + push.
 
+---
+
+### SA Portal — Trials & Signups Lead Management (#50, committed 2026-07-11)
+
+New page at `/platform/trials` that gives the SA team a live queue of all trial tenants and a lightweight CRM-style workflow to manage them through to activation.
+
+**Backend (`app/routers/platform.py`):**
+- `GET /api/platform/trials` — SA-only; filters tenants by `lifecycle_status='trial'`; joins `TenantOrgConfig` for industry/company_email; subquery for user_count; ordered by `created_at desc`. Returns `list[TrialListItem]`.
+- `PATCH /api/platform/trials/{tenant_id}` — updates `lead_status` and/or `implementation_notes`; 400 if tenant is not a trial; audit logged.
+- **Migration `j1k2l3m4n5o6`** — adds `lead_status VARCHAR(30) NOT NULL DEFAULT 'new'` and `implementation_notes TEXT` to `tenants`; index on `lead_status`.
+
+**Frontend (`frontend/src/app/platform/trials/page.tsx`):**
+- Stats bar (total trials, new leads, contacted, qualified).
+- Filter tabs by lead status + search by name/email.
+- `lead_status` inline dropdown (new/contacted/qualified/disqualified) with instant PATCH.
+- Expandable notes cell with save button.
+- "Activate" button per row — moves tenant to `'in_implementation'` and removes from list.
+
+---
+
+### Setup Portal — Mode-Aware Checklist (#51, committed `eac25846`, 2026-07-11)
+
+The setup portal checklist (`GET /api/setup/progress`) is now fully posting-mode aware — which sections are shown, which are blocking, and which unlock sequence applies all derive from `posting_mode`.
+
+**Backend (`app/routers/setup.py`, `app/schemas/setup.py`):**
+- Added `posting_mode: str = "lite"` to `ProgressResponse`.
+- 5 new DB queries per progress call: `PostingRole` catalogue count, `TenantAccountMapping` count, `BankAccount` count, `AccountingPeriod` count — used to compute `account_mapping_complete` (requires ALL roles mapped, not just ≥1), `bank_accounts_complete`, `periods_complete`.
+- Mode-aware `blocking_complete`: lite = base gates only; connected = base + CoA + account_mapping; full_erp = base + CoA + dimensions + account_mapping.
+- Mode-aware unlock sequence: employees unlock after org (lite) or after CoA (connected/full_erp).
+- Mode-aware sections list: CoA + Account Mapping shown in connected/full_erp; Dimensions shown in full_erp; Periods + Bank Accounts always optional; sections hidden in lite.
+
+**Frontend (`frontend/src/app/dashboard/business/setup/page.tsx`):**
+- New section icons: `account_mapping`, `bank_accounts`, `periods`.
+- `MODE_LABELS` and `MODE_COLORS` constants.
+- Mode badge rendered between page heading and progress bar.
+
+**Known deferred (accepted):** ~12 sequential DB queries per progress call (batch before scale); no warning when `posting_mode` changes mid-setup; `dims_not_applicable` escape hatch still works in `full_erp` (consultant's responsibility).
+
+---
+
+### GL Group Hierarchy Tab in ExpenseItemPicker (#52, committed `55028cc` 2026-07-11)
+
+Adds a "By GL Group" second tab to the expense form GL account picker for coding levels 3 and 4. The tab navigates the `gl_group → gl_subgroup → gl_sub_subgroup` hierarchy as an alternative to the Category → Subcategory flow.
+
+**Backend (`app/schemas/config.py`, `app/routers/config.py`):**
+- `GLSearchResult` extended with `gl_group`, `gl_subgroup`, `gl_sub_subgroup` optional fields (populated from `ChartOfAccount`).
+- New schemas: `GLGroupSubgroup` (name, sub_subgroups, account_count), `GLGroupNode` (name, subgroups, account_count).
+- New `GET /api/config/gl/groups` — returns full GL group tree in one round-trip; tenant-scoped; only includes accounts where `gl_group IS NOT NULL AND gl_group != ''`.
+- `GET /api/config/gl/search` extended with optional `gl_group`, `gl_subgroup`, `gl_sub_subgroup` exact-match filter params; default limit raised from 20 → 50, max from 100 → 200.
+
+**Frontend:**
+- `ExpenseItemPicker.tsx` rewritten (312 → 733 lines). All original behavior preserved.
+- New exported interfaces: `GLGroupSubgroup`, `GLGroupNode`, `SearchGLFilters`.
+- New optional props: `fetchGLGroups?`, `searchGLFiltered?` — if absent, tab is hidden (backward compat).
+- Adaptive drill-down: skips levels with no children; "All accounts in X" shortcut at each level; back navigation resets one level at a time. Group data cached for picker session.
+- Both expense form pages (`new/page.tsx`, `edit/page.tsx`) wired with `doFetchGLGroups` + `doSearchGLFiltered`.
 
 ---
 
@@ -487,22 +600,31 @@ This section was significantly out of date relative to shipped code. Fixed:
 
 ---
 
-## 6. MODULE LIST (ALL 14)
+## 6. MODULE LIST
 
-1. Expense Management (built M3-M9)
-2. Accounts Payable
-3. Accounts Receivable
-4. Payroll & HR
-5. Inventory Management
-6. Fixed Assets
-7. POSM Management
-8. Vendor Portal
-9. Customer Portal
-10. Warehouse / 3PL Portal
-11. Bank Reconciliation
-12. Budget Engine
-13. Tax Engine
-14. Reporting & Analytics
+> **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
+
+| # | Display Name | Internal Code | Status | All Modes |
+|---|---|---|---|---|
+| 1 | Expense Management | `expense` | ✅ Built (M3–M9 + #52) | ✅ |
+| 2 | Accounts Payable (P2P) | `ap` | ⏳ M11 | ✅ |
+| 3 | Accounts Receivable (O2C) | `ar` | ⏳ M14 | ✅ |
+| 4 | Payroll & HR | `payroll` | ⏳ M15 | ✅ |
+| 5 | Inventory Management | `inventory` | ⏳ M17 | ✅ |
+| 6 | Fixed Assets | `fixed_assets` | ⏳ M18 | ✅ |
+| 7 | POSM Management | `posm` | ⏳ Future | ✅ |
+| 8 | Vendor Portal | `vendor_portal` | ⏳ Future | ✅ |
+| 9 | Customer Portal | `customer_portal` | ⏳ Future | ✅ |
+| 10 | Bank Reconciliation | `bank_recon` | ⏳ M13 | ✅ |
+| 11 | Budget & Planning | `budget` | ⏳ M16 | ✅ |
+| 12 | Tax Engine | `tax_engine` | ⏳ M19 | ✅ |
+| 13 | Reporting & Analytics | `reporting` | ⏳ M20 | ✅ |
+
+> **Module naming rationale:**
+> - "Accounts Payable (P2P)" — P2P = Purchase to Pay, the end-to-end process. AP handles supplier invoices, payment runs, and vendor account management.
+> - "Accounts Receivable (O2C)" — O2C = Order to Cash. AR is the **financial** module: invoicing, credit control, collections, ageing, cash receipts. It is NOT a CRM. CRM (customer relationships, sales pipeline, leads) would be a separate future module if added.
+> - "Budget & Planning" — not "Budget Engine". The "& Planning" signals it covers forward-looking planning, not just budget entry.
+> - "Warehouse / 3PL Portal" (previously listed as module 14) has no internal code in the licence catalogue — it is either a sub-feature of Inventory Management or a future separate module, to be decided when that module is scoped.
 
 ---
 
@@ -565,11 +687,11 @@ Architectural invariants that are durable decisions (the WHY):
 
 ### Next feature work (in this order)
 
-6. **Three-Mode Architecture** — Phase 1 (backend) ✅ DONE (commit `f24c2fe`): migrations, posting_batches, expense_posting routing, export endpoints, trial signup. Phase 2 (SA portal consultant panel) ⏳ PENDING CC REVIEW (uncommitted — `#49`): system-config GET/PATCH endpoints, frontend panel. Phase 3 (not yet started): "Trials & signups" SA page, mode-aware setup portal, GL group hierarchy path in picker. Full spec: `docs/BRIEF_three_mode_architecture.md`.
+6. **Three-Mode Architecture** — ✅ ALL THREE PHASES DONE: Phase 1 (commit `f24c2fe`, backend infrastructure), Phase 2 (committed, SA portal consultant config panel #49), Phase 3 (committed: Trials & signups SA page #50, mode-aware setup portal #51, GL Group picker tab #52 — commit `55028cc`). Full spec: `docs/BRIEF_three_mode_architecture.md`.
 7. **Document Security Hardening** — Phase 1: signed URL expiry → 15 min, SHA-256 hash, magic bytes validation, image/PDF compression, deduplication, retention policy enforcement, access audit log. Phase 2 (later): Cloudflare R2 migration. Full spec: `docs/BRIEF_document_storage_security.md`.
 8. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
 9. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
-10. **M11 — Accounts Payable**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable**, **M16 — Budget Engine**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory & Warehouse**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
+10. **M11 — Accounts Payable (P2P)**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable (O2C)**, **M16 — Budget & Planning**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory Management**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
 
 **Also completed since last §9 rewrite (now closed):**
 - ~~Role Hierarchy Enhancements~~ — **Done** (commits `3d2cf71`–`68608fd`, ~2026-07-01 to 2026-07-05). See §5.
@@ -578,23 +700,27 @@ Architectural invariants that are durable decisions (the WHY):
 - ~~People Module v1 (Positions + Transfers)~~ — **Done** (commits `a2c0b35`, `a000794`, ~2026-07-06). See §5.
 - ~~Single Source of Truth merge (Positions → approval_roles)~~ — **Done** (commits `71025bd`–`1ddeaba`, ~2026-07-07). See §5.
 - ~~People Module Polish + Employee-User Link~~ — **Done** (commits `b8c4709`–`a656f65`, 2026-07-10/11). See §5.
+- ~~SA Portal Consultant Config Panel (#49)~~ — **Done** (committed 2026-07-11). See §5.
+- ~~SA Portal Trials & Signups page (#50)~~ — **Done** (committed 2026-07-11). See §5.
+- ~~Setup Portal mode-aware checklist (#51)~~ — **Done** (commit `eac25846`, 2026-07-11). See §5.
+- ~~GL Group hierarchy tab in ExpenseItemPicker (#52)~~ — **Done** (commit `55028cc`, 2026-07-11). See §5.
 
 ---
 
 ## 10. FUTURE MILESTONES (recommended order)
 
-1. **Three-Mode Architecture Foundation** — backend + SA portal + setup sequence (see `docs/BRIEF_three_mode_architecture.md`)
+1. ~~**Three-Mode Architecture Foundation**~~ — **✅ DONE** (Phases 1-3 shipped 2026-07-11; all four tasks committed). See §5.
 2. **Document Security Hardening** — Phase 1: security/integrity/compression; Phase 2: Cloudflare R2 migration (see `docs/BRIEF_document_storage_security.md`)
 3. Currencies & FX / BDC completeness decision
 4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
-5. M11 — Accounts Payable
+5. M11 — Accounts Payable (P2P)
 6. M13 — Bank Reconciliation
-7. M14 — Accounts Receivable
-8. M16 — Budget Engine
+7. M14 — Accounts Receivable (O2C)
+8. M16 — Budget & Planning
 9. M19 — Tax Engine
 10. M10 — OCR & Receipt Scanning (Anthropic Vision API)
 11. M15 — Payroll & HR
-12. M17 — Inventory & Warehouse
+12. M17 — Inventory Management
 13. M18 — Fixed Assets
 14. M20 — AI Intelligence Layer (98%+ accuracy target)
 
@@ -637,4 +763,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-11 (Three-Mode Architecture + Demo Seed + SA Portal Consultant Config — §5 entries added; last pushed commit `ceb2862`; #49 uncommitted, pending CC review). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-11 (Three-Mode Architecture all phases done; tasks #49-#52 all committed — see §5). Last pushed commit: `55028cc`. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
