@@ -159,6 +159,7 @@ from app.routers import platform as platform_router
 from app.routers import gl as gl_router
 from app.routers import account_mapping as account_mapping_router
 from app.routers import bank_accounts as bank_accounts_router
+from app.routers import posting_batches as posting_batches_router
 
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
@@ -175,6 +176,7 @@ app.include_router(platform_router.router)
 app.include_router(gl_router.router)
 app.include_router(account_mapping_router.router)
 app.include_router(bank_accounts_router.router)
+app.include_router(posting_batches_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

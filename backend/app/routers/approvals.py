@@ -99,7 +99,7 @@ from app.services.approval_routing import (
     get_policy,
     preview_chain,
 )
-from app.services.expense_posting import ExpensePostingError, post_expense_to_gl
+from app.services.expense_posting import ExpensePostingError, PostingResult, post_expense_to_gl
 from app.services.gl_posting import PostingError
 from app.services.periods import is_date_postable
 
@@ -2277,7 +2277,9 @@ async def approve(
                 )
         else:
             try:
-                journal_entry = await post_expense_to_gl(db, tenant_id, report, current_user.user_id)
+                posting_result: PostingResult = await post_expense_to_gl(
+                    db, tenant_id, report, current_user.user_id
+                )
             except ExpensePostingError as exc:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
             except AccountMappingError as exc:
@@ -2300,10 +2302,18 @@ async def approve(
             report.status = "APPROVED"
             report.current_approval_level = None
 
-            await _write_audit_log(db, "EXPENSE_GL_POSTED", current_user.user_id, tenant_id, {
+            audit_event = (
+                "EXPENSE_GL_POSTED"
+                if posting_result.mode == "full_erp"
+                else "EXPENSE_BATCH_QUEUED"
+                if posting_result.mode == "connected"
+                else "EXPENSE_APPROVED_LITE"
+            )
+            await _write_audit_log(db, audit_event, current_user.user_id, tenant_id, {
                 "report_id": str(report.id),
                 "report_number": report.report_number,
-                "journal_reference": journal_entry.reference_number,
+                "posting_mode": posting_result.mode,
+                "posting_reference": posting_result.reference,
                 "total_amount": str(report.total_amount),
             })
 

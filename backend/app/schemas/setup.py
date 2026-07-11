@@ -127,6 +127,8 @@ class OrgConfigResponse(BaseModel):
     branding: Optional[dict] = None
     # Configuration tab
     org_configuration: Optional[dict] = None
+    # Three-mode architecture; not patchable via PATCH — changed via SA portal only
+    posting_mode: str = "full_erp"
 
 
 # ── Org Structure ─────────────────────────────────────────────────────────────

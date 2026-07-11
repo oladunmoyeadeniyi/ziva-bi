@@ -295,13 +295,21 @@ async def signup(
         # Live is born later, the first time this tenant's validated config is
         # promoted (see app/services/promotion_engine.py + platform.py promotion
         # endpoints). A live tenant with no configuration is impossible by design.
+        #
+        # Three-Mode Architecture (2026-07-11): signup creates a TRIAL tenant.
+        # Trials get demo seed data and appear in the SA portal "Trials & signups"
+        # page as leads. A consultant activates implementation manually after
+        # qualification (transitions to 'in_implementation'). This replaces the
+        # previous direct-to-'in_implementation' flow.
+        # suppress_outbound_email=True prevents trial tenants from sending real emails.
         tenant = Tenant(
             name=data.company_name.strip(),
             country=data.company_country,
             slug=slug,
             environment="test",
             parent_tenant_id=None,
-            lifecycle_status="in_implementation",
+            lifecycle_status="trial",
+            suppress_outbound_email=True,
         )
         db.add(tenant)
         await db.flush()  # get tenant.id

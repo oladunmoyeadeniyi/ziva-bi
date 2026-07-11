@@ -320,6 +320,15 @@ class TenantOrgConfig(Base):
     default_audit_grace_months: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="3", default=3
     )
+    # Three-Mode Architecture (2026-07-11) — consultant-set posting mode.
+    # Values: 'lite' | 'connected' | 'full_erp'
+    #   lite       — workflow only; no GL coding required; no posting to any ledger
+    #   connected  — GL coding captured in Ziva BI; journal lines exported to external ERP
+    #   full_erp   — GL coding in Ziva BI; posts synchronously to journal_entries (default)
+    # Set by the Ziva BI consultant in the SA portal. Never exposed to tenant users.
+    posting_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="full_erp", default="full_erp"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
