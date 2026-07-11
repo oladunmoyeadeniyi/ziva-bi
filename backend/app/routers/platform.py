@@ -1117,11 +1117,11 @@ async def platform_promotion_apply(
 # All known module keys with display labels (matches tenant_modules.module_key values)
 _ALL_MODULES: list[tuple[str, str]] = [
     ("expense",          "Expense Management"),
-    ("ap",               "Accounts Payable"),
-    ("ar",               "Accounts Receivable"),
+    ("ap",               "Accounts Payable (P2P)"),
+    ("ar",               "Accounts Receivable (O2C)"),
     ("payroll",          "Payroll & HR"),
     ("bank_recon",       "Bank Reconciliation"),
-    ("budget",           "Budget Engine"),
+    ("budget",           "Budget & Planning"),
     ("tax_engine",       "Tax Engine"),
     ("inventory",        "Inventory & Warehouse"),
     ("fixed_assets",     "Fixed Assets"),

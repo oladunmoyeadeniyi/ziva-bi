@@ -22,7 +22,7 @@ const MODULE_INFO: Record<string, {
   features: string[];
 }> = {
   ap: {
-    label: "Accounts Payable",
+    label: "Accounts Payable (P2P)",
     icon: "📄",
     description: "Configure accounts payable settings, vendor invoice processing, payment terms, and approval workflows.",
     features: [
@@ -35,7 +35,7 @@ const MODULE_INFO: Record<string, {
     ],
   },
   ar: {
-    label: "Accounts Receivable",
+    label: "Accounts Receivable (O2C)",
     icon: "📬",
     description: "Configure accounts receivable settings, customer invoicing, credit limits, and collection workflows.",
     features: [
@@ -152,7 +152,7 @@ const MODULE_INFO: Record<string, {
     ],
   },
   budget: {
-    label: "Budget Engine",
+    label: "Budget & Planning",
     icon: "📈",
     description: "Configure budget creation, allocation, version control, and budget vs. actual reporting.",
     features: [

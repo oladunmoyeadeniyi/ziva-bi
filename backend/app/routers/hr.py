@@ -584,16 +584,37 @@ async def _cascade_employee_deactivate(
     Deactivate the portal user account linked to an employee.
     Also revokes all active sessions for that user in this tenant.
     Safe to call even if emp.user_id is None.
+
+    Email fallback: if emp.user_id is not set (employee created before the M9.3b
+    user_id backfill ran, or never linked explicitly), we resolve the user by
+    matching emp.email against users in this tenant.  This prevents deleted employees
+    whose user_id column was NULL from silently keeping their portal account active.
     """
-    if not emp.user_id:
-        return
     from app.models.auth import UserTenant as UserTenantModel
-    from app.models.auth import Session as SessionModel
+    from app.models.auth import Session as SessionModel, User as UserModel
+
+    user_id = emp.user_id
+    if not user_id and emp.email:
+        # Fallback: resolve user by email within this tenant
+        uid_res = await db.execute(
+            select(UserModel.id)
+            .join(UserTenantModel, UserModel.id == UserTenantModel.user_id)
+            .where(
+                UserModel.email == emp.email,
+                UserTenantModel.tenant_id == tenant_id,
+            )
+        )
+        user_id = uid_res.scalar_one_or_none()
+        if user_id:
+            emp.user_id = user_id  # persist the resolved FK for future cascade calls
+
+    if not user_id:
+        return
 
     # Deactivate the UserTenant membership
     ut_res = await db.execute(
         select(UserTenantModel).where(
-            UserTenantModel.user_id == emp.user_id,
+            UserTenantModel.user_id == user_id,
             UserTenantModel.tenant_id == tenant_id,
         )
     )
@@ -605,7 +626,7 @@ async def _cascade_employee_deactivate(
     _sqldelete = __import__("sqlalchemy", fromlist=["delete"]).delete
     await db.execute(
         _sqldelete(SessionModel).where(
-            SessionModel.user_id == emp.user_id,
+            SessionModel.user_id == user_id,
             SessionModel.tenant_id == tenant_id,
         )
     )
@@ -643,17 +664,36 @@ async def _cascade_employee_hard_delete(
     'Activity in a live tenant' means any UserTenant row whose tenant has
     environment='live'. If found, we only deactivate the current test-tenant
     UserTenant instead of deleting the User entirely.
+
+    Email fallback: same as _cascade_employee_deactivate — if emp.user_id is not
+    set we resolve by email so that employees whose user_id was never backfilled
+    are still cleaned up correctly on hard-delete.
     """
-    if not emp.user_id:
-        return
     from app.models.auth import UserTenant as UserTenantModel, User as UserModel, Tenant
+
+    user_id = emp.user_id
+    if not user_id and emp.email:
+        uid_res = await db.execute(
+            select(UserModel.id)
+            .join(UserTenantModel, UserModel.id == UserTenantModel.user_id)
+            .where(
+                UserModel.email == emp.email,
+                UserTenantModel.tenant_id == tenant_id,
+            )
+        )
+        user_id = uid_res.scalar_one_or_none()
+        if user_id:
+            emp.user_id = user_id
+
+    if not user_id:
+        return
 
     # Check if this user is a member of any LIVE tenant (other than the current one)
     live_check = await db.execute(
         select(UserTenantModel)
         .join(Tenant, Tenant.id == UserTenantModel.tenant_id)
         .where(
-            UserTenantModel.user_id == emp.user_id,
+            UserTenantModel.user_id == user_id,
             UserTenantModel.tenant_id != tenant_id,
             Tenant.environment == "live",
         )
@@ -665,7 +705,7 @@ async def _cascade_employee_hard_delete(
         await _cascade_employee_deactivate(emp, tenant_id, db)
     else:
         # No live-tenant activity — hard-delete the User (cascades to UserTenant, sessions, etc.)
-        user_res = await db.execute(select(UserModel).where(UserModel.id == emp.user_id))
+        user_res = await db.execute(select(UserModel).where(UserModel.id == user_id))
         user = user_res.scalar_one_or_none()
         if user:
             await db.delete(user)
