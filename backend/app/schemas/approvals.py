@@ -30,6 +30,9 @@ class ApprovalRoleCreate(BaseModel):
     area: str | None = None  # free-text geographic area / location (= parent's territory)
     sub_area: str | None = None  # granular sub-territory (e.g. Lagos Mainland within Lagos Region)
     employment_type: str | None = "permanent"  # permanent | contract | outsourced
+    # Position / slot fields
+    code: str | None = None   # short position code e.g. 'CFO-001'
+    grade: str | None = None  # salary/job grade e.g. 'G8', 'Director'
 
 
 class ApprovalRoleUpdate(BaseModel):
@@ -46,6 +49,8 @@ class ApprovalRoleUpdate(BaseModel):
     area: str | None = None
     sub_area: str | None = None
     employment_type: str | None = None
+    code: str | None = None
+    grade: str | None = None
 
 
 class RoleOccupant(BaseModel):
@@ -75,6 +80,11 @@ class ApprovalRoleResponse(BaseModel):
     sub_area: str | None = None
     employment_type: str | None = None
     permission_tier: str | None = None
+    # Position / slot fields
+    code: str | None = None
+    grade: str | None = None
+    parent_role_name: str | None = None
+    occupant_count: int = 0
     occupants: list[RoleOccupant] = []
 
     @classmethod
@@ -102,6 +112,10 @@ class ApprovalRoleResponse(BaseModel):
             sub_area=r.sub_area if hasattr(r, "sub_area") else None,
             employment_type=r.employment_type if hasattr(r, "employment_type") else "permanent",
             permission_tier=r.permission_tier if hasattr(r, "permission_tier") else None,
+            code=r.code if hasattr(r, "code") else None,
+            grade=r.grade if hasattr(r, "grade") else None,
+            parent_role_name=r.parent_role.name if (hasattr(r, "parent_role") and r.parent_role) else None,
+            occupant_count=len(occupants or []),
             occupants=occupants or [],
         )
 

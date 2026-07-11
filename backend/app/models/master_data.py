@@ -544,6 +544,77 @@ class EmployeeTransfer(Base):
     )
 
 
+
+class EmployeePositionAssignment(Base):
+    """
+    Temporal bridge between employees and org-role slots (approval_roles).
+
+    Single source of truth: approval_roles is both the Role Hierarchy and the
+    Positions register. This table records WHO occupies a role/position and WHEN.
+
+    assignment_type: 'substantive' | 'acting' | 'secondment'
+    effective_to = None means the assignment is still open/current.
+    Closing a substantive assignment and opening a new one is handled in hr.py.
+    """
+
+    __tablename__ = "employee_position_assignments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # approval_role_id — the role/position slot this employee occupies.
+    # Was position_id in migration e3f4a5b6c7d8; retargeted to approval_roles
+    # in migration f1g2h3i4j5k6 as part of the single-source-of-truth merge.
+    approval_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approval_roles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    assignment_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default="substantive"
+    )
+    transfer_reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_retrospective: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    employee: Mapped[Optional["Employee"]] = relationship(
+        "Employee",
+        foreign_keys=[employee_id],
+    )
+    approval_role: Mapped[Optional["ApprovalRole"]] = relationship(  # type: ignore[name-defined]
+        "ApprovalRole",
+        foreign_keys=[approval_role_id],
+    )
+
 class CostCenterConfig(Base):
     """
     Cost center head assignment.

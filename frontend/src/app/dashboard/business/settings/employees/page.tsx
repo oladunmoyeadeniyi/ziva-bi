@@ -46,7 +46,9 @@ interface Employee {
 interface ApprovalRole {
   id: string;
   name: string;
-  level: number;
+  display_order: number;
+  cost_center_name: string | null;
+  designation: string | null;
 }
 
 interface CostCenterOption {
@@ -78,6 +80,19 @@ interface Transfer {
   to_cost_center_name: string | null;
   effective_date: string;
   notes: string | null;
+  change_type: string | null;
+  is_retrospective: boolean;
+}
+
+interface PositionAssignment {
+  id: string;
+  position_id: string;
+  position_title: string;
+  cost_center_name: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  assignment_type: string;
+  transfer_reason: string | null;
 }
 
 interface EmployeeHistory {
@@ -147,7 +162,7 @@ function EmployeesPage() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
 
-  const [activeTab, setActiveTab] = useState<EmpTab>("add");
+  const [activeTab, setActiveTab] = useState<EmpTab>("list");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<CostCenterOption[]>([]);
   const [approvalRoles, setApprovalRoles] = useState<ApprovalRole[]>([]);
@@ -195,7 +210,12 @@ function EmployeesPage() {
   const [transferCC, setTransferCC] = useState("");
   const [transferDate, setTransferDate] = useState("");
   const [transferNotes, setTransferNotes] = useState("");
+  const [transferChangeType, setTransferChangeType] = useState("lateral");
+  const [transferRetrospective, setTransferRetrospective] = useState(false);
   const [transferring, setTransferring] = useState(false);
+
+  // Position assignments (shown in history drawer)
+  const [positionHistory, setPositionHistory] = useState<PositionAssignment[]>([]);
 
   // Code update modal
   const [codeUpdateEmpId, setCodeUpdateEmpId] = useState<string | null>(null);
@@ -352,9 +372,16 @@ function EmployeesPage() {
     try {
       await apiFetch(`/api/hr/employees/${transferEmpId}/transfer`, {
         method: "POST", token: accessToken,
-        body: JSON.stringify({ to_cost_center_id: transferCC, effective_date: transferDate, notes: transferNotes || null }),
+        body: JSON.stringify({
+          to_cost_center_id: transferCC,
+          effective_date: transferDate,
+          notes: transferNotes || null,
+          change_type: transferChangeType,
+          is_retrospective: transferRetrospective,
+        }),
       });
       setTransferEmpId(null); setTransferCC(""); setTransferDate(""); setTransferNotes("");
+      setTransferChangeType("lateral"); setTransferRetrospective(false);
       await load();
     } catch (err) { setError(err instanceof Error ? err.message : "Transfer failed."); }
     finally { setTransferring(false); }
@@ -376,8 +403,15 @@ function EmployeesPage() {
 
   const handleViewHistory = async (empId: string) => {
     if (!accessToken) return;
-    setHistoryEmpId(empId); setLoadingHistory(true);
-    try { const data = await apiFetch<EmployeeHistory>(`/api/hr/employees/${empId}/history`, { token: accessToken }); setHistory(data); }
+    setHistoryEmpId(empId); setLoadingHistory(true); setPositionHistory([]);
+    try {
+      const [data, posData] = await Promise.all([
+        apiFetch<EmployeeHistory>(`/api/hr/employees/${empId}/history`, { token: accessToken }),
+        apiFetch<PositionAssignment[]>(`/api/hr/employees/${empId}/assignments`, { token: accessToken }).catch(() => []),
+      ]);
+      setHistory(data);
+      setPositionHistory(posData);
+    }
     catch { setHistory(null); }
     finally { setLoadingHistory(false); }
   };
@@ -429,14 +463,14 @@ function EmployeesPage() {
   );
 
   const EMP_TABS: { key: EmpTab; label: string }[] = [
-    { key: "add", label: "Add employees" },
     { key: "list", label: "Employee list" },
+    { key: "add", label: "Add employees" },
     { key: "transfers", label: "Transfers & changes" },
     { key: "config", label: "Code config" },
   ];
 
-  const REQUIRED_COLS = ["First name *", "Last name *", "Email *"];
-  const OPTIONAL_COLS = ["Employee code", "Cost center code ⬇", "Line manager email", "Other name", "Preferred name", "Phone", "Start date", "Head of Cost Center (Y/N)"];
+  const REQUIRED_COLS = ["Org role *", "First name *", "Last name *", "Email *", "Resumption date *"];
+  const OPTIONAL_COLS = ["Employee code", "Cost center code ⬇", "Other name", "Preferred name", "Phone"];
 
   // ── CC dropdown helper ──────────────────────────────────────────────────────
   const CostCenterSelect = ({ value, onChange, placeholder = "— Select cost center —" }: { value: string; onChange: (v: string) => void; placeholder?: string }) => (
@@ -491,7 +525,7 @@ function EmployeesPage() {
               <i className="ti ti-upload text-gray-500" style={{ fontSize: 22 }} />
               <div>
                 <p className="text-sm font-semibold text-gray-800">Bulk upload</p>
-                <p className="text-xs text-gray-500 mt-1">Download the template (includes cost-center dropdown + head-of-cc column), fill all records, upload back.</p>
+                <p className="text-xs text-gray-500 mt-1">Download the template, fill all records, upload back. Org Role and Resumption Date are required.</p>
               </div>
               <div className="flex gap-2 mt-auto flex-wrap">
                 <button type="button" onClick={handleDownloadTemplate} disabled={downloadingTemplate}
@@ -507,9 +541,7 @@ function EmployeesPage() {
               {uploadResult && (
                 <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 space-y-0.5">
                   <div>{uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.errors.length} errors</div>
-                  {(uploadResult.head_assignments ?? 0) > 0 && (
-                    <div>{uploadResult.head_assignments} head-of-cost-center assignment(s) set</div>
-                  )}
+
                   {uploadResult.errors.length > 0 && (
                     <div className="mt-1 space-y-0.5">
                       {uploadResult.errors.slice(0, 5).map((e, i) => (
@@ -791,8 +823,10 @@ function EmployeesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Approval Role</label>
                 <select value={addForm.approval_role_id} onChange={e => setAddForm(f => ({ ...f, approval_role_id: e.target.value }))} className={selectCls}>
                   <option value="">— None —</option>
-                  {approvalRoles.sort((a, b) => a.level - b.level).map(r => (
-                    <option key={r.id} value={r.id}>{r.name} (Level {r.level})</option>
+                  {approvalRoles.sort((a, b) => a.display_order - b.display_order).map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}{r.cost_center_name ? ` — ${r.cost_center_name}` : ""}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-0.5">Assigns this employee a role in the approval chain (e.g. Finance Director, HOD).</p>
@@ -841,8 +875,10 @@ function EmployeesPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Approval Role</label>
                 <select value={editForm.approval_role_id} onChange={e => setEditForm(f => ({ ...f, approval_role_id: e.target.value }))} className={selectCls}>
                   <option value="">— None —</option>
-                  {approvalRoles.sort((a, b) => a.level - b.level).map(r => (
-                    <option key={r.id} value={r.id}>{r.name} (Level {r.level})</option>
+                  {approvalRoles.sort((a, b) => a.display_order - b.display_order).map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}{r.cost_center_name ? ` — ${r.cost_center_name}` : ""}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-0.5">Assigns this employee a role in the approval chain (e.g. Finance Director, HOD).</p>
@@ -858,23 +894,54 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* ── Transfer modal — real CC dropdown ────────────────────────────────── */}
+      {/* ── Transfer modal — CC dropdown + change type + retrospective ──────── */}
       {transferEmpId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Transfer Employee</h2>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">New Cost Center <span className="text-red-500">*</span></label>
                 <CostCenterSelect value={transferCC} onChange={setTransferCC} placeholder="— Select cost center —" />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Effective Date <span className="text-red-500">*</span></label>
-                <input type="date" defaultValue={transferDate} onBlur={e => setTransferDate(e.target.value)} className={inputCls} />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Effective Date <span className="text-red-500">*</span></label>
+                  <input type="date" defaultValue={transferDate} onBlur={e => setTransferDate(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Change Type</label>
+                  <select value={transferChangeType} onChange={e => setTransferChangeType(e.target.value)} className={selectCls}>
+                    <option value="lateral">Lateral</option>
+                    <option value="promotion">Promotion</option>
+                    <option value="restructure">Restructure</option>
+                    <option value="acting">Acting</option>
+                    <option value="secondment">Secondment</option>
+                    <option value="hire">Hire</option>
+                    <option value="termination">Termination</option>
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
                 <textarea value={transferNotes} onChange={e => setTransferNotes(e.target.value)} rows={2} className={inputCls} />
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={transferRetrospective}
+                    onChange={e => setTransferRetrospective(e.target.checked)}
+                    className="mt-0.5 rounded"
+                  />
+                  <div>
+                    <div className="text-xs font-medium text-amber-800">Retrospective change</div>
+                    <div className="text-xs text-amber-700 mt-0.5">
+                      Effective date is in the past. Transactions between that date and today will be
+                      flagged for review. Historical GL is not auto-recoded.
+                    </div>
+                  </div>
+                </label>
               </div>
             </div>
             <div className="flex gap-3 justify-end mt-4">
@@ -923,7 +990,7 @@ function EmployeesPage() {
         </div>
       )}
 
-      {/* ── History drawer (unchanged) ───────────────────────────────────────── */}
+      {/* ── History drawer ────────────────────────────────────────────────────── */}
       {historyEmpId && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/40" onClick={() => setHistoryEmpId(null)} />
@@ -932,40 +999,83 @@ function EmployeesPage() {
               <h2 className="text-base font-semibold text-gray-900">Employee History</h2>
               <button onClick={() => setHistoryEmpId(null)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
-            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
               {loadingHistory ? <p className="text-sm text-gray-400">Loading…</p>
               : !history ? <p className="text-sm text-gray-400">No history found.</p>
               : (
                 <>
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Code Changes</h3>
-                  {history.code_history.length === 0 ? <p className="text-xs text-gray-400 mb-4">No code changes.</p> : (
-                    <div className="space-y-2 mb-5">
-                      {history.code_history.map(ch => (
-                        <div key={ch.id} className="text-xs border border-gray-200 rounded p-2">
-                          <div className="flex justify-between">
-                            <span className="font-medium text-gray-800">{ch.old_code ?? "—"} → {ch.new_code}</span>
-                            <span className="text-gray-400">{ch.effective_date}</span>
+                  {/* Position assignments */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Position Assignments</h3>
+                    {positionHistory.length === 0 ? (
+                      <p className="text-xs text-gray-400">No position assignments recorded.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {positionHistory.map(pa => (
+                          <div key={pa.id} className="text-xs border border-gray-200 rounded p-2">
+                            <div className="flex items-start justify-between gap-1">
+                              <span className="font-medium text-gray-800">{pa.position_title}</span>
+                              <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs ${
+                                pa.assignment_type === "substantive" ? "bg-blue-100 text-blue-700"
+                                : pa.assignment_type === "acting" ? "bg-amber-100 text-amber-700"
+                                : "bg-purple-100 text-purple-700"}`}>
+                                {pa.assignment_type}
+                              </span>
+                            </div>
+                            {pa.cost_center_name && <p className="text-gray-500 mt-0.5">{pa.cost_center_name}</p>}
+                            <div className="flex justify-between text-gray-400 mt-1">
+                              <span>From: {pa.effective_from}</span>
+                              <span>{pa.effective_to ? `To: ${pa.effective_to}` : <span className="text-green-600 font-medium">Current</span>}</span>
+                            </div>
+                            {pa.transfer_reason && <p className="text-gray-400 mt-0.5 capitalize">{pa.transfer_reason}</p>}
                           </div>
-                          {ch.change_type && <span className="text-gray-400 capitalize">{ch.change_type}</span>}
-                          {ch.notes && <p className="text-gray-500 mt-0.5">{ch.notes}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Transfers</h3>
-                  {history.transfers.length === 0 ? <p className="text-xs text-gray-400">No transfers.</p> : (
-                    <div className="space-y-2">
-                      {history.transfers.map(tr => (
-                        <div key={tr.id} className="text-xs border border-gray-200 rounded p-2">
-                          <div className="flex justify-between">
-                            <span className="font-medium text-gray-800">{tr.from_cost_center_name ?? "—"} → {tr.to_cost_center_name ?? "—"}</span>
-                            <span className="text-gray-400">{tr.effective_date}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cost centre transfers */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Cost Centre Transfers</h3>
+                    {history.transfers.length === 0 ? <p className="text-xs text-gray-400">No transfers.</p> : (
+                      <div className="space-y-2">
+                        {history.transfers.map(tr => (
+                          <div key={tr.id} className="text-xs border border-gray-200 rounded p-2">
+                                                <div className="flex justify-between">
+                              <span className="font-medium text-gray-800">{tr.from_cost_center_name ?? "—"} → {tr.to_cost_center_name ?? "—"}</span>
+                              <span className="text-gray-400">{tr.effective_date}</span>
+                            </div>
+                            <div className="flex gap-2 mt-0.5">
+                              {tr.change_type && <span className="text-gray-500 capitalize">{tr.change_type}</span>}
+                              {tr.is_retrospective && (
+                                <span className="bg-amber-100 text-amber-700 px-1 rounded">retrospective</span>
+                              )}
+                            </div>
+                            {tr.notes && <p className="text-gray-500 mt-0.5">{tr.notes}</p>}
                           </div>
-                          {tr.notes && <p className="text-gray-500 mt-0.5">{tr.notes}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Code changes */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Code Changes</h3>
+                    {history.code_history.length === 0 ? <p className="text-xs text-gray-400">No code changes.</p> : (
+                      <div className="space-y-2">
+                        {history.code_history.map(ch => (
+                          <div key={ch.id} className="text-xs border border-gray-200 rounded p-2">
+                            <div className="flex justify-between">
+                              <span className="font-medium text-gray-800">{ch.old_code ?? "—"} → {ch.new_code}</span>
+                              <span className="text-gray-400">{ch.effective_date}</span>
+                            </div>
+                            {ch.change_type && <span className="text-gray-400 capitalize">{ch.change_type}</span>}
+                            {ch.notes && <p className="text-gray-500 mt-0.5">{ch.notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>

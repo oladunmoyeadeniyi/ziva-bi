@@ -705,6 +705,30 @@ class FunctionTeamResponse(BaseModel):
     team: list[FunctionTeamMember]
 
 
+class FunctionUserItem(BaseModel):
+    """One Ziva user returned by GET /api/setup/functions/{code}/users."""
+
+    user_id: str
+    full_name: str
+    email: str
+    employee_code: Optional[str]
+    cost_center_name: str
+    cost_center_code: str
+
+
+class FunctionUsersResponse(BaseModel):
+    """
+    GET /api/setup/functions/{code}/users — users with Ziva accounts in the mapped dept.
+
+    mapped=False means no cost-centre mapping is configured for this function yet.
+    """
+
+    function_code: str
+    function_label: str
+    mapped: bool
+    users: list[FunctionUserItem]
+
+
 # ── Go-live ────────────────────────────────────────────────────────────────────
 
 class GoLiveResponse(BaseModel):
