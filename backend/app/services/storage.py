@@ -59,13 +59,17 @@ def upload_file(file_bytes: bytes, path: str, mime_type: str) -> str:
     return path
 
 
-def get_signed_url(storage_path: str, expires_in: int = 3600) -> str:
+def get_signed_url(storage_path: str, expires_in: int = 900) -> str:
     """
     Generate a time-limited signed URL for a private file.
 
+    Security: default expiry is 15 minutes (900 s). Finance documents are
+    accessed in-session; the UI re-fetches a fresh URL on each view. Shorter
+    expiry limits exposure if a URL is leaked or cached.
+
     Args:
         storage_path: the key returned by upload_file().
-        expires_in: URL lifetime in seconds (default 1 hour).
+        expires_in: URL lifetime in seconds (default 15 minutes).
 
     Returns:
         A signed HTTPS URL the client can use to download or view the file.
