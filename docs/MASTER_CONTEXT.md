@@ -642,7 +642,7 @@ Architectural invariants that are durable decisions (the WHY):
 - **Module independence:** every module must work standalone. A company subscribing to only one module (e.g. only expense management, only AP) should be production-ready within the hour. CoA/Dimensions/Currencies/Tax are OPTIONAL in Lite/Connected mode and REQUIRED in Full ERP mode. The setup portal shows/hides steps based on `posting_mode` + active modules.
 - **Signup = trial lead (2026-07-11):** the business signup page creates `lifecycle_status = 'trial'`, NOT `'in_implementation'`. Trials get demo seed data. The SA portal "Trials & signups" page is the lead management queue. Consultants activate implementation manually after qualification. This is a one-line change to the signup router.
 - **Consultant config lives in SA portal:** posting mode, module licensing, integration settings (which external ERP) — all set by the consultant in the SA portal tenant detail page BEFORE "Enter Tenant." These are never exposed inside the tenant implementation pages.
-- **Document security invariants (2026-07-11 — see `docs/BRIEF_document_storage_security.md`):** (a) Signed URLs expire in 15 minutes (not 1 hour). (b) All uploaded files are SHA-256 hashed; `file_hash` stored in `expense_documents`. (c) Magic bytes validation on every upload — Content-Type header is not trusted. (d) `retain_until` enforced — deletion of financial documents within the mandatory 6-year retention window is blocked at API level (NDPR 2019 + CAMA 2020 + FIRS). (e) Document access is logged to `document_access_log`. (f) Cloudflare R2 is the target storage provider (zero egress fees vs. Supabase's $0.09/GB) — migrate when tenants > 5 or storage > 5 GB.
+- **Document security invariants (2026-07-11 — shipped tasks #53–#55 + DOCX/XLSX, see `docs/BRIEF_document_storage_security.md`):** (a) Signed URLs expire in 15 minutes. (b) All uploads SHA-256 hashed; `file_hash` + `file_hash_algorithm` stored in `expense_documents`. (c) Magic bytes + ZIP structure validation — Content-Type header never trusted; DOCX/XLSX validated by inspecting `word/document.xml` / `xl/workbook.xml`; macro-enabled variants (`vbaProject.bin`) rejected. (d) Images compressed to WebP via Pillow; PDFs compressed via pikepdf (>5 % savings threshold). (e) Hash dedup within tenant — same file reuses Supabase blob, only stores `dedup_ref`. (f) `retain_until` = 15-year minimum (SA-configurable per tenant via `tenant_org_config.document_retention_years`); deletion blocked if `retain_until > today()` or IS NULL. (g) `document_access_log` table logs upload/view/delete events with IP. (h) Dedup-safe delete: blob kept if other rows share `storage_path`. (i) Cloudflare R2 is the target storage provider (zero egress) — migrate when tenants > 5 or storage > 5 GB.
 
 ---
 
@@ -688,7 +688,7 @@ Architectural invariants that are durable decisions (the WHY):
 ### Next feature work (in this order)
 
 6. **Three-Mode Architecture** — ✅ ALL THREE PHASES DONE: Phase 1 (commit `f24c2fe`, backend infrastructure), Phase 2 (committed, SA portal consultant config panel #49), Phase 3 (committed: Trials & signups SA page #50, mode-aware setup portal #51, GL Group picker tab #52 — commit `55028cc`). Full spec: `docs/BRIEF_three_mode_architecture.md`.
-7. **Document Security Hardening** — Phase 1: signed URL expiry → 15 min, SHA-256 hash, magic bytes validation, image/PDF compression, deduplication, retention policy enforcement, access audit log. Phase 2 (later): Cloudflare R2 migration. Full spec: `docs/BRIEF_document_storage_security.md`.
+7. ~~**Document Security Hardening Phase 1**~~ — **✅ DONE** (5 commits: `23ff91d`, `634d93a`, `6f9e752`, `5924b08`, `3dc5f1f`, 2026-07-11). Magic bytes + ZIP structure validation, SHA-256, Pillow/pikepdf compression, dedup, 15-year retention (SA-configurable), `document_access_log`, DOCX/XLSX with macro rejection. Phase 2 (Cloudflare R2 migration) pending.
 8. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
 9. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
 10. **M11 — Accounts Payable (P2P)**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable (O2C)**, **M16 — Budget & Planning**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory Management**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
@@ -704,13 +704,14 @@ Architectural invariants that are durable decisions (the WHY):
 - ~~SA Portal Trials & Signups page (#50)~~ — **Done** (committed 2026-07-11). See §5.
 - ~~Setup Portal mode-aware checklist (#51)~~ — **Done** (commit `eac25846`, 2026-07-11). See §5.
 - ~~GL Group hierarchy tab in ExpenseItemPicker (#52)~~ — **Done** (commit `55028cc`, 2026-07-11). See §5.
+- ~~Document Security Hardening Phase 1 (#53–#55 + DOCX/XLSX)~~ — **Done** (5 commits ending `3dc5f1f`, 2026-07-11). 15-min signed URLs, magic bytes + ZIP validation, SHA-256, Pillow/pikepdf compression, hash dedup, 15yr retention, `document_access_log`, DOCX/XLSX macro guard.
 
 ---
 
 ## 10. FUTURE MILESTONES (recommended order)
 
 1. ~~**Three-Mode Architecture Foundation**~~ — **✅ DONE** (Phases 1-3 shipped 2026-07-11; all four tasks committed). See §5.
-2. **Document Security Hardening** — Phase 1: security/integrity/compression; Phase 2: Cloudflare R2 migration (see `docs/BRIEF_document_storage_security.md`)
+2. ~~**Document Security Hardening Phase 1**~~ — **✅ DONE** (2026-07-11). Phase 2: Cloudflare R2 migration when tenants > 5 or storage > 5 GB.
 3. Currencies & FX / BDC completeness decision
 4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
 5. M11 — Accounts Payable (P2P)
@@ -763,4 +764,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-11 (Three-Mode Architecture all phases done; tasks #49-#52 all committed — see §5). Last pushed commit: `55028cc`. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-11 (Three-Mode Architecture all phases done; Document Security Phase 1 done — tasks #49-#55 + DOCX/XLSX all committed — see §5). Last pushed commit: `3dc5f1f`. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
