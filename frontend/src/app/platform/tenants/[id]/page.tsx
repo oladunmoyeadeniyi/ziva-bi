@@ -152,6 +152,12 @@ export default function TenantDetailPage() {
   const [creatingTestEnv, setCreatingTestEnv]     = useState(false);
   const [showReviewDialog, setShowReviewDialog]   = useState(false);
 
+  // Nuke tenant
+  const [showNukeModal, setShowNukeModal]   = useState(false);
+  const [nukeSlug, setNukeSlug]             = useState("");
+  const [nukeLiveConfirm, setNukeLiveConfirm] = useState(false);
+  const [nuking, setNuking]                 = useState(false);
+
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
     setLoading(true);
@@ -275,6 +281,30 @@ export default function TenantDetailPage() {
       setActionMsg({ type: "err", text: e instanceof Error ? e.message : "Reactivate failed" });
     } finally {
       setActioning(false);
+    }
+  };
+
+  const nukeTenant = async () => {
+    if (!accessToken || !tenant) return;
+    setNuking(true);
+    setActionMsg(null);
+    try {
+      await apiFetch(`/api/platform/tenants/${id}`, {
+        method: "DELETE",
+        token: accessToken,
+        body: {
+          confirmation_slug: nukeSlug,
+          confirm_live_delete: nukeLiveConfirm,
+        },
+      });
+      setShowNukeModal(false);
+      // Tenant is gone — navigate back to the list
+      router.push("/platform/tenants");
+    } catch (e) {
+      setActionMsg({ type: "err", text: e instanceof Error ? e.message : "Delete failed" });
+      setShowNukeModal(false);
+    } finally {
+      setNuking(false);
     }
   };
 
@@ -529,7 +559,90 @@ export default function TenantDetailPage() {
             </p>
           </div>
         )}
+
+        <hr className="border-red-100 mt-2" />
+
+        {/* ── Danger: delete tenant ───────────────────────────────────────── */}
+        <div className="space-y-1">
+          <Button
+            variant="danger"
+            onClick={() => { setNukeSlug(""); setNukeLiveConfirm(false); setShowNukeModal(true); }}
+            disabled={actioning || settingLifecycle || nuking}
+          >
+            Delete tenant permanently
+          </Button>
+          <p className="text-xs text-red-400">
+            Irreversible. Removes the tenant and ALL its data from the database.
+          </p>
+        </div>
       </section>
+
+      {/* ── Nuke tenant modal ────────────────────────────────────────────────── */}
+      {showNukeModal && tenant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-red-700">Delete tenant permanently</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                This will <strong>permanently delete</strong> <span className="font-medium">{tenant.name}</span> and
+                all of its data — users, employees, expenses, GL entries, documents — from the database.
+                This cannot be undone.
+              </p>
+            </div>
+
+            {tenant.lifecycle_status === "live" && (
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg p-3">
+                <input
+                  id="nuke-live-confirm"
+                  type="checkbox"
+                  checked={nukeLiveConfirm}
+                  onChange={e => setNukeLiveConfirm(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-red-600 cursor-pointer"
+                />
+                <label htmlFor="nuke-live-confirm" className="text-sm text-red-700 cursor-pointer">
+                  I understand this is a <strong>live tenant</strong>. I confirm this is a demo or test
+                  company and I want to permanently delete all its data.
+                </label>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-gray-700">
+                Type the tenant slug to confirm: <code className="bg-gray-100 px-1 rounded">{tenant.slug}</code>
+              </label>
+              <input
+                type="text"
+                value={nukeSlug}
+                onChange={e => setNukeSlug(e.target.value)}
+                placeholder={tenant.slug}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+
+            <div className="flex gap-3 justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setShowNukeModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={nukeTenant}
+                disabled={
+                  nuking ||
+                  nukeSlug !== tenant.slug ||
+                  (tenant.lifecycle_status === "live" && !nukeLiveConfirm)
+                }
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {nuking ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Tenant details ───────────────────────────────────────────────────── */}
       <section className="border border-gray-200 rounded-xl bg-white p-5">

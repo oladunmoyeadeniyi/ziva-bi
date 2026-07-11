@@ -20,6 +20,7 @@ parent_tenant_id pointing at its test origin and still appears here. Use
 Suspend idempotency: POST /suspend on an already-suspended tenant returns 409.
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -35,6 +36,7 @@ from app.config import settings
 from app.models.auth import AuditLog, ImpersonationSession, Role, Tenant, User, UserRole, UserTenant
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
+    NukeTenantRequest,
     EnterTenantRequest,
     EnterTenantResponse,
     ImpersonationEndResponse,
@@ -1411,3 +1413,118 @@ async def update_trial_lead(
         user_count=user_count,
         created_at=tenant.created_at,
     )
+
+
+# ── Nuke Tenant (SA only) ──────────────────────────────────────────────────────
+
+@router.delete("/tenants/{tenant_id}", status_code=204)
+async def nuke_tenant(
+    tenant_id: uuid.UUID,
+    body: NukeTenantRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Permanently delete a tenant and ALL its data.  Super Admin only.
+
+    Works for any lifecycle_status.  Live tenants require
+    body.confirm_live_delete = True as an explicit second acknowledgement
+    that the caller knows they are wiping a potentially real-company tenant.
+
+    What gets deleted:
+    1. All Supabase Storage files belonging to the tenant's expense documents.
+    2. All User rows that have ONLY this tenant as their membership (CASCADE
+       removes their UserTenant, sessions, and refresh_tokens automatically).
+    3. UserTenant rows for users who have memberships in other tenants — the
+       User row is left intact so those other tenants are not affected.
+    4. The Tenant row itself — PostgreSQL CASCADE handles all remaining child
+       tables (org config, modules, employees, expenses, GL, periods, etc.).
+
+    An audit record is written to platform_audit_log BEFORE deletion so the
+    action is traceable even after the tenant row is gone.
+
+    Safety gates:
+    - SA role required (_sa guard).
+    - confirmation_slug must match the tenant's actual slug.
+    - Live tenants additionally require confirm_live_delete = True.
+    """
+    _sa(current_user)
+    tenant = await _get_tenant_or_404(tenant_id, db)
+
+    # ── Safety: slug confirmation ──────────────────────────────────────────────
+    if body.confirmation_slug != tenant.slug:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirmation_slug does not match the tenant slug.",
+        )
+
+    # ── Safety: live tenants need the extra flag ───────────────────────────────
+    if tenant.lifecycle_status == "live" and not body.confirm_live_delete:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This tenant is live. Set confirm_live_delete=true to "
+                "confirm you intend to permanently delete a live tenant."
+            ),
+        )
+
+    # ── Step 1: delete Supabase Storage files ─────────────────────────────────
+    from app.models.documents import ExpenseDocument
+    from app.services import storage as _storage
+
+    doc_res = await db.execute(
+        select(ExpenseDocument.storage_path, ExpenseDocument.dedup_ref)
+        .where(ExpenseDocument.tenant_id == tenant_id)
+    )
+    doc_rows = doc_res.all()
+
+    # Only delete blobs that are originals (dedup_ref IS NULL);
+    # dedup rows share the original's path — deleting the original covers them.
+    original_paths = {row.storage_path for row in doc_rows if row.dedup_ref is None}
+    for path in original_paths:
+        try:
+            await asyncio.to_thread(_storage.delete_file, path)
+        except Exception:
+            pass  # best-effort; blob may already be gone
+
+    # ── Step 2: clean up users ─────────────────────────────────────────────────
+    ut_rows = (await db.execute(
+        select(UserTenant).where(UserTenant.tenant_id == tenant_id)
+    )).scalars().all()
+
+    for ut in ut_rows:
+        other_count_res = await db.execute(
+            select(func.count()).select_from(UserTenant).where(
+                UserTenant.user_id == ut.user_id,
+                UserTenant.id != ut.id,
+            )
+        )
+        has_other = (other_count_res.scalar_one() or 0) > 0
+
+        if not has_other:
+            # Sole membership — hard-delete User (CASCADE removes UserTenant, sessions)
+            user_obj = await db.get(User, ut.user_id)
+            if user_obj:
+                await db.delete(user_obj)
+        else:
+            # Has other memberships — remove only this UserTenant
+            await db.delete(ut)
+
+    # ── Step 3: write audit record BEFORE deleting tenant ─────────────────────
+    # audit_logs.tenant_id is ON DELETE SET NULL, so this is safe in the same
+    # transaction: PostgreSQL will NULL the FK when the tenant row is removed.
+    await _log(
+        "TENANT_DELETED",
+        current_user.user_id,
+        tenant_id,
+        {
+            "name": tenant.name,
+            "slug": tenant.slug,
+            "lifecycle_status": tenant.lifecycle_status,
+        },
+        db,
+    )
+
+    # ── Step 4: delete the tenant (CASCADE handles all remaining child tables) ─
+    await db.delete(tenant)
+    await db.commit()

@@ -298,3 +298,17 @@ class TrialLeadUpdate(BaseModel):
 
     lead_status: Optional[Literal["new", "contacted", "qualified", "disqualified"]] = None
     implementation_notes: Optional[str] = None
+
+
+class NukeTenantRequest(BaseModel):
+    """
+    Body for DELETE /api/platform/tenants/{tenant_id}.
+
+    confirmation_slug must exactly match the tenant slug.
+    For live tenants, confirm_live_delete must also be True —
+    this extra flag forces the SA to explicitly acknowledge they
+    are destroying a live (potentially real-company) tenant.
+    """
+
+    confirmation_slug: str
+    confirm_live_delete: bool = False
