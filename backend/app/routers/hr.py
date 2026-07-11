@@ -2010,4 +2010,97 @@ async def get_employee_assignments(
     current_user: CurrentUser = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> list[EmployeeAssignmentResponse]:
-    """Re
+    """Return the full position assignment history for an employee (newest first)."""
+    tenant_id = _require_tenant(current_user)
+
+    emp_res = await db.execute(
+        select(Employee.id).where(Employee.id == employee_id, Employee.tenant_id == tenant_id)
+    )
+    if not emp_res.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Employee not found.")
+
+    asgn_res = await db.execute(
+        select(EmployeePositionAssignment, OrgRole)
+        .join(OrgRole, OrgRole.id == EmployeePositionAssignment.approval_role_id, isouter=True)
+        .where(
+            EmployeePositionAssignment.employee_id == employee_id,
+            EmployeePositionAssignment.tenant_id == tenant_id,
+        )
+        .order_by(EmployeePositionAssignment.effective_from.desc())
+    )
+
+    result = []
+    for asgn, role in asgn_res.all():
+        cc_name = None
+        if role and role.cost_center_id:
+            cc_res = await db.execute(
+                select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
+            )
+            cc = cc_res.scalar_one_or_none()
+            cc_name = cc.name if cc else None
+        result.append(EmployeeAssignmentResponse(
+            id=str(asgn.id),
+            employee_id=str(asgn.employee_id),
+            approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
+            role_name=role.name if role else None,
+            cost_center_id=str(role.cost_center_id) if (role and role.cost_center_id) else None,
+            cost_center_name=cc_name,
+            effective_from=asgn.effective_from,
+            effective_to=asgn.effective_to,
+            assignment_type=asgn.assignment_type,
+            transfer_reason=asgn.transfer_reason,
+            is_retrospective=asgn.is_retrospective,
+            notes=asgn.notes,
+            created_at=asgn.created_at,
+        ))
+    return result
+
+
+@router.get("/employees/{employee_id}/position", response_model=EmployeeAssignmentResponse | None)
+async def get_employee_current_position(
+    employee_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> EmployeeAssignmentResponse | None:
+    """Return the current substantive position assignment for an employee, or null."""
+    tenant_id = _require_tenant(current_user)
+
+    asgn_res = await db.execute(
+        select(EmployeePositionAssignment, OrgRole)
+        .join(OrgRole, OrgRole.id == EmployeePositionAssignment.approval_role_id, isouter=True)
+        .where(
+            EmployeePositionAssignment.employee_id == employee_id,
+            EmployeePositionAssignment.tenant_id == tenant_id,
+            EmployeePositionAssignment.assignment_type == "substantive",
+            EmployeePositionAssignment.effective_to.is_(None),
+        )
+        .limit(1)
+    )
+    row = asgn_res.first()
+    if not row:
+        return None
+
+    asgn, role = row
+    cc_name = None
+    if role and role.cost_center_id:
+        cc_res = await db.execute(
+            select(OrgStructureNode).where(OrgStructureNode.id == role.cost_center_id)
+        )
+        cc = cc_res.scalar_one_or_none()
+        cc_name = cc.name if cc else None
+
+    return EmployeeAssignmentResponse(
+        id=str(asgn.id),
+        employee_id=str(asgn.employee_id),
+        approval_role_id=str(asgn.approval_role_id) if asgn.approval_role_id else None,
+        role_name=role.name if role else None,
+        cost_center_id=str(role.cost_center_id) if (role and role.cost_center_id) else None,
+        cost_center_name=cc_name,
+        effective_from=asgn.effective_from,
+        effective_to=asgn.effective_to,
+        assignment_type=asgn.assignment_type,
+        transfer_reason=asgn.transfer_reason,
+        is_retrospective=asgn.is_retrospective,
+        notes=asgn.notes,
+        created_at=asgn.created_at,
+    )

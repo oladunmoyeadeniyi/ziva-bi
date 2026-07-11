@@ -206,6 +206,9 @@ class UserTenant(Base):
     )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 'employee' = internal staff onboarded via the employee module
+    # 'external' = externally invited user (auditor, consultant, etc.)
+    user_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="employee")
     # M8.2: implementation portal role tier — 'consultant' | 'power_admin' | 'functional_admin'
     role_tier: Mapped[str | None] = mapped_column(String(50), nullable=True)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

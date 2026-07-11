@@ -863,4 +863,13 @@ class UserFunctionalScope(Base):
     )
     user_tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False, index=True
-  
+    )
+    section: Mapped[str] = mapped_column(String(120), nullable=False)
+    access_level: Mapped[str] = mapped_column(String(50), nullable=False, default="read_only")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_tenant_id", "section",
+            name="uq_user_functional_scope",
+        ),
+    )

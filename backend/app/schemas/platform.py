@@ -36,6 +36,7 @@ class TenantUserSummary(BaseModel):
     email: str
     role_tier: str | None
     is_active: bool
+    user_type: str  # 'employee' | 'external'
 
 
 class TestEnvSummary(BaseModel):

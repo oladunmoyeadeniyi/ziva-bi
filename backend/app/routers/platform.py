@@ -488,6 +488,7 @@ async def get_tenant(
             email=u.email,
             role_tier=ut.role_tier,
             is_active=ut.is_active,
+            user_type=ut.user_type if hasattr(ut, "user_type") else "employee",
         )
         for u, ut in ut_rows
     ]
