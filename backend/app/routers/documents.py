@@ -7,7 +7,8 @@ acts as a proxy for upload/download/delete operations.
 
 Security hardening (task #53):
 - Magic bytes validation: file content signature checked, not just Content-Type.
-  Accepted types: JPEG, PNG, GIF, WEBP, PDF only.
+  Accepted types: JPEG, PNG, GIF, WEBP, PDF, DOCX, XLSX.
+  DOCX/XLSX: ZIP structure validated; macro-enabled variants (vbaProject.bin) rejected.
 - Type-aware size limits: images <= 10 MB raw, PDFs <= 20 MB raw.
 - Signed URL expiry: 15 minutes (changed in storage.py).
 
@@ -65,6 +66,10 @@ ALLOWED_MIME_TYPES = {
     "image/png",
     "image/gif",
     "image/webp",
+    # Office XML formats: validated via ZIP structure inspection, not just magic bytes.
+    # Macro-enabled variants (.docm, .xlsm) are rejected by _detect_office_type().
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",        # .xlsx
 }
 
 # Per-type raw upload size limits (before compression).
@@ -74,6 +79,9 @@ MAX_FILE_SIZES: dict[str, int] = {
     "image/png":       10 * 1024 * 1024,  # 10 MB
     "image/gif":       10 * 1024 * 1024,  # 10 MB
     "image/webp":      10 * 1024 * 1024,  # 10 MB
+    # Office XML: same ceiling as PDF — documents with embedded images can be large.
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": 20 * 1024 * 1024,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":       20 * 1024 * 1024,
 }
 
 # Global ceiling — reject before full body is processed.
@@ -88,6 +96,10 @@ MAGIC_SIGNATURES: list[tuple[bytes, bytes | None, int, str]] = [
     (b"GIF89a",             None,     0, "image/gif"),
     (b"RIFF",               b"WEBP",  8, "image/webp"),
     (b"%PDF",               None,     0, "application/pdf"),
+    # DOCX and XLSX are ZIP-based — same magic bytes as any ZIP file.
+    # "application/zip" is an intermediate marker; _detect_office_type() then
+    # opens the ZIP and returns the real MIME or None (rejects macros / generic ZIPs).
+    (b"PK\x03\x04",         None,     0, "application/zip"),
 ]
 
 EDITABLE_STATUSES = {"DRAFT", "REJECTED", "REFERRED_TO_REQUESTOR"}
@@ -171,6 +183,55 @@ def _detect_mime_from_magic(file_bytes: bytes) -> str | None:
             if len(file_bytes) >= end and file_bytes[suffix_offset:end] == suffix:
                 return mime
     return None
+
+
+def _detect_office_type(file_bytes: bytes) -> str | None:
+    """
+    For ZIP-magic files, determine if the content is a valid, macro-free DOCX or XLSX.
+
+    Opens the ZIP and inspects the internal structure per the Open Office XML spec:
+    - DOCX must contain ``word/document.xml``
+    - XLSX must contain ``xl/workbook.xml``
+    - Any file containing ``vbaProject.bin`` is rejected regardless of extension
+      (macro-enabled .docm / .xlsm / any VBA-embedded file).
+
+    A generic ZIP (no Office XML structure) also returns None and is rejected.
+
+    Args:
+        file_bytes: Raw bytes of the uploaded file (must have ZIP magic bytes).
+
+    Returns:
+        Canonical MIME type string, or None if the file is not a safe Office document.
+
+    Example:
+        >>> _detect_office_type(open("receipt.docx", "rb").read())
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            names = zf.namelist()
+
+            # Reject macro-enabled variants — VBA project present in any path.
+            if any("vbaProject.bin" in n for n in names):
+                return None
+
+            if "word/document.xml" in names:
+                return (
+                    "application/vnd.openxmlformats-officedocument"
+                    ".wordprocessingml.document"
+                )
+            if "xl/workbook.xml" in names:
+                return (
+                    "application/vnd.openxmlformats-officedocument"
+                    ".spreadsheetml.sheet"
+                )
+            # Generic ZIP or unrecognised Office variant — reject.
+            return None
+    except Exception:
+        # Corrupt or encrypted ZIP — reject.
+        return None
 
 
 def _extract_ip(request: Request) -> str | None:
@@ -378,11 +439,26 @@ async def upload_document(
         )
 
     # ── 3. Magic bytes validation ──────────────────────────────────────────────
+    # For DOCX/XLSX, magic bytes return "application/zip" (they share ZIP headers).
+    # _detect_office_type() then opens the ZIP for deeper structure validation.
     detected_mime = _detect_mime_from_magic(file_bytes)
+    if detected_mime == "application/zip":
+        detected_mime = _detect_office_type(file_bytes)
+        if detected_mime is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "File type not allowed. ZIP files are only accepted as DOCX or XLSX. "
+                    "Macro-enabled files (.docm, .xlsm) are rejected."
+                ),
+            )
     if detected_mime is None or detected_mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File type not allowed. Accepted formats: PDF, JPEG, PNG, GIF, WEBP.",
+            detail=(
+                "File type not allowed. "
+                "Accepted formats: PDF, JPEG, PNG, GIF, WEBP, DOCX, XLSX."
+            ),
         )
     original_mime = detected_mime
 
@@ -404,13 +480,18 @@ async def upload_document(
     original_size = len(file_bytes)
 
     # ── 6. Compression ────────────────────────────────────────────────────────
+    # Office XML files (.docx/.xlsx) are already ZIP-compressed internally.
+    # Re-compressing them wastes CPU with no meaningful size reduction.
     if original_mime.startswith("image/"):
         stored_bytes, stored_mime = await asyncio.to_thread(
             _compress_image_sync, file_bytes, original_mime
         )
-    else:
-        # PDF
+    elif original_mime == "application/pdf":
         stored_bytes = await asyncio.to_thread(_compress_pdf_sync, file_bytes)
+        stored_mime = original_mime
+    else:
+        # DOCX / XLSX — store as-is.
+        stored_bytes = file_bytes
         stored_mime = original_mime
 
     size_stored = len(stored_bytes)
