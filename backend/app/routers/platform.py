@@ -40,10 +40,13 @@ from app.schemas.platform import (
     ImpersonationEndResponse,
     ImpersonatedUserSummary,
     LifecycleUpdateRequest,
+    ModuleLicenseItem,
     PromotionApplyRequest,
     PromotionApplyResult,
     PromotionDiff,
     SuspendResponse,
+    SystemConfigResponse,
+    SystemConfigUpdate,
     TenantDetail,
     TenantListItem,
     TenantUserSummary,
@@ -1105,3 +1108,151 @@ async def platform_promotion_apply(
     )
 
     return result
+
+
+# ── #49 Consultant system config ──────────────────────────────────────────────
+
+# All known module keys with display labels (matches tenant_modules.module_key values)
+_ALL_MODULES: list[tuple[str, str]] = [
+    ("expense",          "Expense Management"),
+    ("ap",               "Accounts Payable"),
+    ("ar",               "Accounts Receivable"),
+    ("payroll",          "Payroll & HR"),
+    ("bank_recon",       "Bank Reconciliation"),
+    ("budget",           "Budget Engine"),
+    ("tax_engine",       "Tax Engine"),
+    ("inventory",        "Inventory & Warehouse"),
+    ("fixed_assets",     "Fixed Assets"),
+    ("posm",             "Point of Sale"),
+    ("vendor_portal",    "Vendor Portal"),
+    ("customer_portal",  "Customer Portal"),
+    ("reporting",        "Advanced Reporting"),
+]
+
+
+@router.get("/tenants/{tenant_id}/system-config", response_model=SystemConfigResponse)
+async def get_system_config(
+    tenant_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> SystemConfigResponse:
+    """
+    Return tenant posting_mode + module licensing state.
+
+    TIER 2 — Super admin read endpoint for the consultant config panel.
+    Guard: super admin only.
+    """
+    _sa(current_user)
+    tenant = await _get_tenant_or_404(tenant_id, db)
+
+    from app.models.setup import TenantOrgConfig, TenantModule
+
+    # Posting mode
+    cfg_res = await db.execute(
+        select(TenantOrgConfig.posting_mode).where(TenantOrgConfig.tenant_id == tenant.id)
+    )
+    posting_mode: str = cfg_res.scalar_one_or_none() or "full_erp"
+
+    # Module rows (keyed by module_key)
+    mod_res = await db.execute(
+        select(TenantModule).where(TenantModule.tenant_id == tenant.id)
+    )
+    mod_rows: dict[str, TenantModule] = {m.module_key: m for m in mod_res.scalars().all()}
+
+    modules = [
+        ModuleLicenseItem(
+            key=key,
+            label=label,
+            is_licensed=mod_rows[key].is_licensed if key in mod_rows else False,
+            is_active=mod_rows[key].is_active if key in mod_rows else False,
+        )
+        for key, label in _ALL_MODULES
+    ]
+
+    return SystemConfigResponse(posting_mode=posting_mode, modules=modules)
+
+
+@router.patch("/tenants/{tenant_id}/system-config", response_model=SystemConfigResponse)
+async def update_system_config(
+    tenant_id: uuid.UUID,
+    data: SystemConfigUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> SystemConfigResponse:
+    """
+    Update tenant posting_mode and/or module licensing flags.
+
+    TIER 2 — Super admin write for the consultant config panel.
+    - posting_mode: upserts TenantOrgConfig row if missing.
+    - module_licenses: {key: bool} map. Upserts TenantModule rows; only
+      sets is_licensed — never changes is_active (tenant activates modules
+      themselves). Validates that all submitted keys are in _ALL_MODULES.
+    Guard: super admin only.
+    """
+    _sa(current_user)
+    tenant = await _get_tenant_or_404(tenant_id, db)
+
+    from app.models.setup import TenantOrgConfig, TenantModule
+
+    valid_keys = {k for k, _ in _ALL_MODULES}
+
+    if data.module_licenses:
+        bad = set(data.module_licenses.keys()) - valid_keys
+        if bad:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown module key(s): {', '.join(sorted(bad))}",
+            )
+
+    # ── posting_mode ──────────────────────────────────────────────────────────
+    if data.posting_mode is not None:
+        cfg_res = await db.execute(
+            select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant.id)
+        )
+        cfg = cfg_res.scalar_one_or_none()
+        if cfg:
+            cfg.posting_mode = data.posting_mode
+        else:
+            db.add(TenantOrgConfig(
+                tenant_id=tenant.id,
+                posting_mode=data.posting_mode,
+            ))
+
+    # ── module licenses ───────────────────────────────────────────────────────
+    if data.module_licenses:
+        existing_res = await db.execute(
+            select(TenantModule).where(TenantModule.tenant_id == tenant.id)
+        )
+        existing: dict[str, TenantModule] = {
+            m.module_key: m for m in existing_res.scalars().all()
+        }
+
+        for key, is_lic in data.module_licenses.items():
+            if key in existing:
+                existing[key].is_licensed = is_lic
+                # Revoke active if license removed
+                if not is_lic:
+                    existing[key].is_active = False
+            else:
+                db.add(TenantModule(
+                    tenant_id=tenant.id,
+                    module_key=key,
+                    is_licensed=is_lic,
+                    is_active=False,
+                ))
+
+    await db.flush()
+
+    await _log(
+        "platform.system_config.updated",
+        current_user.user_id,
+        tenant.id,
+        {
+            "posting_mode": data.posting_mode,
+            "module_licenses": data.module_licenses,
+        },
+        db,
+    )
+
+    # Return fresh state
+    return await get_system_config(tenant_id, current_user, db)

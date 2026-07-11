@@ -61,6 +61,18 @@ interface TenantDetail {
 
 // ── Badge helpers ─────────────────────────────────────────────────────────────
 
+interface ModuleLicense {
+  key: string;
+  label: string;
+  is_licensed: boolean;
+  is_active: boolean;
+}
+
+interface SystemConfig {
+  posting_mode: string;
+  modules: ModuleLicense[];
+}
+
 const LIFECYCLE_CLS: Record<string, string> = {
   trial: "bg-gray-100 text-gray-600",
   in_implementation: "bg-blue-100 text-blue-700",
@@ -128,6 +140,13 @@ export default function TenantDetailPage() {
     else { _setUserSortCol(col); _setUserSortDir("asc"); lsSave({ sortCol: col, sortDir: "asc" }); }
   };
 
+  // Consultant system config (#49)
+  const [sysConfig, setSysConfig] = useState<SystemConfig | null>(null);
+  const [sysConfigSaving, setSysConfigSaving] = useState(false);
+  const [pendingMode, setPendingMode] = useState<string | null>(null);
+  const [pendingLicenses, setPendingLicenses] = useState<Record<string, boolean>>({});
+  const [sysConfigMsg, setSysConfigMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
   // Test/live environment management (M9.0.1: promotion is the single mechanism
   // for both "create live" and "update live" — see PromotionReviewDialog below).
   const [creatingTestEnv, setCreatingTestEnv]     = useState(false);
@@ -158,6 +177,50 @@ export default function TenantDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadSysConfig = async () => {
+    if (!accessToken || !id) return;
+    try {
+      const data = await apiFetch<SystemConfig>(
+        `/api/platform/tenants/${id}/system-config`,
+        { token: accessToken }
+      );
+      setSysConfig(data);
+      setPendingMode(data.posting_mode);
+      const lic: Record<string, boolean> = {};
+      data.modules.forEach(m => { lic[m.key] = m.is_licensed; });
+      setPendingLicenses(lic);
+    } catch {
+      // non-fatal — section shows loading state
+    }
+  };
+
+  useEffect(() => {
+    loadSysConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, id]);
+
+  const saveSysConfig = async () => {
+    if (!accessToken || !id) return;
+    setSysConfigSaving(true);
+    setSysConfigMsg(null);
+    try {
+      await apiFetch(`/api/platform/tenants/${id}/system-config`, {
+        method: "PATCH",
+        token: accessToken,
+        body: {
+          posting_mode: pendingMode,
+          module_licenses: pendingLicenses,
+        },
+      });
+      setSysConfigMsg({ type: "ok", text: "Configuration saved." });
+      await loadSysConfig();
+    } catch (e) {
+      setSysConfigMsg({ type: "err", text: e instanceof Error ? e.message : "Save failed" });
+    } finally {
+      setSysConfigSaving(false);
+    }
+  };
 
   const setLifecycle = async () => {
     if (!accessToken || !tenant) return;
@@ -722,6 +785,105 @@ export default function TenantDetailPage() {
           </table>
         )}
       </section>
+
+      {/* ── Consultant configuration ──────────────────────────────────────── */}
+      {user?.is_super_admin && (
+        <section className="border border-indigo-200 rounded-xl bg-white p-5 space-y-5">
+          <h2 className="text-xs font-semibold text-indigo-700 uppercase tracking-widest">
+            Consultant configuration
+          </h2>
+
+          {!sysConfig ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : (
+            <>
+              {/* Posting mode */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Posting mode</p>
+                <div className="flex flex-wrap gap-3">
+                  {(
+                    [
+                      { value: "lite",       label: "Lite",        desc: "No GL — approve only" },
+                      { value: "connected",  label: "Connected",   desc: "Export to external ERP" },
+                      { value: "full_erp",   label: "Full ERP",    desc: "Ziva BI internal GL" },
+                    ] as const
+                  ).map(opt => (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-2.5 cursor-pointer rounded-lg border px-4 py-3 text-sm transition-colors ${
+                        pendingMode === opt.value
+                          ? "border-indigo-500 bg-indigo-50"
+                          : "border-gray-200 hover:border-gray-300"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="posting_mode"
+                        value={opt.value}
+                        checked={pendingMode === opt.value}
+                        onChange={() => setPendingMode(opt.value)}
+                        className="mt-0.5 accent-indigo-600"
+                      />
+                      <div>
+                        <p className="font-medium text-gray-800">{opt.label}</p>
+                        <p className="text-xs text-gray-500">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Module licensing */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Module licensing</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {sysConfig.modules.map(mod => (
+                    <label
+                      key={mod.key}
+                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-gray-200 hover:border-gray-300 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={pendingLicenses[mod.key] ?? false}
+                        onChange={e => setPendingLicenses(prev => ({ ...prev, [mod.key]: e.target.checked }))}
+                        className="accent-indigo-600"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{mod.label}</p>
+                        {mod.is_active && (
+                          <p className="text-[10px] text-green-600 font-medium">Active</p>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400">
+                  Licensing grants the tenant permission to activate a module. Activation is done by the tenant in their setup portal.
+                </p>
+              </div>
+
+              {/* Save */}
+              {sysConfigMsg && (
+                <div className={`p-2.5 rounded-md text-xs border ${
+                  sysConfigMsg.type === "ok"
+                    ? "bg-green-50 border-green-200 text-green-700"
+                    : "bg-red-50 border-red-200 text-red-700"
+                }`}>
+                  {sysConfigMsg.text}
+                </div>
+              )}
+              <Button
+                variant="primary"
+                onClick={saveSysConfig}
+                loading={sysConfigSaving}
+                disabled={sysConfigSaving}
+              >
+                {sysConfigSaving ? "Saving…" : "Save configuration"}
+              </Button>
+            </>
+          )}
+        </section>
+      )}
 
     </PageContainer>
   );

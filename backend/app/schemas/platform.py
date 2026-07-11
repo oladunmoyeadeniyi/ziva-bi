@@ -228,3 +228,38 @@ class ImpersonationEndResponse(BaseModel):
 
     session_id: str
     message: str
+
+
+# ── #49 Consultant system config ──────────────────────────────────────────────
+
+class ModuleLicenseItem(BaseModel):
+    """One module row in the system config response."""
+
+    key: str
+    label: str
+    is_licensed: bool
+    is_active: bool
+
+
+class SystemConfigResponse(BaseModel):
+    """
+    Returned by GET /api/platform/tenants/{id}/system-config.
+
+    posting_mode: three-mode routing setting (lite | connected | full_erp).
+    modules: every known module key with its licensed + active flags.
+    """
+
+    posting_mode: str
+    modules: list[ModuleLicenseItem]
+
+
+class SystemConfigUpdate(BaseModel):
+    """
+    Body for PATCH /api/platform/tenants/{id}/system-config.
+
+    posting_mode: set to None to leave unchanged.
+    module_licenses: map of module_key -> is_licensed; omit keys to leave unchanged.
+    """
+
+    posting_mode: Optional[Literal["lite", "connected", "full_erp"]] = None
+    module_licenses: Optional[dict[str, bool]] = None

@@ -12,6 +12,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working in this
 
 Always read all three before coding anything. Update `MASTER_CONTEXT.md` after every completed milestone.
 
+## Cowork ↔ Claude Code Workflow
+
+Ziva BI uses two AI agents with distinct roles:
+
+| Agent | Role |
+|---|---|
+| **Cowork** (desktop) | Writes all code, creates migrations, builds frontend components |
+| **Claude Code (CC)** | Reviews Cowork's output, runs checks, commits and pushes to GitHub |
+
+### How to trigger a CC review + commit
+
+After Cowork finishes a task it writes `docs/PENDING_COMMIT.md` with the intent,
+changed files, what to verify, and the suggested commit message.
+
+In your CC terminal, type:
+```
+/review-commit
+```
+
+CC will read `docs/PENDING_COMMIT.md`, read every changed file, run `py_compile`
+and `tsc --noEmit`, verify the code matches the stated intent, then commit and push
+— or report what is wrong without committing.
+
+### Rules
+- **Cowork never commits directly** — it only writes code and PENDING_COMMIT.md
+- **CC never writes feature code** — it only reviews, checks, and commits
+- If CC flags a problem, Cowork fixes it; CC re-reviews on the next `/review-commit`
+- `docs/PENDING_COMMIT.md` is deleted by CC after a successful commit (it is stale once pushed)
+
+
 ## Repository Structure
 
 ```

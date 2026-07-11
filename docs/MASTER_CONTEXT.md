@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-11 (Three-Mode Architecture + Document Security decisions — see §7, §9, §10; briefs: `docs/BRIEF_three_mode_architecture.md`, `docs/BRIEF_document_storage_security.md`)
+> Last updated: 2026-07-11 (Three-Mode Architecture + Document Security decisions + implementation Phase 1 — see §5, §7, §9, §10)
 
 ---
 
@@ -414,6 +414,69 @@ Final polish on the People module plus the employee-to-user-account architecture
 
 ---
 
+### Three-Mode Architecture — Phase 1 (committed `f24c2fe`, 2026-07-11)
+
+Implemented the three-mode posting architecture and wired signup to create trial tenants. Full spec: `docs/BRIEF_three_mode_architecture.md`.
+
+**Backend (committed `f24c2fe`):**
+- **Migration `h1i2j3k4l5m6`** — adds `posting_mode VARCHAR(20) DEFAULT 'full_erp'` to `tenant_org_config`. Existing tenants default to `'full_erp'` — no data migration.
+- **Migration `i2j3k4l5m6n7`** — creates `posting_batches` table: `id UUID PK`, `tenant_id FK→tenants CASCADE`, `batch_ref VARCHAR(50) UNIQUE`, `module VARCHAR(30)`, `status` (pending/exported/synced), `transactions JSONB`, `created_at`, `exported_at`, `synced_at`. Reference format `BATCH-{YYYY}-{MM}-{NNN}`.
+- **`app/models/gl.py`** — `PostingBatch` ORM class with full docstrings.
+- **`app/models/setup.py`** — `posting_mode` field added to `TenantOrgConfig`.
+- **`app/schemas/posting.py`** — `PostingBatchSummary`, `PostingBatchDetail`, `TenantSystemConfig` (for consultant view).
+- **`app/schemas/setup.py`** — `posting_mode: str = "full_erp"` on `OrgConfigResponse` (read-only — NOT on PATCH schemas, intentional).
+- **`app/services/expense_posting.py`** — `PostingResult` dataclass (unified return: `mode`, `reference`, `journal_entry`, `posting_batch`). `post_expense_to_gl()` reads `posting_mode`, routes: lite → skip, connected → create `PostingBatch`, full_erp → existing GL journal path. Original GL path 100% unchanged.
+- **`app/routers/approvals.py`** — consumes `PostingResult`; mode-aware audit log events.
+- **`app/routers/posting_batches.py`** — NEW router: `GET /api/posting-batches` (list), `GET /api/posting-batches/{id}` (detail), `POST /api/posting-batches/{id}/export` (mark exported), `POST /api/posting-batches/{id}/mark-synced`.
+- **`app/main.py`** — registers `posting_batches_router`.
+- **`app/routers/auth.py`** — signup now creates `lifecycle_status='trial'` + `suppress_outbound_email=True`. Replaces previous `'in_implementation'` direct flow. No frontend change needed.
+
+---
+
+### Demo Seed Script (committed `ceb2862`, 2026-07-11)
+
+`backend/scripts/seed_demo_tenant.py` — idempotent seeder for trial tenants. Prepopulates a fresh trial with realistic demo data so new signups immediately see a working system.
+
+**Usage:**
+```
+python scripts/seed_demo_tenant.py --list-trials              # show available trial slugs
+python scripts/seed_demo_tenant.py --tenant-slug <slug>       # dry run (preview only)
+python scripts/seed_demo_tenant.py --tenant-slug <slug> --apply  # writes to DB
+```
+
+**Seeds (all idempotent — re-running is safe):**
+- `TenantOrgConfig`: "Acme Manufacturing Limited", NGN, posting_mode=full_erp
+- 4 `org_structure` cost centers: FIN, OPS, SAL, ADM
+- 7 `approval_roles`: CEO, FD, FM, SA, OM, SM, HRM
+- 24 `chart_of_accounts` entries (P&L + BS covering common account types)
+- 12 employees (EMP-001 through EMP-012)
+- 6 `expense_reports`: 2×DRAFT, 2×SUBMITTED, 1×APPROVED, 1×REJECTED
+
+---
+
+### SA Portal — Consultant Config Panel (#49, uncommitted, pending CC review 2026-07-11)
+
+Extended the SA portal tenant detail page with a consultant-only configuration panel. This is the "Three-Mode Phase 2 SA Portal" work from `docs/BRIEF_three_mode_architecture.md`.
+
+**Backend (uncommitted):**
+- **`app/schemas/platform.py`** — 3 new schemas: `ModuleLicenseItem`, `SystemConfigResponse`, `SystemConfigUpdate`.
+- **`app/routers/platform.py`** — 2 new endpoints:
+  - `GET /api/platform/tenants/{tenant_id}/system-config` → reads `TenantOrgConfig.posting_mode` + all `TenantModule` rows; returns `SystemConfigResponse`.
+  - `PATCH /api/platform/tenants/{tenant_id}/system-config` → upserts `posting_mode`, upserts module license flags (revoking license auto-sets `is_active=False`), writes audit log. SA-only.
+- Modules catalogue (`_ALL_MODULES`): 13 modules (expense, ap, ar, payroll, bank_recon, budget, tax_engine, inventory, fixed_assets, posm, vendor_portal, customer_portal, reporting).
+
+**Frontend (uncommitted):**
+- **`frontend/src/app/platform/tenants/[id]/page.tsx`** — new "Consultant Config" section (indigo accent, SA-only): posting mode radio cards (lite/connected/full_erp) + module license checkboxes grid + save button. State: `sysConfig`, `sysConfigSaving`, `pendingMode`, `pendingLicenses`.
+
+**Workflow tooling (uncommitted):**
+- **`.claude/commands/review-commit.md`** — CC slash command (`/review-commit`): 6-step process (read PENDING_COMMIT.md → read changed files → py_compile + tsc → ruff → commit+push or report → verify with git log).
+- **`docs/PENDING_COMMIT.md`** — current brief for CC's first comprehensive review.
+
+> ⏳ **Waiting for CC commit.** The user will type `/review-commit` in Claude Code to trigger the review + push.
+
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -502,7 +565,7 @@ Architectural invariants that are durable decisions (the WHY):
 
 ### Next feature work (in this order)
 
-6. **Three-Mode Architecture Foundation** — Phase 1 (backend): `posting_mode` migration, `posting_batches` table, `expense_posting.py` routing, export endpoint. Phase 2 (SA portal): signup trial flow, consultant config panel, "Trials & signups" page. Phase 3 (setup sequence + CoA): mode-aware setup portal, simplified CoA template, GL group hierarchy path in picker. Full spec: `docs/BRIEF_three_mode_architecture.md`.
+6. **Three-Mode Architecture** — Phase 1 (backend) ✅ DONE (commit `f24c2fe`): migrations, posting_batches, expense_posting routing, export endpoints, trial signup. Phase 2 (SA portal consultant panel) ⏳ PENDING CC REVIEW (uncommitted — `#49`): system-config GET/PATCH endpoints, frontend panel. Phase 3 (not yet started): "Trials & signups" SA page, mode-aware setup portal, GL group hierarchy path in picker. Full spec: `docs/BRIEF_three_mode_architecture.md`.
 7. **Document Security Hardening** — Phase 1: signed URL expiry → 15 min, SHA-256 hash, magic bytes validation, image/PDF compression, deduplication, retention policy enforcement, access audit log. Phase 2 (later): Cloudflare R2 migration. Full spec: `docs/BRIEF_document_storage_security.md`.
 8. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
 9. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
@@ -574,4 +637,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-11 (People Module Polish + Employee-User Link close-out — §5 entries added for Role Hierarchy Enhancements, Finance Review Workflow, System Function Mapping, People Module v1, Single Source of Truth merge, and People Module Polish/Employee-User Link; §9 closed-out items added; last pushed commit `a656f65`, confirmed against `origin/main`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-11 (Three-Mode Architecture + Demo Seed + SA Portal Consultant Config — §5 entries added; last pushed commit `ceb2862`; #49 uncommitted, pending CC review). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
