@@ -51,6 +51,8 @@ from app.schemas.platform import (
     TenantListItem,
     TenantUserSummary,
     TestEnvSummary,
+    TrialLeadUpdate,
+    TrialListItem,
     UserImpersonateRequest,
     UserImpersonateResponse,
 )
@@ -1256,3 +1258,156 @@ async def update_system_config(
 
     # Return fresh state
     return await get_system_config(tenant_id, current_user, db)
+
+
+# ── Trials & signups ──────────────────────────────────────────────────────────
+
+@router.get("/trials", response_model=list[TrialListItem])
+async def list_trials(
+    search: str | None = Query(None, description="Partial match on name or slug"),
+    lead_status: str | None = Query(None, description="new | contacted | qualified | disqualified"),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[TrialListItem]:
+    """
+    List all trial tenants for the SA lead management queue.
+
+    Returns lifecycle_status='trial' tenants only, joined with TenantOrgConfig
+    for industry and company_email (nullable — fresh trials may not have filled
+    these in yet). Ordered by created_at desc (newest first).
+
+    SA-only endpoint.
+    """
+    _sa(current_user)
+    from app.models.setup import TenantOrgConfig
+
+    # User-count subquery (reused from list_tenants)
+    user_count_sq = (
+        select(UserTenant.tenant_id, func.count(UserTenant.id).label("cnt"))
+        .where(UserTenant.tenant_id.isnot(None))
+        .group_by(UserTenant.tenant_id)
+        .subquery()
+    )
+
+    q = (
+        select(
+            Tenant,
+            func.coalesce(user_count_sq.c.cnt, 0).label("user_count"),
+            TenantOrgConfig.industry,
+            TenantOrgConfig.company_email,
+        )
+        .outerjoin(user_count_sq, Tenant.id == user_count_sq.c.tenant_id)
+        .outerjoin(TenantOrgConfig, TenantOrgConfig.tenant_id == Tenant.id)
+        .where(Tenant.lifecycle_status == "trial")
+    )
+
+    if lead_status:
+        q = q.where(Tenant.lead_status == lead_status)  # type: ignore[arg-type]
+
+    if search:
+        like = f"%{search}%"
+        q = q.where(
+            Tenant.name.ilike(like) | Tenant.slug.ilike(like)  # type: ignore[union-attr]
+        )
+
+    q = q.order_by(Tenant.created_at.desc())
+
+    rows = (await db.execute(q)).all()
+
+    return [
+        TrialListItem(
+            id=str(t.id),
+            name=t.name,
+            slug=t.slug,
+            country=t.country,
+            environment=t.environment,
+            lifecycle_status=t.lifecycle_status,
+            lead_status=t.lead_status,
+            implementation_notes=t.implementation_notes,
+            industry=industry,
+            company_email=company_email,
+            user_count=cnt,
+            created_at=t.created_at,
+        )
+        for t, cnt, industry, company_email in rows
+    ]
+
+
+@router.patch("/trials/{tenant_id}", response_model=TrialListItem)
+async def update_trial_lead(
+    tenant_id: str,
+    data: TrialLeadUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> TrialListItem:
+    """
+    Update lead_status and/or implementation_notes on a trial tenant.
+
+    Used by consultants to track outreach progress:
+      new → contacted → qualified → (activate) → in_implementation
+      new / contacted / qualified → disqualified (not a fit)
+
+    Returns the updated TrialListItem so the frontend can update its local list.
+    SA-only endpoint.
+    """
+    _sa(current_user)
+
+    tenant = await db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if tenant.lifecycle_status != "trial":
+        raise HTTPException(
+            status_code=400,
+            detail="Only trial tenants can be updated via this endpoint"
+        )
+    from app.models.setup import TenantOrgConfig
+
+    if data.lead_status is not None:
+        tenant.lead_status = data.lead_status
+    if data.implementation_notes is not None:
+        tenant.implementation_notes = data.implementation_notes
+
+    await db.flush()
+
+    await _log(
+        "platform.trial.lead_updated",
+        current_user.user_id,
+        tenant.id,
+        {
+            "lead_status": data.lead_status,
+            "implementation_notes": bool(data.implementation_notes),
+        },
+        db,
+    )
+
+    # Load org config for the response
+    org_cfg = (
+        await db.execute(
+            select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant.id)
+        )
+    ).scalar_one_or_none()
+
+    user_count_sq = (
+        select(func.count(UserTenant.id))
+        .where(
+            UserTenant.tenant_id == tenant.id,
+            UserTenant.tenant_id.isnot(None),
+        )
+        .scalar_subquery()
+    )
+    user_count = (await db.execute(select(user_count_sq))).scalar_one() or 0
+
+    return TrialListItem(
+        id=str(tenant.id),
+        name=tenant.name,
+        slug=tenant.slug,
+        country=tenant.country,
+        environment=tenant.environment,
+        lifecycle_status=tenant.lifecycle_status,
+        lead_status=tenant.lead_status,
+        implementation_notes=tenant.implementation_notes,
+        industry=org_cfg.industry if org_cfg else None,
+        company_email=org_cfg.company_email if org_cfg else None,
+        user_count=user_count,
+        created_at=tenant.created_at,
+    )

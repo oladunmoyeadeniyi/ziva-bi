@@ -116,6 +116,15 @@ class Tenant(Base):
     suppress_outbound_email: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    # Trial lead tracking — Three-Mode Architecture (2026-07-11).
+    # lead_status: consultant's outreach progress for trial tenants.
+    #   new | contacted | qualified | disqualified
+    # Harmless on non-trial tenants (stays 'new' forever).
+    lead_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="new", server_default="new", index=True
+    )
+    # Consultant scratchpad — call notes, ERP background, etc. Never shown to tenant.
+    implementation_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

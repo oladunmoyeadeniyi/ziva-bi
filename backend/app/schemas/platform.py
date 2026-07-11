@@ -263,3 +263,38 @@ class SystemConfigUpdate(BaseModel):
 
     posting_mode: Optional[Literal["lite", "connected", "full_erp"]] = None
     module_licenses: Optional[dict[str, bool]] = None
+
+
+class TrialListItem(BaseModel):
+    """One row in the GET /api/platform/trials list.
+
+    Carries trial-specific fields (lead_status, implementation_notes) alongside
+    the core tenant identity. industry/company_email are joined from
+    TenantOrgConfig (nullable — a fresh trial may not have set them yet).
+    """
+
+    id: str
+    name: str
+    slug: str
+    country: str
+    environment: str
+    lifecycle_status: str
+    lead_status: str            # new | contacted | qualified | disqualified
+    implementation_notes: str | None
+    industry: str | None        # from TenantOrgConfig (nullable on fresh trials)
+    company_email: str | None   # from TenantOrgConfig (nullable on fresh trials)
+    user_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TrialLeadUpdate(BaseModel):
+    """Body for PATCH /api/platform/trials/{tenant_id}.
+
+    Both fields are optional — send only what you're changing.
+    lead_status values: new | contacted | qualified | disqualified.
+    """
+
+    lead_status: Optional[Literal["new", "contacted", "qualified", "disqualified"]] = None
+    implementation_notes: Optional[str] = None
