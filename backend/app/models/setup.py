@@ -329,6 +329,15 @@ class TenantOrgConfig(Base):
     posting_mode: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="full_erp", default="full_erp"
     )
+    # Document retention — SA-configurable per tenant.
+    # Platform minimum is 15 years (exceeds FIRS 6-year floor + NDPR 2019 + CAMA 2020).
+    # SA may raise this per tenant; the upload handler (task #55) uses this value to
+    # compute retain_until = date.today() + relativedelta(years=document_retention_years).
+    # Hard deletes blocked until retain_until has passed; bulk deletes additionally require
+    # explicit backup confirmation before the wipe is executed.
+    document_retention_years: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="15", default=15
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

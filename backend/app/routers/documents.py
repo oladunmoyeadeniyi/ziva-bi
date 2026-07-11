@@ -367,7 +367,7 @@ async def delete_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
     # Permission check
-    if doc.uploaded_by != current_user.id and not current_user.is_tenant_admin:
+    if doc.uploaded_by != current_user.user_id and not current_user.is_tenant_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the uploader or a Tenant Admin can delete documents.",
