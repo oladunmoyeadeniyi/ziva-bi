@@ -488,7 +488,6 @@ async def get_tenant(
             email=u.email,
             role_tier=ut.role_tier,
             is_active=ut.is_active,
-            user_type=ut.user_type if hasattr(ut, "user_type") else "employee",
         )
         for u, ut in ut_rows
     ]
@@ -1099,4 +1098,9 @@ async def platform_promotion_apply(
             "created":         result.created,
             "updated":         result.updated,
             "deactivated":     result.deactivated,
-            "total_ap
+            "total_applied":   result.total_applied,
+        },
+        db,
+    )
+
+    return result

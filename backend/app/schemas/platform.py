@@ -36,7 +36,6 @@ class TenantUserSummary(BaseModel):
     email: str
     role_tier: str | None
     is_active: bool
-    user_type: str  # 'employee' | 'external'
 
 
 class TestEnvSummary(BaseModel):
@@ -224,4 +223,7 @@ class UserImpersonateResponse(BaseModel):
 
 
 class ImpersonationEndResponse(BaseModel):
-    """Returned by POST /api/platform/impersonation/{session_id}/
+    """Returned by POST /api/platform/impersonation/{session_id}/end."""
+
+    session_id: str
+    message: str
