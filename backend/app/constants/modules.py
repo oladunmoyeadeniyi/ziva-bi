@@ -20,11 +20,11 @@ Usage
 
 MODULE_CATALOGUE: list[dict[str, str]] = [
     {"key": "expense",          "label": "Expense Management"},
-    {"key": "ap",               "label": "Accounts Payable"},
-    {"key": "ar",               "label": "Accounts Receivable"},
+    {"key": "ap",               "label": "Accounts Payable (P2P)"},
+    {"key": "ar",               "label": "Accounts Receivable (O2C)"},
     {"key": "payroll",          "label": "Payroll & HR"},
     {"key": "bank_recon",       "label": "Bank Reconciliation"},
-    {"key": "budget",           "label": "Budget Engine"},
+    {"key": "budget",           "label": "Budget & Planning"},
     {"key": "tax_engine",       "label": "Tax Engine"},
     {"key": "inventory",        "label": "Inventory & Warehouse"},
     {"key": "fixed_assets",     "label": "Fixed Assets"},

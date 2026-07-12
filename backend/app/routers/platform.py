@@ -1621,7 +1621,7 @@ async def create_tenant(
         name=data.company_name.strip(),
         slug=slug,
         country=country,
-        environment="live",
+        environment=data.environment,
         lifecycle_status="trial",
         lead_status="new",
         company_size=data.company_size,

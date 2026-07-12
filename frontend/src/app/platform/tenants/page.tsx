@@ -105,6 +105,7 @@ function CreateCompanyModal({
   const [adminEmail,     setAdminEmail]     = useState("");
   const [adminPassword,  setAdminPassword]  = useState("");
   const [postingMode,    setPostingMode]    = useState("full_erp");
+  const [environment,    setEnvironment]    = useState<"live" | "test">("live");
   const [companySize,    setCompanySize]    = useState("");
   const [selModules,     setSelModules]     = useState<string[]>([]);
   const [saving,         setSaving]         = useState(false);
@@ -116,8 +117,8 @@ function CreateCompanyModal({
 
   function reset() {
     setCompanyName(""); setCountry("NG"); setAdminName(""); setAdminEmail("");
-    setAdminPassword(""); setPostingMode("full_erp"); setCompanySize("");
-    setSelModules([]); setError("");
+    setAdminPassword(""); setPostingMode("full_erp"); setEnvironment("live");
+    setCompanySize(""); setSelModules([]); setError("");
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -134,6 +135,7 @@ function CreateCompanyModal({
           admin_email: adminEmail,
           admin_password: adminPassword,
           posting_mode: postingMode,
+          environment,
           company_size: companySize || undefined,
           initial_modules: selModules.length > 0 ? selModules : undefined,
         },
@@ -161,6 +163,35 @@ function CreateCompanyModal({
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* Environment type */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Tenant type</p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { value: "live",  label: "Real business",  desc: "A paying or trial client" },
+                { value: "test",  label: "System / test",  desc: "Internal sandbox — not a real company" },
+              ] as const).map((opt) => (
+                <label key={opt.value} className={`flex flex-col gap-1 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                  environment === opt.value
+                    ? opt.value === "live"
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-amber-400 bg-amber-50"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}>
+                  <input type="radio" name="environment" value={opt.value} checked={environment === opt.value}
+                    onChange={() => setEnvironment(opt.value)} className="sr-only" />
+                  <span className={`text-sm font-semibold ${environment === opt.value ? (opt.value === "live" ? "text-blue-800" : "text-amber-800") : "text-gray-800"}`}>{opt.label}</span>
+                  <span className="text-xs text-gray-500">{opt.desc}</span>
+                </label>
+              ))}
+            </div>
+            {environment === "test" && (
+              <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                This tenant will be tagged as <strong>test</strong> and excluded from live tenant counts and billing.
+              </p>
+            )}
+          </div>
+
           {/* Company */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Company</p>
@@ -422,7 +453,7 @@ export default function PlatformTenantsPage() {
         if (implCount  > 0) parts.push(`${implCount} in implementation`);
         if (trialCount > 0) parts.push(`${trialCount} trial`);
         if (suspCount  > 0) parts.push(`${suspCount} suspended`);
-        return parts.length > 0 ? <p className="mt-2 text-xs text-gray-500">{parts.join(" · ")}</p> : null;
+        return parts.length > 0 ? <p className="mt-2 text-xs text-gray-500">{parts.join(" \xb7 ")}</p> : null;
       })()}
       <p className="mt-1 text-xs text-gray-400">
         {!loading && `${tenants.length} tenant${tenants.length !== 1 ? "s" : ""} shown`}

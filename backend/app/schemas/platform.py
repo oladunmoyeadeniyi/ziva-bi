@@ -341,6 +341,7 @@ class CreateTenantRequest(BaseModel):
     admin_full_name: str
     admin_password: str               # temp password; min 8 chars
     posting_mode: Literal["lite", "connected", "full_erp"] = "full_erp"
+    environment: Literal["live", "test"] = "live"
     # Optional trial lead fields
     company_size: Optional[str] = None
     interested_modules: Optional[list[str]] = None
