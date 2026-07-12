@@ -19,6 +19,13 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { MODULE_KEY_TO_LABEL } from "@/lib/modules";
+
+const POSTING_MODE_LABELS: Record<string, string> = {
+  lite:       "Lite",
+  connected:  "Connected",
+  full_erp:   "Full ERP",
+};
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +42,10 @@ interface TrialTenant {
   company_email: string | null;
   user_count: number;
   created_at: string;
+  // Trial lead qualification fields (captured at signup step 2)
+  company_size: string | null;
+  interested_modules: string[] | null;
+  posting_mode: string | null;
 }
 
 const LEAD_STATUS_LABELS: Record<string, string> = {
@@ -344,9 +355,38 @@ export default function PlatformTrialsPage() {
                   }`}
                 >
                   {/* Company */}
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-4 max-w-[220px]">
                     <p className="font-medium text-gray-800">{trial.name}</p>
                     <p className="text-xs text-gray-400 mt-0.5">{trial.slug}</p>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {trial.company_size && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">
+                          {trial.company_size} emp.
+                        </span>
+                      )}
+                      {trial.posting_mode && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700">
+                          {POSTING_MODE_LABELS[trial.posting_mode] ?? trial.posting_mode}
+                        </span>
+                      )}
+                    </div>
+                    {trial.interested_modules && trial.interested_modules.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {trial.interested_modules.slice(0, 3).map((key) => (
+                          <span
+                            key={key}
+                            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-blue-50 text-blue-700"
+                          >
+                            {MODULE_KEY_TO_LABEL[key] ?? key}
+                          </span>
+                        ))}
+                        {trial.interested_modules.length > 3 && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-gray-400">
+                            +{trial.interested_modules.length - 3} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
 
                   {/* Country / Industry */}
@@ -447,7 +487,20 @@ export default function PlatformTrialsPage() {
               <span className="font-medium text-blue-600">Trial</span> to{" "}
               <span className="font-medium text-indigo-600">In implementation</span>.
             </p>
-            <p className="text-xs text-gray-400 mb-5">
+            {confirmActivate.posting_mode && (
+              <p className="text-xs text-indigo-600 mb-1">
+                Preferred mode: <strong>{POSTING_MODE_LABELS[confirmActivate.posting_mode] ?? confirmActivate.posting_mode}</strong>
+              </p>
+            )}
+            {confirmActivate.interested_modules && confirmActivate.interested_modules.length > 0 && (
+              <p className="text-xs text-indigo-600 mb-1">
+                Modules of interest:{" "}
+                {confirmActivate.interested_modules
+                  .map((k) => MODULE_KEY_TO_LABEL[k] ?? k)
+                  .join(", ")}
+              </p>
+            )}
+            <p className="text-xs text-gray-400 mb-5 mt-2">
               The tenant user will be able to start the guided setup process. Make sure you have
               set the posting mode and licensed the correct modules before activating.
             </p>

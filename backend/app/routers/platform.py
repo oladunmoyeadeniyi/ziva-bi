@@ -36,6 +36,8 @@ from app.config import settings
 from app.models.auth import AuditLog, ImpersonationSession, Role, Tenant, User, UserRole, UserTenant
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
+    CreateTenantRequest,
+    CreateTenantResponse,
     NukeTenantRequest,
     EnterTenantRequest,
     EnterTenantResponse,
@@ -1116,22 +1118,7 @@ async def platform_promotion_apply(
 
 # ── #49 Consultant system config ──────────────────────────────────────────────
 
-# All known module keys with display labels (matches tenant_modules.module_key values)
-_ALL_MODULES: list[tuple[str, str]] = [
-    ("expense",          "Expense Management"),
-    ("ap",               "Accounts Payable (P2P)"),
-    ("ar",               "Accounts Receivable (O2C)"),
-    ("payroll",          "Payroll & HR"),
-    ("bank_recon",       "Bank Reconciliation"),
-    ("budget",           "Budget & Planning"),
-    ("tax_engine",       "Tax Engine"),
-    ("inventory",        "Inventory & Warehouse"),
-    ("fixed_assets",     "Fixed Assets"),
-    ("posm",             "Point of Sale"),
-    ("vendor_portal",    "Vendor Portal"),
-    ("customer_portal",  "Customer Portal"),
-    ("reporting",        "Advanced Reporting"),
-]
+from app.constants.modules import MODULE_CATALOGUE as _MODULE_CATALOGUE, VALID_MODULE_KEYS as _VALID_MODULE_KEYS
 
 
 @router.get("/tenants/{tenant_id}/system-config", response_model=SystemConfigResponse)
@@ -1170,7 +1157,8 @@ async def get_system_config(
             is_licensed=mod_rows[key].is_licensed if key in mod_rows else False,
             is_active=mod_rows[key].is_active if key in mod_rows else False,
         )
-        for key, label in _ALL_MODULES
+        for m in _MODULE_CATALOGUE
+        for key, label in [(m["key"], m["label"])]
     ]
 
     return SystemConfigResponse(posting_mode=posting_mode, modules=modules)
@@ -1190,7 +1178,7 @@ async def update_system_config(
     - posting_mode: upserts TenantOrgConfig row if missing.
     - module_licenses: {key: bool} map. Upserts TenantModule rows; only
       sets is_licensed — never changes is_active (tenant activates modules
-      themselves). Validates that all submitted keys are in _ALL_MODULES.
+      themselves). Validates that all submitted keys are in MODULE_CATALOGUE.
     Guard: super admin only.
     """
     _sa(current_user)
@@ -1198,7 +1186,7 @@ async def update_system_config(
 
     from app.models.setup import TenantOrgConfig, TenantModule
 
-    valid_keys = {k for k, _ in _ALL_MODULES}
+    valid_keys = _VALID_MODULE_KEYS
 
     if data.module_licenses:
         bad = set(data.module_licenses.keys()) - valid_keys
@@ -1297,6 +1285,7 @@ async def list_trials(
             func.coalesce(user_count_sq.c.cnt, 0).label("user_count"),
             TenantOrgConfig.industry,
             TenantOrgConfig.company_email,
+            TenantOrgConfig.posting_mode,
         )
         .outerjoin(user_count_sq, Tenant.id == user_count_sq.c.tenant_id)
         .outerjoin(TenantOrgConfig, TenantOrgConfig.tenant_id == Tenant.id)
@@ -1330,8 +1319,11 @@ async def list_trials(
             company_email=company_email,
             user_count=cnt,
             created_at=t.created_at,
+            company_size=t.company_size,
+            interested_modules=t.interested_modules,
+            posting_mode=posting_mode,
         )
-        for t, cnt, industry, company_email in rows
+        for t, cnt, industry, company_email, posting_mode in rows
     ]
 
 
@@ -1412,6 +1404,9 @@ async def update_trial_lead(
         company_email=org_cfg.company_email if org_cfg else None,
         user_count=user_count,
         created_at=tenant.created_at,
+        company_size=tenant.company_size,
+        interested_modules=tenant.interested_modules,
+        posting_mode=org_cfg.posting_mode if org_cfg else None,
     )
 
 
@@ -1533,7 +1528,7 @@ async def nuke_tenant(
                 await db.delete(user_obj)
         # else: user exists in other companies — tenant CASCADE removes their rows here
 
-    # ── Step 3: write audit records BEFORE deleting tenants ───────────────────
+    # ── Step 3: write audit records BEFORE deleting tenants ─────────────────────
     for t in all_tenants:
         await _log(
             "TENANT_DELETED",
@@ -1549,8 +1544,165 @@ async def nuke_tenant(
             db,
         )
 
-    # ── Step 4: delete all tenant rows (CASCADE handles child tables) ──────────
+    # ── Step 4: delete all tenant rows (CASCADE handles child tables) ───────────
     # Delete live tenant first to avoid parent_tenant_id FK issues.
     for t in sorted(all_tenants, key=lambda x: 0 if x.environment == "live" else 1):
         await db.delete(t)
     await db.commit()
+
+    return Response(status_code=204)
+
+
+# ── SA: Create tenant directly ──────────────────────────────────────────────
+
+@router.post("/tenants", response_model=CreateTenantResponse, status_code=201)
+async def create_tenant(
+    data: CreateTenantRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CreateTenantResponse:
+    """
+    SA-only: create a new trial tenant from the platform portal.
+
+    Creates:
+      1. A Tenant row (lifecycle_status='trial', environment='live')
+      2. An initial Power Admin User account
+      3. A UserTenant linking them with role_tier='power_admin'
+      4. A TenantOrgConfig with the chosen posting_mode
+      5. Optional module licenses from initial_modules list
+
+    The admin user receives a temporary password set by the SA. No email
+    is sent automatically — the SA communicates credentials separately
+    or triggers a password-reset flow.
+    """
+    from app.core.security import hash_password
+    from app.models.setup import TenantOrgConfig
+    from app.constants.modules import VALID_MODULE_KEYS
+
+    _sa(current_user)
+
+    # ─ Validate country code ───────────────────────────────────────────────────────────────────
+    country = data.company_country.strip().upper()
+    if len(country) != 2 or not country.isalpha():
+        raise HTTPException(status_code=400, detail="company_country must be a 2-letter ISO code.")
+
+    # ─ Validate password length ───────────────────────────────────────────────────────────────────
+    if len(data.admin_password) < 8:
+        raise HTTPException(status_code=400, detail="admin_password must be at least 8 characters.")
+
+    # ─ Validate module keys ─────────────────────────────────────────────────────────────────
+    invalid_modules = [k for k in (data.initial_modules or []) if k not in VALID_MODULE_KEYS]
+    if invalid_modules:
+        raise HTTPException(status_code=400, detail=f"Unknown module keys: {invalid_modules}")
+
+    # ─ Check email uniqueness ───────────────────────────────────────────────────────────────────
+    admin_email = data.admin_email.strip().lower()
+    existing_user = (
+        await db.execute(select(User).where(User.email == admin_email))
+    ).scalar_one_or_none()
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A user with email {admin_email} already exists."
+        )
+
+    # ─ Build slug from company name ─────────────────────────────────────────────────────────────────
+    import re as _re
+    base_slug = _re.sub(r'[^a-z0-9]+', '-', data.company_name.strip().lower()).strip('-')[:40]
+    slug = base_slug
+    suffix = 1
+    while (await db.execute(select(Tenant).where(Tenant.slug == slug))).scalar_one_or_none():
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    # ─ Create tenant ───────────────────────────────────────────────────────────────────────────
+    from app.models.auth import AccountType
+    tenant = Tenant(
+        name=data.company_name.strip(),
+        slug=slug,
+        country=country,
+        environment="live",
+        lifecycle_status="trial",
+        lead_status="new",
+        company_size=data.company_size,
+        interested_modules=data.interested_modules,
+    )
+    db.add(tenant)
+    await db.flush()  # get tenant.id
+
+    # ─ TenantOrgConfig ───────────────────────────────────────────────────────────────────────────
+    # Derive a default functional currency from country (best-effort; can be changed later)
+    _CURRENCY_MAP = {
+        "NG": "NGN", "GH": "GHS", "KE": "KES", "ZA": "ZAR", "GB": "GBP",
+        "US": "USD", "CA": "CAD", "AU": "AUD", "DE": "EUR", "FR": "EUR",
+        "NL": "EUR", "AE": "AED", "SG": "SGD", "IN": "INR", "BR": "BRL",
+        "JP": "JPY", "CN": "CNY", "EG": "EGP", "ET": "ETB", "RW": "RWF",
+    }
+    functional_currency = _CURRENCY_MAP.get(country, "USD")
+    db.add(TenantOrgConfig(
+        tenant_id=tenant.id,
+        functional_currency=functional_currency,
+        posting_mode=data.posting_mode,
+    ))
+
+    # ─ Module licenses ───────────────────────────────────────────────────────────────────────────
+    from app.models.setup import TenantModule
+    for module_key in (data.initial_modules or []):
+        db.add(TenantModule(
+            tenant_id=tenant.id,
+            module_key=module_key,
+            is_licensed=True,
+            is_active=True,
+        ))
+
+    # ─ Create admin user ───────────────────────────────────────────────────────────────────────────
+    admin_user = User(
+        email=admin_email,
+        full_name=data.admin_full_name.strip(),
+        first_name=data.admin_full_name.strip().split(" ")[0],
+        account_type=AccountType.business,
+        is_active=True,
+        is_super_admin=False,
+    )
+    db.add(admin_user)
+    await db.flush()  # get admin_user.id
+
+    # ─ UserTenant link with power_admin role tier (holds password hash) ──────────────
+    db.add(UserTenant(
+        user_id=admin_user.id,
+        tenant_id=tenant.id,
+        password_hash=hash_password(data.admin_password),
+        role_tier="power_admin",
+        is_active=True,
+    ))
+
+    # ─ Audit log ────────────────────────────────────────────────────────────────────────────────────
+    await _log(
+        "platform.tenant.created_by_sa",
+        current_user.user_id,
+        tenant.id,
+        {
+            "company_name": tenant.name,
+            "slug": tenant.slug,
+            "admin_email": admin_email,
+            "posting_mode": data.posting_mode,
+            "initial_modules": data.initial_modules or [],
+        },
+        db,
+    )
+
+    await db.commit()
+    await db.refresh(tenant)
+    await db.refresh(admin_user)
+
+    return CreateTenantResponse(
+        id=str(tenant.id),
+        name=tenant.name,
+        slug=tenant.slug,
+        country=tenant.country,
+        environment=tenant.environment,
+        lifecycle_status=tenant.lifecycle_status,
+        created_at=tenant.created_at,
+        admin_user_id=str(admin_user.id),
+        admin_email=admin_user.email,
+    )

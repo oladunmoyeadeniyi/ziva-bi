@@ -31,6 +31,12 @@ class SignupRequest(BaseModel):
     full_name: str
     company_name: str | None = None
     company_country: str | None = None  # ISO 3166-1 alpha-2, e.g. "NG", "GB"
+    # Optional trial lead qualification — captured at signup, shown in SA Trials page.
+    phone: str | None = None
+    job_title: str | None = None
+    company_size: str | None = None           # "1-10" | "11-50" | "51-200" | "200+"
+    interested_modules: list[str] | None = None  # module keys from MODULE_CATALOGUE
+    preferred_posting_mode: str | None = None    # "lite" | "connected" | "full_erp"
 
     @field_validator("email")
     @classmethod

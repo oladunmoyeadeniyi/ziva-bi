@@ -100,6 +100,12 @@ export interface SignupData {
   full_name: string;
   company_name?: string;
   company_country?: string;
+  // Trial lead qualification fields (step 2 of signup)
+  phone?: string;
+  job_title?: string;
+  company_size?: string;
+  interested_modules?: string[];
+  preferred_posting_mode?: string;
 }
 
 interface AuthContextType {

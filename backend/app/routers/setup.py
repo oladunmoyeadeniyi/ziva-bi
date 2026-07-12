@@ -178,24 +178,7 @@ COUNTRY_CURRENCY_MAP: dict[str, str] = {
 
 # ── Module catalogue (all 14 modules) ─────────────────────────────────────────
 
-MODULE_CATALOGUE = [
-    {"key": "expense",         "label": "Expense Management"},
-    {"key": "ap",              "label": "Accounts Payable"},
-    {"key": "ar",              "label": "Accounts Receivable"},
-    {"key": "payroll",         "label": "Payroll & HR"},
-    {"key": "inventory",       "label": "Inventory Management"},
-    {"key": "fixed_assets",    "label": "Fixed Assets"},
-    {"key": "posm",            "label": "POSM Management"},
-    {"key": "vendor_portal",   "label": "Vendor Portal"},
-    {"key": "customer_portal", "label": "Customer Portal"},
-    {"key": "warehouse",       "label": "Warehouse / 3PL Portal"},
-    {"key": "bank_recon",      "label": "Bank Reconciliation"},
-    {"key": "budget",          "label": "Budget Engine"},
-    {"key": "tax_engine",      "label": "Tax Engine"},
-    {"key": "reporting",       "label": "Reporting & Analytics"},
-]
-
-MODULE_KEY_TO_LABEL = {m["key"]: m["label"] for m in MODULE_CATALOGUE}
+from app.constants.modules import MODULE_CATALOGUE, MODULE_KEY_TO_LABEL, VALID_MODULE_KEYS
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -2946,10 +2929,14 @@ async def patch_modules(
     """
     Activate or deactivate modules for the tenant.
 
+    SA-ONLY — module activation is a commercial/configuration decision made by the
+    Ziva BI team. Tenant users (including power_admin) can view module status but
+    cannot toggle it. A super admin performs this via impersonation.
+
     Enforces: a module can only be activated if is_licensed = true.
     Returns 403 if attempting to activate an unlicensed module.
     """
-    _require_admin(current_user)
+    _require_consultant(current_user)
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(

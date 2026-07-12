@@ -271,6 +271,8 @@ class TrialListItem(BaseModel):
     Carries trial-specific fields (lead_status, implementation_notes) alongside
     the core tenant identity. industry/company_email are joined from
     TenantOrgConfig (nullable — a fresh trial may not have set them yet).
+    company_size, interested_modules, and posting_mode come from signup step-2
+    fields captured at registration time.
     """
 
     id: str
@@ -285,6 +287,10 @@ class TrialListItem(BaseModel):
     company_email: str | None   # from TenantOrgConfig (nullable on fresh trials)
     user_count: int
     created_at: datetime
+    # Trial lead qualification fields — captured at signup
+    company_size: str | None = None         # "1-10" | "11-50" | "51-200" | "200+"
+    interested_modules: list[str] | None = None  # module keys
+    posting_mode: str | None = None         # preferred posting mode at signup time
 
     model_config = {"from_attributes": True}
 
@@ -300,15 +306,58 @@ class TrialLeadUpdate(BaseModel):
     implementation_notes: Optional[str] = None
 
 
+
+
 class NukeTenantRequest(BaseModel):
     """
     Body for DELETE /api/platform/tenants/{tenant_id}.
 
     confirmation_slug must exactly match the tenant slug.
-    For live tenants, confirm_live_delete must also be True —
+    For live tenants, confirm_live_delete must also be True --
     this extra flag forces the SA to explicitly acknowledge they
     are destroying a live (potentially real-company) tenant.
     """
 
     confirmation_slug: str
     confirm_live_delete: bool = False
+
+
+class CreateTenantRequest(BaseModel):
+    """
+    Body for POST /api/platform/tenants.
+
+    SA-only: creates a new tenant directly from the platform portal,
+    bypassing the public signup flow. Useful for onboarding enterprise
+    clients or re-creating test tenants without a public signup form.
+
+    admin_email + admin_full_name: the initial Power Admin user for the tenant.
+    A temporary password is set; the SA must communicate it or trigger a
+    password-reset email separately.
+    """
+
+    company_name: str
+    company_country: str              # ISO 3166-1 alpha-2
+    admin_email: str
+    admin_full_name: str
+    admin_password: str               # temp password; min 8 chars
+    posting_mode: Literal["lite", "connected", "full_erp"] = "full_erp"
+    # Optional trial lead fields
+    company_size: Optional[str] = None
+    interested_modules: Optional[list[str]] = None
+    initial_modules: Optional[list[str]] = None  # module keys to license immediately
+
+
+class CreateTenantResponse(BaseModel):
+    """Returned after a successful SA-initiated tenant creation."""
+
+    id: str
+    name: str
+    slug: str
+    country: str
+    environment: str
+    lifecycle_status: str
+    created_at: datetime
+    admin_user_id: str
+    admin_email: str
+
+    model_config = {"from_attributes": True}

@@ -310,16 +310,25 @@ async def signup(
             parent_tenant_id=None,
             lifecycle_status="trial",
             suppress_outbound_email=True,
+            company_size=data.company_size,
+            interested_modules=data.interested_modules,
         )
         db.add(tenant)
         await db.flush()  # get tenant.id
 
-        # Seed TenantOrgConfig with functional currency derived from country
+        # Seed TenantOrgConfig with functional currency and preferred posting mode
         from app.models.setup import TenantOrgConfig as _TenantOrgConfig
         _functional_currency = COUNTRY_CURRENCY_MAP.get(data.company_country, "USD")
+        _valid_modes = {"lite", "connected", "full_erp"}
+        _posting_mode = (
+            data.preferred_posting_mode
+            if data.preferred_posting_mode in _valid_modes
+            else "full_erp"
+        )
         db.add(_TenantOrgConfig(
             tenant_id=tenant.id,
             functional_currency=_functional_currency,
+            posting_mode=_posting_mode,
         ))
         await db.flush()
 
@@ -330,6 +339,8 @@ async def signup(
         full_name=data.full_name,
         first_name=data.full_name.split(" ")[0],
         account_type=AccountType(data.account_type),
+        phone=data.phone,
+        job_title=data.job_title,
     )
     db.add(user)
     await db.flush()  # get user.id

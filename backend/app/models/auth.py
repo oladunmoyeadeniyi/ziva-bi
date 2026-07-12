@@ -125,6 +125,9 @@ class Tenant(Base):
     )
     # Consultant scratchpad — call notes, ERP background, etc. Never shown to tenant.
     implementation_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Trial lead qualification fields — captured at signup, displayed in SA Trials page.
+    company_size: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    interested_modules: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

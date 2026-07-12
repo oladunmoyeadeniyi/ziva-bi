@@ -374,7 +374,7 @@ function RolesContent() {
       {tab === "tiers" && (
         <div className="space-y-4">
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
-            Role tier structure is defined by ZivaBI. Contact your consultant to modify.
+            Role tier structure is defined by Ziva BI. Contact your account manager to modify.
           </div>
           <div className="overflow-hidden border border-gray-200 rounded-lg">
             <table className="w-full text-sm">
@@ -388,21 +388,15 @@ function RolesContent() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 <tr>
-                  <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.consultant}`}>ZivaBI Consultant</span></td>
-                  <td className="px-4 py-3 text-gray-700">ZivaBI implementation team</td>
-                  <td className="px-4 py-3 text-gray-700">Super admin only</td>
-                  <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-600 text-white">Full — all sections, always</span></td>
-                </tr>
-                <tr>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.power_admin}`}>Tenant Power Admin</span></td>
                   <td className="px-4 py-3 text-gray-700">Finance Director / CFO</td>
-                  <td className="px-4 py-3 text-gray-700">ZivaBI Consultant</td>
+                  <td className="px-4 py-3 text-gray-700">Ziva BI</td>
                   <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800 border border-green-300">Full by default — adjustable per role</span></td>
                 </tr>
                 <tr>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.functional_admin}`}>Functional Admin</span></td>
                   <td className="px-4 py-3 text-gray-700">Department / Cost Center Heads</td>
-                  <td className="px-4 py-3 text-gray-700">Consultant or Power Admin</td>
+                  <td className="px-4 py-3 text-gray-700">Power Admin</td>
                   <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-200">Configured per section per role</span></td>
                 </tr>
               </tbody>

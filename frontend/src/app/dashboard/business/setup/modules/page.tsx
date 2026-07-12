@@ -485,37 +485,48 @@ export default function ModuleActivationPage() {
             {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
             {successMsg && <p className="mb-3 text-sm text-green-600">{successMsg}</p>}
 
-            {/* Action */}
+            {/* Action — SA-only controls; tenants see read-only status */}
             {selectedMod.is_licensed ? (
               <div className="space-y-2">
-                <button
-                  type="button"
-                  disabled={toggling || !!licensing}
-                  onClick={() => handleToggle(selectedMod)}
-                  className={[
-                    "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-                    selectedMod.is_active
-                      ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-                      : "bg-green-600 text-white hover:bg-green-700",
-                    toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
-                  ].join(" ")}
-                >
-                  {toggling
-                    ? "Saving…"
-                    : selectedMod.is_active
-                    ? `Deactivate ${selectedMod.label}`
-                    : `Activate ${selectedMod.label}`}
-                </button>
-                {isSuperAdmin && (
-                  <div>
+                {isSuperAdmin ? (
+                  <>
                     <button
                       type="button"
-                      disabled={licensing === selectedMod.module_key || toggling}
-                      onClick={() => handleLicense(selectedMod.module_key, false)}
-                      className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                      disabled={toggling || !!licensing}
+                      onClick={() => handleToggle(selectedMod)}
+                      className={[
+                        "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                        selectedMod.is_active
+                          ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                          : "bg-green-600 text-white hover:bg-green-700",
+                        toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
+                      ].join(" ")}
                     >
-                      {licensing === selectedMod.module_key ? "Saving…" : "Remove from subscription"}
+                      {toggling
+                        ? "Saving…"
+                        : selectedMod.is_active
+                        ? `Deactivate ${selectedMod.label}`
+                        : `Activate ${selectedMod.label}`}
                     </button>
+                    <div>
+                      <button
+                        type="button"
+                        disabled={licensing === selectedMod.module_key || toggling}
+                        onClick={() => handleLicense(selectedMod.module_key, false)}
+                        className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                      >
+                        {licensing === selectedMod.module_key ? "Saving…" : "Remove from subscription"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                    <p className="text-sm font-medium text-gray-700">
+                      {selectedMod.is_active ? "Active" : "Inactive"}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Contact your Ziva BI account manager to change module activation.
+                    </p>
                   </div>
                 )}
               </div>
@@ -536,7 +547,7 @@ export default function ModuleActivationPage() {
             ) : (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                 <p className="text-sm text-amber-800">
-                  This module is not included in your current subscription. Contact your Ziva BI consultant or account manager to add it.
+                  This module is not included in your current subscription. Contact your Ziva BI account manager to add it.
                 </p>
               </div>
             )}
