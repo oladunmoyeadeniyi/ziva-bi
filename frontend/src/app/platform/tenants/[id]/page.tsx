@@ -582,15 +582,18 @@ export default function TenantDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
             <div>
-              <h2 className="text-lg font-semibold text-red-700">Delete tenant permanently</h2>
+              <h2 className="text-lg font-semibold text-red-700">Delete company permanently</h2>
               <p className="mt-1 text-sm text-gray-600">
                 This will <strong>permanently delete</strong> <span className="font-medium">{tenant.name}</span> and
                 all of its data — users, employees, expenses, GL entries, documents — from the database.
-                This cannot be undone.
+                {(tenant.test_environment || tenant.live_environment) && (
+                  <> Both the <strong>test</strong> and <strong>live</strong> environments will be deleted together in one operation.</>
+                )}
+                {' '}This cannot be undone.
               </p>
             </div>
 
-            {tenant.lifecycle_status === "live" && (
+            {(tenant.lifecycle_status === "live" || !!tenant.test_environment || !!tenant.live_environment) && (
               <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg p-3">
                 <input
                   id="nuke-live-confirm"
@@ -600,8 +603,8 @@ export default function TenantDetailPage() {
                   className="mt-0.5 h-4 w-4 accent-red-600 cursor-pointer"
                 />
                 <label htmlFor="nuke-live-confirm" className="text-sm text-red-700 cursor-pointer">
-                  I understand this is a <strong>live tenant</strong>. I confirm this is a demo or test
-                  company and I want to permanently delete all its data.
+                  I understand this company has a <strong>live environment</strong>. I confirm I want
+                  to permanently delete all its data including live records.
                 </label>
               </div>
             )}
@@ -633,7 +636,7 @@ export default function TenantDetailPage() {
                 disabled={
                   nuking ||
                   nukeSlug !== tenant.slug ||
-                  (tenant.lifecycle_status === "live" && !nukeLiveConfirm)
+                  ((tenant.lifecycle_status === "live" || !!tenant.test_environment || !!tenant.live_environment) && !nukeLiveConfirm)
                 }
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >

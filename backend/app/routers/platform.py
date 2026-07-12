@@ -1451,6 +1451,21 @@ async def nuke_tenant(
     _sa(current_user)
     tenant = await _get_tenant_or_404(tenant_id, db)
 
+    # ── Find paired environment (test ↔ live sibling) ─────────────────────────
+    # Always delete both environments together — a company is one entity.
+    if tenant.parent_tenant_id:
+        # This is the live tenant; its test sibling is the parent.
+        sibling = await db.get(Tenant, tenant.parent_tenant_id)
+    else:
+        # This is the test tenant; look for a live child pointing back at it.
+        sib_res = await db.execute(
+            select(Tenant).where(Tenant.parent_tenant_id == tenant_id)
+        )
+        sibling = sib_res.scalar_one_or_none()
+
+    all_tenants = [t for t in [tenant, sibling] if t is not None]
+    all_tenant_ids = {t.id for t in all_tenants}
+
     # ── Safety: slug confirmation ──────────────────────────────────────────────
     if body.confirmation_slug != tenant.slug:
         raise HTTPException(
@@ -1458,73 +1473,84 @@ async def nuke_tenant(
             detail="confirmation_slug does not match the tenant slug.",
         )
 
-    # ── Safety: live tenants need the extra flag ───────────────────────────────
-    if tenant.lifecycle_status == "live" and not body.confirm_live_delete:
+    # ── Safety: live tenants (primary or sibling) need the extra flag ──────────
+    either_live = any(t.lifecycle_status == "live" for t in all_tenants)
+    if either_live and not body.confirm_live_delete:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "This tenant is live. Set confirm_live_delete=true to "
-                "confirm you intend to permanently delete a live tenant."
+                "This company has a live environment. Set confirm_live_delete=true to "
+                "confirm you intend to permanently delete it."
             ),
         )
 
-    # ── Step 1: delete Supabase Storage files ─────────────────────────────────
+    # ── Step 1: delete Supabase Storage files for all environments ────────────
     from app.models.documents import ExpenseDocument
     from app.services import storage as _storage
 
-    doc_res = await db.execute(
-        select(ExpenseDocument.storage_path, ExpenseDocument.dedup_ref)
-        .where(ExpenseDocument.tenant_id == tenant_id)
-    )
-    doc_rows = doc_res.all()
+    for t in all_tenants:
+        doc_res = await db.execute(
+            select(ExpenseDocument.storage_path, ExpenseDocument.dedup_ref)
+            .where(ExpenseDocument.tenant_id == t.id)
+        )
+        original_paths = {row.storage_path for row in doc_res.all() if row.dedup_ref is None}
+        for blob_path in original_paths:
+            try:
+                await asyncio.to_thread(_storage.delete_file, blob_path)
+            except Exception:
+                pass  # best-effort; blob may already be gone
 
-    # Only delete blobs that are originals (dedup_ref IS NULL);
-    # dedup rows share the original's path — deleting the original covers them.
-    original_paths = {row.storage_path for row in doc_rows if row.dedup_ref is None}
-    for path in original_paths:
-        try:
-            await asyncio.to_thread(_storage.delete_file, path)
-        except Exception:
-            pass  # best-effort; blob may already be gone
-
-    # ── Step 2: clean up users ─────────────────────────────────────────────────
-    ut_rows = (await db.execute(
-        select(UserTenant).where(UserTenant.tenant_id == tenant_id)
+    # ── Step 2: clean up users across ALL environments ────────────────────────
+    # Collect every UserTenant row across both tenants, then for each unique user
+    # check whether they have memberships OUTSIDE this company entirely.
+    all_ut_rows = (await db.execute(
+        select(UserTenant).where(UserTenant.tenant_id.in_(all_tenant_ids))
     )).scalars().all()
 
-    for ut in ut_rows:
-        other_count_res = await db.execute(
+    seen_user_ids: set[uuid.UUID] = set()
+    for ut in all_ut_rows:
+        if ut.user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(ut.user_id)
+
+        # Count memberships outside every row being deleted for this user.
+        # Use PK comparison (UserTenant.id, never NULL) — not tenant_id (which can be
+        # NULL for platform-level SA seats) — to avoid PostgreSQL NULL-propagation
+        # silently excluding rows and producing a wrong "no outside memberships" result.
+        this_user_row_ids = {u.id for u in all_ut_rows if u.user_id == ut.user_id}
+        outside_res = await db.execute(
             select(func.count()).select_from(UserTenant).where(
                 UserTenant.user_id == ut.user_id,
-                UserTenant.id != ut.id,
+                UserTenant.id.notin_(this_user_row_ids),
             )
         )
-        has_other = (other_count_res.scalar_one() or 0) > 0
+        has_outside = (outside_res.scalar_one() or 0) > 0
 
-        if not has_other:
-            # Sole membership — hard-delete User (CASCADE removes UserTenant, sessions)
+        if not has_outside:
+            # No memberships outside this company — hard-delete User
             user_obj = await db.get(User, ut.user_id)
             if user_obj:
                 await db.delete(user_obj)
-        else:
-            # Has other memberships — remove only this UserTenant
-            await db.delete(ut)
+        # else: user exists in other companies — tenant CASCADE removes their rows here
 
-    # ── Step 3: write audit record BEFORE deleting tenant ─────────────────────
-    # audit_logs.tenant_id is ON DELETE SET NULL, so this is safe in the same
-    # transaction: PostgreSQL will NULL the FK when the tenant row is removed.
-    await _log(
-        "TENANT_DELETED",
-        current_user.user_id,
-        tenant_id,
-        {
-            "name": tenant.name,
-            "slug": tenant.slug,
-            "lifecycle_status": tenant.lifecycle_status,
-        },
-        db,
-    )
+    # ── Step 3: write audit records BEFORE deleting tenants ───────────────────
+    for t in all_tenants:
+        await _log(
+            "TENANT_DELETED",
+            current_user.user_id,
+            t.id,
+            {
+                "name": t.name,
+                "slug": t.slug,
+                "environment": t.environment,
+                "lifecycle_status": t.lifecycle_status,
+                "paired_delete": len(all_tenants) > 1,
+            },
+            db,
+        )
 
-    # ── Step 4: delete the tenant (CASCADE handles all remaining child tables) ─
-    await db.delete(tenant)
+    # ── Step 4: delete all tenant rows (CASCADE handles child tables) ──────────
+    # Delete live tenant first to avoid parent_tenant_id FK issues.
+    for t in sorted(all_tenants, key=lambda x: 0 if x.environment == "live" else 1):
+        await db.delete(t)
     await db.commit()
