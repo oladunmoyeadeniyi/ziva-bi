@@ -178,7 +178,7 @@ class User(Base):
     )
 
     user_tenants: Mapped[list["UserTenant"]] = relationship(
-        "UserTenant", back_populates="user"
+        "UserTenant", back_populates="user", passive_deletes=True
     )
     audit_logs: Mapped[list["AuditLog"]] = relationship("AuditLog", back_populates="user")
 
