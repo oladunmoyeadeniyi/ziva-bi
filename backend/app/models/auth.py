@@ -512,25 +512,25 @@ class ImpersonationSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    impersonator_id: Mapped[uuid.UUID] = mapped_column(
+    impersonator_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     impersonator_role: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # "super_admin_owner" | "super_admin"
-    target_user_id: Mapped[uuid.UUID] = mapped_column(
+    target_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
-    target_tenant_id: Mapped[uuid.UUID] = mapped_column(
+    target_tenant_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("tenants.id"),
-        nullable=False,
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     environment: Mapped[str] = mapped_column(String(10), nullable=False)   # "live" | "test"
