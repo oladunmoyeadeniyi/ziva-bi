@@ -662,7 +662,7 @@ A series of stability fixes around the employee-user cascade and impersonation F
 SA-only endpoint to permanently destroy a tenant and all its data. Intended for test tenants, orphan trials, and QA cleanup.
 
 **Backend (`app/routers/platform.py`):**
-- `DELETE /api/platform/tenants/{tenant_id}` — hard-deletes the tenant and CASCADE-removes all child rows. Guards: SA-only; cannot nuke a `'live'` lifecycle tenant; requires `?confirm=true` query param. Writes final audit log entry before deletion (since the audit log row will also be deleted, caller should record externally).
+- `DELETE /api/platform/tenants/{tenant_id}` — hard-deletes the tenant and CASCADE-removes all child rows. Guards: SA-only. Request body: `NukeTenantRequest { confirmation_slug: str, confirm_live_delete: bool }`. Live-lifecycle tenants require `confirm_live_delete=True` (not blocked outright). Writes final audit log entry before deletion.
 - `backend/scripts/purge_test_tenant_users.py` — companion cleanup script for deactivated test-tenant user accounts.
 
 **Frontend (`platform/tenants/[id]/page.tsx`):**
