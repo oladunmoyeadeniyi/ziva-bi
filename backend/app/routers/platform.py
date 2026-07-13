@@ -1091,6 +1091,11 @@ async def platform_promotion_apply(
                 is_active=test_ut.is_active,
                 role_tier=test_ut.role_tier,
             ))
+        # TODO (future milestone — email infrastructure required):
+        # For each mirrored user, send a "Your live account is ready" welcome email
+        # containing their login URL and instructing them to use their existing password
+        # (same credentials as the test environment, since password_hash is mirrored).
+        # Blocked on: email service integration (SendGrid / SES / SMTP) not yet built.
     else:
         # Repeat promotion -- live already existed; keep it live (no-op if already so).
         live.lifecycle_status = "live"
@@ -1589,7 +1594,7 @@ async def create_tenant(
     SA-only: create a new trial tenant from the platform portal.
 
     Creates:
-      1. A Tenant row (lifecycle_status='trial', environment='live')
+      1. A Tenant row (lifecycle_status='in_implementation', environment='test')
       2. An initial Power Admin User account
       3. A UserTenant linking them with role_tier='power_admin'
       4. A TenantOrgConfig with the chosen posting_mode
@@ -1645,8 +1650,8 @@ async def create_tenant(
         name=data.company_name.strip(),
         slug=slug,
         country=country,
-        environment=data.environment,
-        lifecycle_status="trial",
+        environment="test",      # M9.0.1: test-first — live is born from promotion, never created empty
+        lifecycle_status="in_implementation",  # SA-created = already committed, skip trial
         lead_status="new",
         company_size=data.company_size,
         interested_modules=data.interested_modules,
@@ -1711,7 +1716,7 @@ async def create_tenant(
         {
             "company_name": data.company_name,
             "admin_email": data.admin_email,
-            "environment": data.environment,
+            "environment": "test",  # always test — live is born from promotion
         },
         db,
     )
