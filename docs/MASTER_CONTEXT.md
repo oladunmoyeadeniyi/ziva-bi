@@ -731,6 +731,31 @@ Five improvements shipped together:
 
 ---
 
+### SA Portal — is_internal flag + Create Company modal enhancements + MODULE_MODE_AVAILABILITY centralisation (pending commit, 2026-07-13)
+
+Three improvements bundled in one commit (migration `p4q5r6s7t8u9`, all 7 files verified clean):
+
+**1. `is_internal` flag on tenants:**
+- **Migration `p4q5r6s7t8u9`** — adds `is_internal BOOLEAN NOT NULL DEFAULT FALSE` to `tenants`. Also resolves the previously-reported two-head state to a single head.
+- **`Tenant` model** — `is_internal: Mapped[bool]` with `server_default="false"`.
+- **`TenantListItem` schema** — `is_internal: bool` added to the list-endpoint response shape.
+- **`CreateTenantRequest` schema** — `is_internal: bool = False` (SA-settable at creation; defaults false).
+- **`platform.py`** `list_tenants()` and `create_tenant()` wired through.
+- Use: Ziva BI internal sandbox/demo tenants (e.g. the Red Bull build-verification company) are marked `is_internal=True` so they can be excluded from commercial reporting and clearly distinguished in the SA portal.
+
+**2. `MODULE_MODE_AVAILABILITY` centralised to `lib/modules.ts`:**
+- Moved from an inline constant in `setup/modules/page.tsx` to `frontend/src/lib/modules.ts` as a named export.
+- `setup/modules/page.tsx` now imports it — no change in runtime behaviour, one source of truth.
+- Create Company modal imports from the same location.
+
+**3. Create Company modal enhancements:**
+- **is_internal toggle** — purple on/off switch at the top of the form. Resets to false on modal close. Sent as `is_internal` in the POST body.
+- **Mode-filtered module checkboxes** — module list only renders modules compatible with the selected posting mode (using `MODULE_MODE_AVAILABILITY`). Switching mode auto-deselects any already-checked modules that are incompatible with the new mode.
+- **autoComplete fix** — admin email: `autoComplete="off"`; admin password: `autoComplete="new-password"`. Prevents browser from injecting SA's own saved credentials into the Create Company form.
+- **Tenant list badge** — purple "internal" chip displayed next to the tenant name for any row where `is_internal === true`.
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -910,4 +935,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-13 (Mode-Aware Module Activation + `create_tenant` org seeding + Tax & Compliance rename; pending commit). Last pushed commit: `63f61fe`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-13 (is_internal flag + MODULE_MODE_AVAILABILITY centralisation + Create Company modal enhancements; pending commit). Last pushed commit: `63f61fe`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

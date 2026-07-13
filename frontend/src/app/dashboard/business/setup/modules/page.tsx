@@ -14,6 +14,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { MODULE_MODE_AVAILABILITY } from "@/lib/modules";
 
 interface ModuleState {
   module_key: string;
@@ -234,27 +235,7 @@ const Icon = ({ name, size = 16 }: { name: string; size?: number }) => (
 
 // ── Mode availability ────────────────────────────────────────────────────────
 // Defines which modules are listed for each posting_mode.
-// Modules not listed for the current mode are hidden entirely from the activation page.
-//
-// Lite      — workflow + transactional modules only (EM, AP, AR, T&C, R&A)
-// Connected — all modules (GL coding → external ERP)
-// Full ERP  — all modules (full internal GL integration)
-const MODULE_MODE_AVAILABILITY: Record<string, string[]> = {
-  expense:         ["lite", "connected", "full_erp"],
-  ap:              ["lite", "connected", "full_erp"],
-  ar:              ["lite", "connected", "full_erp"],
-  tax_engine:      ["lite", "connected", "full_erp"],
-  reporting:       ["lite", "connected", "full_erp"],
-  payroll:         ["connected", "full_erp"],
-  bank_recon:      ["connected", "full_erp"],
-  budget:          ["connected", "full_erp"],
-  inventory:       ["connected", "full_erp"],
-  fixed_assets:    ["connected", "full_erp"],
-  posm:            ["connected", "full_erp"],
-  vendor_portal:   ["connected", "full_erp"],
-  customer_portal: ["connected", "full_erp"],
-  warehouse:       ["connected", "full_erp"],
-};
+// MODULE_MODE_AVAILABILITY is imported from @/lib/modules — single source of truth.
 
 const MODE_LABELS: Record<string, string> = {
   lite: "Lite",

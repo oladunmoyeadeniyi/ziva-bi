@@ -459,6 +459,7 @@ async def list_tenants(
             parent_tenant_id=str(t.parent_tenant_id) if t.parent_tenant_id else None,
             lifecycle_status=t.lifecycle_status,
             is_active=t.is_active,
+            is_internal=t.is_internal,
             user_count=cnt,
             created_at=t.created_at,
         )
@@ -1653,6 +1654,7 @@ async def create_tenant(
         environment="test",      # M9.0.1: test-first — live is born from promotion, never created empty
         lifecycle_status="in_implementation",  # SA-created = already committed, skip trial
         lead_status="new",
+        is_internal=data.is_internal,
         company_size=data.company_size,
         interested_modules=data.interested_modules,
     )

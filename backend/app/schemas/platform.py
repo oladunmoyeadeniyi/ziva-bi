@@ -22,6 +22,7 @@ class TenantListItem(BaseModel):
     parent_tenant_id: str | None
     lifecycle_status: str
     is_active: bool
+    is_internal: bool
     user_count: int
     created_at: datetime
 
@@ -341,6 +342,7 @@ class CreateTenantRequest(BaseModel):
     admin_full_name: str
     admin_password: str               # temp password; min 8 chars
     posting_mode: Literal["lite", "connected", "full_erp"] = "full_erp"
+    is_internal: bool = False  # True = Ziva BI internal sandbox, not a real client
     # Optional trial lead fields
     company_size: Optional[str] = None
     interested_modules: Optional[list[str]] = None
