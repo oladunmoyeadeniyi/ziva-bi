@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import ModeNotAvailable from "@/components/ModeNotAvailable";
 
 interface DimensionSource {
   source_type: string;
@@ -132,6 +133,7 @@ function DimensionsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
 
   // Add form state — 3-step flow
   const [showAdd, setShowAdd] = useState(false);
@@ -253,6 +255,11 @@ function DimensionsPage() {
   const load = useCallback(async () => {
     if (!accessToken) return;
     try {
+      // Fetch posting mode to conditionally render mode guard
+      try {
+        const orgData = await apiFetch<{ posting_mode?: string }>("/api/setup/org", { token: accessToken });
+        if (orgData.posting_mode) setPostingMode(orgData.posting_mode as 'lite' | 'connected' | 'full_erp');
+      } catch {}
       await apiFetch("/api/config/dimensions/seed-standard", {
         method: "POST",
         token: accessToken,
@@ -988,6 +995,19 @@ function DimensionsPage() {
       </tbody>
     </table>
   );
+
+  // Mode guard — Dimensions not available in Lite mode (null = still loading, show page)
+  if (postingMode === 'lite') {
+    return (
+      <PageContainer maxWidth="3xl">
+        <ModeNotAvailable
+          pageName="Dimensions"
+          availableIn={["Connected", "Full ERP"]}
+          currentMode="lite"
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer maxWidth="3xl">

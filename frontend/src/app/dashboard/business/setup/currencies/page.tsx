@@ -16,6 +16,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import ModeNotAvailable from "@/components/ModeNotAvailable";
 
 const ISO_CURRENCIES = [
   { code: "USD", name: "US Dollar",              symbol: "$"   },
@@ -281,6 +282,7 @@ function CurrenciesContent() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
 
   // Add currency form
   const [showAddCurrency, setShowAddCurrency] = useState(false);
@@ -356,6 +358,10 @@ function CurrenciesContent() {
 
   useEffect(() => {
     if (!accessToken) return;
+    // Fetch posting mode for mode guard
+    apiFetch<{ posting_mode?: string }>("/api/setup/org", { token: accessToken })
+      .then((d) => { if (d.posting_mode) setPostingMode(d.posting_mode as 'lite' | 'connected' | 'full_erp'); })
+      .catch(() => {});
     apiFetch<FxConfig>("/api/setup/currencies", { token: accessToken })
       .then(setConfig)
       .catch((e) => setError(e.message));
@@ -532,6 +538,19 @@ function CurrenciesContent() {
       return true;
     })
     .sort((a, b) => b.effective_date.localeCompare(a.effective_date));
+
+  // Mode guard — Currencies & FX not available in Lite mode (null = still loading, show page)
+  if (postingMode === 'lite') {
+    return (
+      <PageContainer maxWidth="4xl">
+        <ModeNotAvailable
+          pageName="Currencies & FX"
+          availableIn={["Connected", "Full ERP"]}
+          currentMode="lite"
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer maxWidth="4xl">

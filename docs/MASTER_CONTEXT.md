@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-11 (Three-Mode + SA Portal Trials/Signups + Setup Portal mode-aware + GL Group picker tab — see §5, §7, §9, §10)
+> Last updated: 2026-07-13 (Mode-Aware Implementation Portal — sidebar + 5 pages + expense config lock; also SA portal hardening batch — see §5)
 
 ---
 
@@ -571,6 +571,35 @@ The setup portal checklist (`GET /api/setup/progress`) is now fully posting-mode
 
 ---
 
+### Mode-Aware Implementation Portal — Sidebar + Pages (2026-07-13)
+
+Extends task #51 (mode-aware checklist) to the sidebar nav and individual setup pages. Previously, the checklist hid steps for irrelevant modes but the sidebar and pages were mode-blind — a Lite tenant could still navigate to Chart of Accounts, Account Mapping, Tax, etc.
+
+**What changed (frontend-only, no backend/migration changes):**
+
+- **`frontend/src/app/dashboard/business/layout.tsx`**: Added `postingMode` state (`'lite' | 'connected' | 'full_erp' | null`). Extended `fetchOrgConfig` apiFetch type to include `posting_mode?: string` at the top level of the `/api/setup/org` response (already returned by the backend). FINANCIALS sidebar section now wraps CoA, Dimensions, Currencies & FX, Account Mapping, and Tax with `postingMode !== 'lite'` guards. Dimensions keeps the `orgConfig?.use_dimensions` sub-gate; Currencies keeps `orgConfig?.use_multi_currency`. Fallback while loading (null): all links remain visible.
+
+- **`frontend/src/components/ModeNotAvailable.tsx`** (new): Neutral informational gate rendered by pages that are hidden in the current mode. Props: `pageName`, `availableIn[]`, `currentMode`. Shows a lock icon, descriptive message, and a "Back to setup dashboard" button.
+
+- **5 page-level mode guards** (each fetches `posting_mode` from `/api/setup/org` — a call each page already makes or adds one): `settings/chart-of-accounts/page.tsx`, `settings/dimensions/page.tsx`, `setup/currencies/page.tsx`, `setup/tax/page.tsx`, `setup/account-mapping/page.tsx`. Guard renders `<ModeNotAvailable>` if `postingMode === 'lite'`; null (still loading) shows the page normally.
+
+- **`settings/expense-config/page.tsx`**: Fetches `posting_mode`. In Lite mode: amber Banner above coding level cards (GL coding not available), all 5 cards greyed-out with `pointer-events-none`. Does not reset `coding_level` server-side — shows an inline note if current level > 0.
+
+**Mode visibility table (authoritative — §4.2):**
+
+| Section | Lite | Connected | Full ERP |
+|---|---|---|---|
+| Chart of Accounts | ❌ sidebar hidden + page gated | ✅ | ✅ |
+| Dimensions | ❌ sidebar hidden + page gated | ✅ optional | ✅ |
+| Currencies & FX | ❌ sidebar hidden + page gated | ✅ optional | ✅ |
+| Tax & Statutory | ❌ sidebar hidden + page gated | ✅ optional | ✅ |
+| Account Mapping | ❌ sidebar hidden + page gated | ✅ | ✅ |
+| Bank Accounts | ✅ sidebar visible | ✅ | ✅ |
+| Accounting Periods | ✅ sidebar visible | ✅ | ✅ |
+| Expense Config coding level | Locked at 0, amber banner | ✅ | ✅ |
+
+---
+
 ### GL Group Hierarchy Tab in ExpenseItemPicker (#52, committed `55028cc` 2026-07-11)
 
 Adds a "By GL Group" second tab to the expense form GL account picker for coding levels 3 and 4. The tab navigates the `gl_group → gl_subgroup → gl_sub_subgroup` hierarchy as an alternative to the Category → Subcategory flow.
@@ -587,6 +616,91 @@ Adds a "By GL Group" second tab to the expense form GL account picker for coding
 - New optional props: `fetchGLGroups?`, `searchGLFiltered?` — if absent, tab is hidden (backward compat).
 - Adaptive drill-down: skips levels with no children; "All accounts in X" shortcut at each level; back navigation resets one level at a time. Group data cached for picker session.
 - Both expense form pages (`new/page.tsx`, `edit/page.tsx`) wired with `doFetchGLGroups` + `doSearchGLFiltered`.
+
+---
+
+### SA Portal Hardening — Cascade Fixes (commits `d7ddea6`, `db69e51`, `3177d3d`, `83ab8b2`, 2026-07-11/12)
+
+A series of stability fixes around the employee-user cascade and impersonation FK constraints:
+
+- **Cascade deactivation email fallback (`d7ddea6`)** — `hr.py` cascade deactivate now handles `emp.user_id is None` gracefully (email fallback) instead of crashing. Module label names unified: `backend/app/routers/platform.py` + `setup/modules/[module]/page.tsx` updated.
+- **Session revocation hotfix (`db69e51`)** — `_cascade_employee_deactivate` now correctly references `Session.user_tenant_id` (not `.user_id`). Added `backend/scripts/cleanup_orphan_employee_usertenant.py` — one-time cleanup for deactivated test-tenant users whose `UserTenant` rows were never cleaned up before the cascade was wired.
+- **passive_deletes (`3177d3d`)** — `User.user_tenants` relationship gained `passive_deletes=True` to let PostgreSQL's `ON DELETE CASCADE` handle child row cleanup instead of SQLAlchemy issuing redundant DELETEs.
+- **ImpersonationSession nullable FKs (`83ab8b2`, migration `m1n2o3p4q5r6`)** — `impersonation_sessions.user_id` and `tenant_id` FK columns made nullable (`SET NULL` on CASCADE) so a hard-deleted user or tenant no longer blocks the FK constraint. ORM model updated to match.
+
+---
+
+### Nuke Tenant — Full Hard Delete (commit `946aa16`, 2026-07-12)
+
+SA-only endpoint to permanently destroy a tenant and all its data. Intended for test tenants, orphan trials, and QA cleanup.
+
+**Backend (`app/routers/platform.py`):**
+- `DELETE /api/platform/tenants/{tenant_id}` — hard-deletes the tenant and CASCADE-removes all child rows. Guards: SA-only; cannot nuke a `'live'` lifecycle tenant; requires `?confirm=true` query param. Writes final audit log entry before deletion (since the audit log row will also be deleted, caller should record externally).
+- `backend/scripts/purge_test_tenant_users.py` — companion cleanup script for deactivated test-tenant user accounts.
+
+**Frontend (`platform/tenants/[id]/page.tsx`):**
+- "Delete Tenant" danger button (red, SA-only). Two-step confirmation modal: type tenant slug to confirm, then hard-delete. On success, navigates back to `/platform/tenants`.
+
+---
+
+### Nuke Paired Environments (commit `c6d05ee`, 2026-07-12)
+
+Extended nuke to delete both sides of a test+live pair in a single operation:
+
+- `DELETE /api/platform/tenants/{tenant_id}` now resolves the environment pair (`_resolve_promotion_pair`) and deletes both the test and live tenants in one transaction. Guards: still cannot nuke if lifecycle is `'live'` on the LIVE side (i.e. tenant is in production).
+- Frontend: "Delete Tenant" modal updated — when a paired environment is detected, the modal warns "This will also delete the paired [live/test] environment."
+
+---
+
+### SA Portal UX Hardening — Create Company + 2-step Signup + Module SOT (commits `336e7b4`, `d596f14`, 2026-07-12)
+
+Major SA portal and signup overhaul:
+
+**Migration `n2o3p4q5r6s7` (tenant_trial_lead_fields):**
+- Adds `company_size VARCHAR(50)` and `interested_modules JSONB` to `tenants`. These are captured at signup to help the SA team qualify leads.
+
+**Backend:**
+- `backend/app/constants/modules.py` — `_ALL_MODULES` dict (single source of truth for module codes + display names + descriptions). `backend/app/constants/__init__.py` created.
+- `app/routers/platform.py` — new `POST /api/platform/tenants` endpoint: SA creates a company directly (name, country, admin email, admin password, posting mode, modules). Auto-creates the test tenant + `TenantOrgConfig` + `power_admin` `UserTenant` with `must_change_password=True`. Sets the environment toggle default correctly. Audit-logged.
+- `app/routers/setup.py` — module activation now checks `is_licensed` AND `is_super_admin` — only SA can toggle module activation (tenants can see but not change).
+- `app/schemas/auth.py` — signup schema extended with `company_size` and `interested_modules`.
+- `app/schemas/platform.py` — `CreateTenantRequest`, `CreateTenantResponse`.
+
+**Frontend:**
+- `auth/signup/page.tsx` — 2-step form: Step 1 = company basics + account creation; Step 2 = intent fields (company size, modules of interest). Both fields optional, stored on `tenants` row.
+- `platform/tenants/page.tsx` — "Create Company" button + modal with name, country, admin email, password (show/hide + generator), posting mode selector, module checkboxes. On submit: `POST /api/platform/tenants`.
+- `dashboard/business/setup/modules/page.tsx` — module activation toggle now SA-only (locked for tenant users — shows lock icon + "contact your Ziva BI consultant").
+- `dashboard/business/setup/roles/page.tsx` — "ZivaBI Consultant" system role row removed from the visible role list (SA-internal, not relevant to tenant admins).
+- `lib/modules.ts` — module list now imports from the shared SOT; labels unified everywhere.
+- `d596f14` follow-up: fixed Create Company environment toggle default + corrected remaining module SOT label inconsistencies.
+
+---
+
+### Password Force-Change on First Login + Posting Mode Guard + SA Portal Polish (pending commit `o3p4q5r6s7t8` batch, 2026-07-13)
+
+Five improvements shipped together:
+
+**1. Generic Organisation page placeholder** — removed personal employer name ("Red Bull Nigeria Limited") from legal name field placeholder; replaced with "e.g. Acme Corporation Limited".
+
+**2. Create Company password UX** — show/hide toggle (eye icon) + "Generate" button (cryptographically random 12-char via `crypto.getRandomValues`; auto-copies to clipboard; auto-reveals in plaintext so SA can share). Helper text: "The admin will be required to change this on first login."
+
+**3. Force-change-password on first login:**
+- **Migration `o3p4q5r6s7t8`** — adds `must_change_password BOOLEAN NOT NULL DEFAULT false` to `user_tenants`.
+- **`UserTenant` model** — `must_change_password: Mapped[bool]`.
+- **Login response** — `must_change_password: bool = False` added to `AuthResponse`.
+- **`ChangePasswordRequest` schema** + `POST /api/auth/change-password` endpoint: verifies current password, rejects same-as-current, hashes new password, sets `must_change_password = False`, commits.
+- **`create_tenant` (platform.py)** — sets `must_change_password=True` on the auto-created `power_admin` `UserTenant`.
+- **Login page** — destructures `must_change_password` from login response; if true, redirects to `/auth/change-password` before any dashboard route.
+- **`/auth/change-password` (NEW page)** — amber "Action required" banner; fields for temp password, new password, confirm; calls `POST /api/auth/change-password`; on success redirects to `/platform` (SA) or `/dashboard`; cannot be skipped.
+
+**4. Posting mode guard** — `PATCH /api/platform/tenants/{id}/system-config` now queries `journal_entries` before allowing a posting mode switch. If the tenant has any posted journal entries, returns `409 Conflict: "Cannot switch posting mode … already has posted journal entries."` NetSuite/SAP lock posting mode at provisioning; this guard enforces the same invariant.
+
+**5. Collapsible tenant user list** — Users section on `/platform/tenants/[id]` is collapsed by default (`useState(false)`). Header is a clickable toggle button showing total + active user counts. Chevron rotates on expand. Filter bar + table only rendered when expanded.
+
+> **CC review notes (commit `7989709`, 2026-07-13):**
+> - `ImpersonationSession.environment` widened `String(10)→String(20)`, `entry_point` `String(30)→String(50)`, Python-side `default=` values added. No new migration for these column-length increases — minor model/migration drift. Non-blocking (existing values are short strings); run `alembic revision --autogenerate` if strict alignment is needed before Render deploy.
+> - `create_tenant`'s audit log payload dropped `slug`, `posting_mode`, and `initial_modules` fields — smaller audit trail than intended but not functional. Fix next time `create_tenant` is touched.
+> - Non-blocking UI drift (not blocking compile): Consultant Config "Save" button uses raw `<button>` instead of shared `Button` component (loses standardized spinner); `tenants/page.tsx` table uses `<a href>` instead of `Link`, and lost Badge-styled lifecycle-status pill and tenant-count summary footer. Carry forward for UI polish pass.
 
 ---
 
@@ -705,6 +819,11 @@ Architectural invariants that are durable decisions (the WHY):
 - ~~Setup Portal mode-aware checklist (#51)~~ — **Done** (commit `eac25846`, 2026-07-11). See §5.
 - ~~GL Group hierarchy tab in ExpenseItemPicker (#52)~~ — **Done** (commit `55028cc`, 2026-07-11). See §5.
 - ~~Document Security Hardening Phase 1 (#53–#55 + DOCX/XLSX)~~ — **Done** (5 commits ending `3dc5f1f`, 2026-07-11). 15-min signed URLs, magic bytes + ZIP validation, SHA-256, Pillow/pikepdf compression, hash dedup, 15yr retention, `document_access_log`, DOCX/XLSX macro guard.
+- ~~SA Portal Hardening — Cascade Fixes~~ — **Done** (commits `d7ddea6`, `db69e51`, `3177d3d`, `83ab8b2`, 2026-07-11/12). Email fallback, session revocation hotfix, passive_deletes, impersonation FK nullable. See §5.
+- ~~Nuke Tenant — Full Hard Delete~~ — **Done** (commit `946aa16`, 2026-07-12). `DELETE /api/platform/tenants/{id}` + confirmation modal. See §5.
+- ~~Nuke Paired Environments~~ — **Done** (commit `c6d05ee`, 2026-07-12). Single operation deletes both test+live pair. See §5.
+- ~~SA Portal UX Hardening (Create Company + 2-step Signup + Module SOT)~~ — **Done** (commits `336e7b4`, `d596f14`, 2026-07-12). `POST /api/platform/tenants`, 2-step signup, `_ALL_MODULES` SOT, SA-only module toggle. Migration `n2o3p4q5r6s7`. See §5.
+- ~~Force-change-password + Posting mode guard + SA Portal Polish~~ — **Done** (commit `7989709`, 2026-07-13). Migration `o3p4q5r6s7t8`. 5 features: generic placeholder, password UX, force-change, posting mode 409 guard, collapsible user list. Run `alembic upgrade head` needed locally. See §5.
 
 ---
 
@@ -764,4 +883,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-11 (Three-Mode Architecture all phases done; Document Security Phase 1 done — tasks #49-#55 + DOCX/XLSX all committed — see §5). Last pushed commit: `3dc5f1f`. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-13 (Mode-Aware Implementation Portal — sidebar + pages; pending commit next). Last pushed commit: `7989709`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

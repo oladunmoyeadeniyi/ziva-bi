@@ -23,6 +23,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import ModeNotAvailable from "@/components/ModeNotAvailable";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -83,6 +84,7 @@ interface TaxConfig {
 
 interface OrgApplicabilityLoad {
   country?: string;
+  posting_mode?: string;
   org_configuration?: {
     is_tax_haven?: boolean;
     tax_items?: TaxItem[];
@@ -374,6 +376,8 @@ function TaxContent() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
+
   // Applicability state (loaded from /api/setup/org)
   const [orgRaw, setOrgRaw] = useState<OrgApplicabilityLoad | null>(null);
   const [isTaxHaven, setIsTaxHaven] = useState(false);
@@ -400,6 +404,7 @@ function TaxContent() {
     apiFetch<OrgApplicabilityLoad>("/api/setup/org", { token: accessToken })
       .then(data => {
         setOrgRaw(data);
+        if (data.posting_mode) setPostingMode(data.posting_mode as 'lite' | 'connected' | 'full_erp');
         const orgConf = data.org_configuration;
         if (orgConf?.tax_items && orgConf.tax_items.length > 0) {
           setTaxItems(orgConf.tax_items);
@@ -505,6 +510,19 @@ function TaxContent() {
   );
 
   const countryCode = (orgRaw?.country && TAX_PROFILES[orgRaw.country]) ? orgRaw.country : "XX";
+
+  // Mode guard — Tax & Statutory not available in Lite mode (null = still loading, show page)
+  if (postingMode === 'lite') {
+    return (
+      <PageContainer maxWidth="3xl">
+        <ModeNotAvailable
+          pageName="Tax & Statutory"
+          availableIn={["Connected", "Full ERP"]}
+          currentMode="lite"
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer maxWidth="3xl">

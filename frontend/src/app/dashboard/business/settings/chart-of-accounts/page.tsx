@@ -18,6 +18,7 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/Banner";
+import ModeNotAvailable from "@/components/ModeNotAvailable";
 
 interface GLAccount {
   id: string;
@@ -239,6 +240,7 @@ export default function ChartOfAccountsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSubsidiary, setIsSubsidiary] = useState(false);
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
 
   // Template column selector
   const [showTemplateOptions, setShowTemplateOptions] = useState(false);
@@ -422,13 +424,15 @@ export default function ChartOfAccountsPage() {
     } finally {
       setIsLoading(false);
     }
-    // Check subsidiary status
+    // Check subsidiary status + posting mode
     try {
-      const orgConfig = await apiFetch<{ org_configuration?: { structure_type?: string } }>(
-        "/api/setup/org", { token: accessToken! }
-      );
+      const orgConfig = await apiFetch<{
+        org_configuration?: { structure_type?: string };
+        posting_mode?: string;
+      }>("/api/setup/org", { token: accessToken! });
       const structureType = orgConfig.org_configuration?.structure_type ?? "";
       setIsSubsidiary(["subsidiary", "branch"].includes(structureType.toLowerCase()));
+      if (orgConfig.posting_mode) setPostingMode(orgConfig.posting_mode as 'lite' | 'connected' | 'full_erp');
     } catch {}
   };
 
@@ -995,6 +999,19 @@ export default function ChartOfAccountsPage() {
       })),
     }));
   })();
+
+  // Mode guard — CoA not available in Lite mode (null = still loading, show page)
+  if (postingMode === 'lite') {
+    return (
+      <PageContainer maxWidth="5xl">
+        <ModeNotAvailable
+          pageName="Chart of Accounts"
+          availableIn={["Connected", "Full ERP"]}
+          currentMode="lite"
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer maxWidth="5xl">

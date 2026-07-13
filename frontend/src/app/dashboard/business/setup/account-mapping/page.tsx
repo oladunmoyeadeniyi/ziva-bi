@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import ModeNotAvailable from "@/components/ModeNotAvailable";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -263,6 +264,7 @@ export default function AccountMappingPage() {
   const [accounts, setAccounts]   = useState<GLAccount[]>([]);
   const [loading, setLoading]     = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
 
   // Collapsible state — Set of "statement:group" keys that are COLLAPSED
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -287,12 +289,14 @@ export default function AccountMappingPage() {
     setLoading(true);
     setPageError(null);
     try {
-      const [rolesData, coaData] = await Promise.all([
+      const [rolesData, coaData, orgData] = await Promise.all([
         apiFetch<PostingRole[]>("/api/setup/account-mapping/roles", { token: accessToken }),
         apiFetch<GLAccount[]>("/api/config/coa?active_only=true&limit=10000", { token: accessToken }),
+        apiFetch<{ posting_mode?: string }>("/api/setup/org", { token: accessToken }),
       ]);
       setRoles(rolesData.slice().sort((a, b) => a.display_order - b.display_order));
       setAccounts(coaData.filter(a => a.is_active));
+      if (orgData.posting_mode) setPostingMode(orgData.posting_mode as 'lite' | 'connected' | 'full_erp');
     } catch (e) {
       setPageError(e instanceof Error ? e.message : "Failed to load account mapping data.");
     } finally {
@@ -370,6 +374,19 @@ export default function AccountMappingPage() {
     const key = role.subgroup ?? "__none__";
     if (!sg[role.group][key]) sg[role.group][key] = [];
     sg[role.group][key].push(role);
+  }
+
+  // Mode guard — Account Mapping not available in Lite mode (null = still loading, show page)
+  if (postingMode === 'lite') {
+    return (
+      <PageContainer maxWidth="4xl">
+        <ModeNotAvailable
+          pageName="Account Mapping"
+          availableIn={["Connected", "Full ERP"]}
+          currentMode="lite"
+        />
+      </PageContainer>
+    );
   }
 
   // ── Render ────────────────────────────────────────────────────────────────

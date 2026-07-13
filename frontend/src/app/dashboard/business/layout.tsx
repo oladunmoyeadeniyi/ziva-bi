@@ -126,6 +126,7 @@ export default function BusinessLayout({
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [activeModules, setActiveModules] = useState<ModuleState[] | null>(null);
   const [orgConfig, setOrgConfig] = useState<{ use_dimensions?: boolean; use_multi_currency?: boolean } | null>(null);
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
 
   // Admin sections require an active tenant context.
   //
@@ -182,10 +183,12 @@ export default function BusinessLayout({
   const fetchOrgConfig = useCallback(async () => {
     if (!accessToken || !isAdmin) return;
     try {
-      const data = await apiFetch<{ org_configuration?: { use_dimensions?: boolean; use_multi_currency?: boolean } }>(
-        "/api/setup/org", { token: accessToken }
-      );
+      const data = await apiFetch<{
+        org_configuration?: { use_dimensions?: boolean; use_multi_currency?: boolean };
+        posting_mode?: string;
+      }>("/api/setup/org", { token: accessToken });
       if (data.org_configuration) setOrgConfig(data.org_configuration);
+      if (data.posting_mode) setPostingMode(data.posting_mode as 'lite' | 'connected' | 'full_erp');
     } catch {
       // silently fail
     }
@@ -342,17 +345,28 @@ export default function BusinessLayout({
               {/* FINANCIALS */}
               <div className="px-2">
                 <SectionLabel label="Financials" />
-                {orgConfig?.use_dimensions && (
+                {/* Chart of Accounts — hidden in Lite mode */}
+                {postingMode !== 'lite' && (
+                  <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
+                )}
+                {/* Dimensions — hidden in Lite mode; use_dimensions gate still applies */}
+                {postingMode !== 'lite' && orgConfig?.use_dimensions && (
                   <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
                 )}
-                <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
                 <NavLink href="/dashboard/business/setup/bank-accounts" label="Bank accounts" icon="building-bank" />
-                <NavLink href="/dashboard/business/setup/account-mapping" label="Account mapping" icon="arrows-transfer-up" />
+                {/* Account Mapping — hidden in Lite mode */}
+                {postingMode !== 'lite' && (
+                  <NavLink href="/dashboard/business/setup/account-mapping" label="Account mapping" icon="arrows-transfer-up" />
+                )}
                 <NavLink href="/dashboard/business/setup/periods" label="Period management" icon="calendar" />
-                {orgConfig?.use_multi_currency && (
+                {/* Currencies & FX — hidden in Lite mode; use_multi_currency gate still applies */}
+                {postingMode !== 'lite' && orgConfig?.use_multi_currency && (
                   <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />
                 )}
-                <NavLink href="/dashboard/business/setup/tax" label="Tax & statutory" icon="receipt-tax" />
+                {/* Tax & Statutory — hidden in Lite mode */}
+                {postingMode !== 'lite' && (
+                  <NavLink href="/dashboard/business/setup/tax" label="Tax & statutory" icon="receipt-tax" />
+                )}
               </div>
 
               {/* PEOPLE */}

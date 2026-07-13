@@ -314,6 +314,7 @@ def _org_to_response(org: Optional[TenantOrgConfig], tenant_id: uuid.UUID) -> Or
         period_closing_frequency=org.period_closing_frequency,
         branding=org.branding,
         org_configuration=org.org_configuration,
+        posting_mode=org.posting_mode,
     )
 
 

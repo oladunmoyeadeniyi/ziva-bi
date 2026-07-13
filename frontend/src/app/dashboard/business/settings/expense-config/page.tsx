@@ -92,6 +92,7 @@ export default function ExpenseConfigPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
 
   const [codingLevel, setCodingLevel] = useState(0);
   const [requireCategory, setRequireCategory] = useState(false);
@@ -108,6 +109,10 @@ export default function ExpenseConfigPage() {
 
   useEffect(() => {
     if (!accessToken) return;
+    // Fetch posting mode for coding level lock in Lite
+    apiFetch<{ posting_mode?: string }>("/api/setup/org", { token: accessToken })
+      .then((d) => { if (d.posting_mode) setPostingMode(d.posting_mode as 'lite' | 'connected' | 'full_erp'); })
+      .catch(() => {});
     apiFetch<ExpenseConfig>("/api/expense-config", { token: accessToken })
       .then((cfg) => {
         setCodingLevel(cfg.coding_level ?? 0);
@@ -178,12 +183,26 @@ export default function ExpenseConfigPage() {
           How much GL involvement does the employee have when submitting an expense?
         </p>
 
-        <div className="grid grid-cols-1 gap-3">
+        {/* Lite mode: GL coding not applicable — lock all coding level cards */}
+        {postingMode === 'lite' && (
+          <Banner variant="warning" className="mb-4">
+            GL coding is not available in Lite mode. Expenses will be approved and exported without
+            GL account coding. To enable GL coding, upgrade to Connected or Full ERP mode.
+            {codingLevel > 0 && (
+              <span className="block mt-1 text-xs">
+                Your current coding level will be ignored in Lite mode.
+              </span>
+            )}
+          </Banner>
+        )}
+
+        <div className={`grid grid-cols-1 gap-3 ${postingMode === 'lite' ? "opacity-50 pointer-events-none select-none" : ""}`}>
           {CODING_LEVELS.map(({ level, name, description }) => (
             <button
               key={level}
               type="button"
               onClick={() => setCodingLevel(level)}
+              disabled={postingMode === 'lite'}
               className={`text-left flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${
                 codingLevel === level
                   ? "border-blue-500 bg-blue-50"
