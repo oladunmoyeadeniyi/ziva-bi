@@ -1601,9 +1601,9 @@ async def create_tenant(
       4. A TenantOrgConfig with the chosen posting_mode
       5. Optional module licenses from initial_modules list
 
-    The admin user receives a temporary password set by the SA. No email
-    is sent automatically — the SA communicates credentials separately
-    or triggers a password-reset flow.
+    A temporary password is auto-generated and returned in the response for
+    one-time display. The admin must change it on first login (must_change_password=True).
+    No email is sent automatically.
     """
     from app.core.security import hash_password
     from app.models.setup import TenantOrgConfig
@@ -1616,9 +1616,10 @@ async def create_tenant(
     if len(country) != 2 or not country.isalpha():
         raise HTTPException(status_code=400, detail="company_country must be a 2-letter ISO code.")
 
-    # ─ Validate password length ───────────────────────────────────────────────────────────────────
-    if len(data.admin_password) < 8:
-        raise HTTPException(status_code=400, detail="admin_password must be at least 8 characters.")
+    # ─ Auto-generate a secure temporary password ──────────────────────────────────────────────────
+    import secrets as _secrets
+    _chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%"
+    temp_password = "".join(_secrets.choice(_chars) for _ in range(14))
 
     # ─ Validate module keys ─────────────────────────────────────────────────────────────────
     invalid_modules = [k for k in (data.initial_modules or []) if k not in VALID_MODULE_KEYS]
@@ -1704,7 +1705,7 @@ async def create_tenant(
     db.add(UserTenant(
         user_id=admin_user.id,
         tenant_id=tenant.id,
-        password_hash=hash_password(data.admin_password),
+        password_hash=hash_password(temp_password),
         role_tier="power_admin",
         is_active=True,
         must_change_password=True,  # SA-set temp password -- admin must change on first login
@@ -1737,4 +1738,5 @@ async def create_tenant(
         created_at=tenant.created_at,
         admin_user_id=str(admin_user.id),
         admin_email=admin_user.email,
+        temp_password=temp_password,
     )

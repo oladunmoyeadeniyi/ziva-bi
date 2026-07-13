@@ -756,6 +756,23 @@ Three improvements bundled in one commit (migration `p4q5r6s7t8u9`, all 7 files 
 
 ---
 
+### SA Portal — Auto-generated admin password + credential-reveal screen (commit `4f9f9a9` batch, 2026-07-13)
+
+Removed the manual "Temporary password" input from the Create Company modal. Backend now auto-generates the credential; frontend reveals it once after creation.
+
+**Backend changes (`schemas/platform.py`, `routers/platform.py`):**
+- `CreateTenantRequest`: `admin_password` field removed — SA no longer sets a password at creation time.
+- `CreateTenantResponse`: `temp_password: str` added — backend returns the generated credential once.
+- `create_tenant()`: password-length validation block removed; `secrets.choice()` generates a 14-char temporary password from a curated alphabet (no visually ambiguous chars: I/O/l/o/0/1 excluded). `hash_password(temp_password)` written to `UserTenant.password_hash`; `must_change_password=True` set on the admin `UserTenant`. `temp_password` returned in the response.
+
+**Frontend changes (`platform/tenants/page.tsx`):**
+- `adminPassword` and `showPassword` state removed.
+- `admin_password` removed from the POST body.
+- Entire password input section (input field, eye-toggle, Generate button) replaced with a static grey info note: "A secure temporary password will be auto-generated and shown once after creation."
+- On successful creation, modal switches to a **credential-reveal screen** instead of closing immediately. Reveals `created.admin_email` and `created.temp_password` (monospace, with a Copy-to-clipboard button + 2s "Copied!" state). Amber note: "The admin will be forced to change this on first login." "Go to tenant →" button clears the reveal state and forwards to `onCreated()`.
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -935,4 +952,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-13 (is_internal flag + MODULE_MODE_AVAILABILITY centralisation + Create Company modal enhancements; pending commit). Last pushed commit: `63f61fe`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-13 (auto-generated admin temp password + credential-reveal screen; pending commit). Last pushed commit: `4f9f9a9`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

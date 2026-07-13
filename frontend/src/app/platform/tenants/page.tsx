@@ -42,6 +42,7 @@ interface CreateTenantResponse {
   created_at: string;
   admin_user_id: string;
   admin_email: string;
+  temp_password: string;
 }
 
 // ── Badge helpers ─────────────────────────────────────────────────────────────
@@ -104,13 +105,13 @@ function CreateCompanyModal({
   const [country,        setCountry]        = useState("NG");
   const [adminName,      setAdminName]      = useState("");
   const [adminEmail,     setAdminEmail]     = useState("");
-  const [adminPassword,  setAdminPassword]  = useState("");
-  const [showPassword,   setShowPassword]   = useState(false);
   const [postingMode,    setPostingMode]    = useState("full_erp");
   const [companySize,    setCompanySize]    = useState("");
   const [selModules,     setSelModules]     = useState<string[]>([]);
   const [isInternal,     setIsInternal]     = useState(false);
   const [saving,         setSaving]         = useState(false);
+  const [created,        setCreated]        = useState<CreateTenantResponse | null>(null);
+  const [copied,         setCopied]         = useState(false);
   const [error,          setError]          = useState("");
 
   function toggleModule(key: string) {
@@ -127,7 +128,7 @@ function CreateCompanyModal({
 
   function reset() {
     setCompanyName(""); setCountry("NG"); setAdminName(""); setAdminEmail("");
-    setAdminPassword(""); setShowPassword(false); setPostingMode("full_erp");
+    setPostingMode("full_erp");
     setCompanySize(""); setSelModules([]); setIsInternal(false); setError("");
   }
 
@@ -143,7 +144,6 @@ function CreateCompanyModal({
           company_country: country,
           admin_full_name: adminName,
           admin_email: adminEmail,
-          admin_password: adminPassword,
           posting_mode: postingMode,
           is_internal: isInternal,
           company_size: companySize || undefined,
@@ -151,7 +151,7 @@ function CreateCompanyModal({
         },
       });
       reset();
-      onCreated(result);
+      setCreated(result);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create company.");
     } finally {
@@ -160,6 +160,64 @@ function CreateCompanyModal({
   }
 
   if (!open) return null;
+
+  // ── Success reveal — show generated credentials before navigating ──────────
+  if (created) {
+    return (
+      <div className="fixed inset-0 z-50 flex">
+        <div className="absolute inset-0 bg-black/40" />
+        <div className="relative ml-auto w-full max-w-lg bg-white h-full overflow-y-auto shadow-xl flex flex-col">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h2 className="text-base font-semibold text-gray-900">Company created</h2>
+          </div>
+          <div className="flex-1 px-6 py-8 space-y-6">
+            <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3">
+              <p className="text-sm font-semibold text-green-800 mb-1">✓ {created.name} is ready</p>
+              <p className="text-xs text-green-700">Share the credentials below with the admin — they must change the password on first login.</p>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Admin email</p>
+                <p className="font-mono text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2">{created.admin_email}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Temporary password{" "}
+                  <span className="font-normal normal-case text-gray-400">(shown once)</span>
+                </p>
+                <div className="flex gap-2">
+                  <p className="flex-1 font-mono text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2 break-all">
+                    {created.temp_password}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(created.temp_password).catch(() => {});
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 whitespace-nowrap"
+                  >
+                    {copied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <p className="text-xs text-amber-600 mt-1">The admin will be forced to change this on first login.</p>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={() => { setCreated(null); setCopied(false); onCreated(created); }}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              Go to tenant →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -237,58 +295,10 @@ function CreateCompanyModal({
                 <input required type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)}
                   autoComplete="off" className={inputCls} placeholder="jane@company.com" />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Temporary password *</label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      required
-                      type={showPassword ? "text" : "password"}
-                      minLength={8}
-                      value={adminPassword}
-                      onChange={(e) => setAdminPassword(e.target.value)}
-                      autoComplete="new-password"
-                      className={`${inputCls} pr-9`}
-                      placeholder="At least 8 characters"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(v => !v)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                      title={showPassword ? "Hide password" : "Show password"}
-                    >
-                      {showPassword ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88L6.59 6.59m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                        </svg>
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-                      const pwd = Array.from(crypto.getRandomValues(new Uint8Array(12)))
-                        .map(b => chars[b % chars.length]).join("");
-                      setAdminPassword(pwd);
-                      setShowPassword(true);
-                      navigator.clipboard.writeText(pwd).catch(() => {});
-                    }}
-                    className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 whitespace-nowrap"
-                  >
-                    Generate
-                  </button>
-                </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  The admin will be required to change this on first login.
-                  {adminPassword && showPassword && (
-                    <span className="ml-1 text-blue-600 font-medium">Password copied to clipboard.</span>
-                  )}
+              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5">
+                <p className="text-xs text-gray-500">
+                  A secure temporary password will be auto-generated and shown once after creation.
+                  The admin must change it on first login.
                 </p>
               </div>
             </div>
