@@ -1305,7 +1305,7 @@ function OrganisationPage() {
           <SectionHeading title="Legal & registration" />
           <div className="grid grid-cols-2 gap-4">
             <Field label="Legal name" required>
-              <Input value={org.legal_name ?? ""} onChange={e => setOrg(o => ({ ...o, legal_name: e.target.value }))} placeholder="e.g. Red Bull Nigeria Limited" />
+              <Input value={org.legal_name ?? ""} onChange={e => setOrg(o => ({ ...o, legal_name: e.target.value }))} placeholder="e.g. Acme Corporation Limited" />
             </Field>
             <Field label="RC / Company registration number">
               <Input value={org.rc_number ?? ""} onChange={e => setOrg(o => ({ ...o, rc_number: e.target.value }))} placeholder="e.g. RC 1234567" />

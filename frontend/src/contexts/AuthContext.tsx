@@ -76,6 +76,7 @@ interface AuthResponse {
   refresh_token: string;
   token_type: string;
   user?: AuthUser;
+  must_change_password?: boolean;
 }
 
 interface EnterTenantResponse {
@@ -116,7 +117,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   impersonation: ImpersonationState | null;
   signup: (data: SignupData) => Promise<void>;
-  login: (email: string, password: string) => Promise<AuthUser | undefined>;
+  login: (email: string, password: string) => Promise<{ user?: AuthUser; must_change_password?: boolean }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   /** Enter a tenant as a super admin. Navigating to the tenant dashboard is the caller's responsibility. */
@@ -288,13 +289,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveSession(res);
   }, []);
 
-  const login = useCallback(async (email: string, password: string): Promise<AuthUser | undefined> => {
+  const login = useCallback(async (email: string, password: string): Promise<{ user?: AuthUser; must_change_password?: boolean }> => {
     const res = await apiFetch<AuthResponse>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
     saveSession(res);
-    return res.user;
+    return { user: res.user, must_change_password: res.must_change_password ?? false };
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -529,8 +530,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useAuth(): AuthContextType {
+export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within <AuthProvider>");
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

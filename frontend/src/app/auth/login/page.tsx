@@ -27,8 +27,10 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const loggedInUser = await login(email, password);
-      if (loggedInUser?.is_super_admin) {
+      const { user: loggedInUser, must_change_password } = await login(email, password);
+      if (must_change_password) {
+        router.push("/auth/change-password");
+      } else if (loggedInUser?.is_super_admin) {
         router.push("/platform");
       } else {
         router.push("/dashboard");
@@ -113,9 +115,7 @@ export default function LoginPage() {
             <Link
               href="/auth/signup"
               className="font-semibold text-blue-600 hover:text-blue-700"
-            >
-              Sign up
-            </Link>
+           >Sign up</Link>
           </p>
         </div>
       </div>

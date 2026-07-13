@@ -128,6 +128,7 @@ export default function TenantDetailPage() {
   const lsRead = (field: string, def: string) => { try { return JSON.parse(localStorage.getItem(lsKey) ?? "{}")[field] ?? def; } catch { return def; } };
   const lsSave = (patch: Record<string, string>) => { try { const cur = JSON.parse(localStorage.getItem(lsKey) ?? "{}"); localStorage.setItem(lsKey, JSON.stringify({ ...cur, ...patch })); } catch {} };
 
+  const [usersExpanded, setUsersExpanded] = useState(false);
   const [userSearch, _setUserSearch] = useState(() => lsRead("search", ""));
   const [userStatusF, _setUserStatusF] = useState<"all" | "active" | "inactive">(() => lsRead("status", "all") as "all" | "active" | "inactive");
   const [userSortCol, _setUserSortCol] = useState<"name" | "email" | "active">(() => lsRead("sortCol", "name") as "name" | "email" | "active");
@@ -806,11 +807,28 @@ export default function TenantDetailPage() {
 
       {/* ── Users ────────────────────────────────────────────────────────────── */}
       <section className="border border-gray-200 rounded-xl bg-white overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Users</h2>
-          <span className="text-xs text-gray-400">{displayedTenantUsers.length} of {tenant.users.length}</span>
-        </div>
+        <button
+          type="button"
+          onClick={() => setUsersExpanded(v => !v)}
+          className="w-full px-5 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Users</h2>
+            <span className="text-xs text-gray-400 font-normal">
+              {tenant.users.length} total · {tenant.users.filter(u => u.is_active).length} active
+            </span>
+          </div>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className={`w-4 h-4 text-gray-400 transition-transform ${usersExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
 
+        {usersExpanded && (
+          <>
         {/* Filter bar */}
         <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-2 items-center">
           <input
@@ -900,6 +918,8 @@ export default function TenantDetailPage() {
             </tbody>
           </table>
         )}
+          </>
+        )}
       </section>
 
       {/* ── Consultant configuration ──────────────────────────────────────── */}
@@ -979,28 +999,24 @@ export default function TenantDetailPage() {
               </div>
 
               {/* Save */}
+           
               {sysConfigMsg && (
-                <div className={`p-2.5 rounded-md text-xs border ${
-                  sysConfigMsg.type === "ok"
-                    ? "bg-green-50 border-green-200 text-green-700"
-                    : "bg-red-50 border-red-200 text-red-700"
-                }`}>
+                <p className={`text-xs ${sysConfigMsg.type === "ok" ? "text-green-600" : "text-red-600"}`}>
                   {sysConfigMsg.text}
-                </div>
+                </p>
               )}
-              <Button
-                variant="primary"
+              <button
+                type="button"
                 onClick={saveSysConfig}
-                loading={sysConfigSaving}
                 disabled={sysConfigSaving}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
               >
-                {sysConfigSaving ? "Saving…" : "Save configuration"}
-              </Button>
+                {sysConfigSaving ? "Saving..." : "Save configuration"}
+              </button>
             </>
           )}
         </section>
       )}
-
     </PageContainer>
   );
 }

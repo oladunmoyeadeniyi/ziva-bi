@@ -34,6 +34,7 @@ from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, require_super_admin
 from app.config import settings
 from app.models.auth import AuditLog, ImpersonationSession, Role, Tenant, User, UserRole, UserTenant
+from app.models.gl import JournalEntry
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
     CreateTenantRequest,
@@ -1202,6 +1203,29 @@ async def update_system_config(
             select(TenantOrgConfig).where(TenantOrgConfig.tenant_id == tenant.id)
         )
         cfg = cfg_res.scalar_one_or_none()
+        current_mode = cfg.posting_mode if cfg else "full_erp"
+
+        if data.posting_mode != current_mode:
+            # Guard: block mode switch once any journal entries exist.
+            # Switching mode after data is posted orphans GL entries (lite→full_erp)
+            # or creates a GL gap (full_erp→lite). World-class ERPs (NetSuite, SAP)
+            # lock this at provisioning. We enforce the same rule.
+            je_count_res = await db.execute(
+                select(JournalEntry.id).where(
+                    JournalEntry.tenant_id == tenant.id
+                ).limit(1)
+            )
+            if je_count_res.scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Cannot switch posting mode from '{current_mode}' to '{data.posting_mode}' — "
+                        "this tenant already has posted journal entries. Changing the posting mode "
+                        "after data is in the GL would orphan existing entries or leave a gap. "
+                        "Contact support if a mode change is genuinely required."
+                    ),
+                )
+
         if cfg:
             cfg.posting_mode = data.posting_mode
         else:
@@ -1674,19 +1698,18 @@ async def create_tenant(
         password_hash=hash_password(data.admin_password),
         role_tier="power_admin",
         is_active=True,
+        must_change_password=True,  # SA-set temp password -- admin must change on first login
     ))
 
-    # ─ Audit log ────────────────────────────────────────────────────────────────────────────────────
+    # -- Audit log --
     await _log(
         "platform.tenant.created_by_sa",
         current_user.user_id,
         tenant.id,
         {
-            "company_name": tenant.name,
-            "slug": tenant.slug,
-            "admin_email": admin_email,
-            "posting_mode": data.posting_mode,
-            "initial_modules": data.initial_modules or [],
+            "company_name": data.company_name,
+            "admin_email": data.admin_email,
+            "environment": data.environment,
         },
         db,
     )

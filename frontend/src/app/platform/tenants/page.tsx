@@ -104,6 +104,7 @@ function CreateCompanyModal({
   const [adminName,      setAdminName]      = useState("");
   const [adminEmail,     setAdminEmail]     = useState("");
   const [adminPassword,  setAdminPassword]  = useState("");
+  const [showPassword,   setShowPassword]   = useState(false);
   const [postingMode,    setPostingMode]    = useState("full_erp");
   const [environment,    setEnvironment]    = useState<"live" | "test">("live");
   const [companySize,    setCompanySize]    = useState("");
@@ -117,7 +118,7 @@ function CreateCompanyModal({
 
   function reset() {
     setCompanyName(""); setCountry("NG"); setAdminName(""); setAdminEmail("");
-    setAdminPassword(""); setPostingMode("full_erp"); setEnvironment("live");
+    setAdminPassword(""); setShowPassword(false); setPostingMode("full_erp"); setEnvironment("live");
     setCompanySize(""); setSelModules([]); setError("");
   }
 
@@ -236,10 +237,56 @@ function CreateCompanyModal({
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Temporary password *</label>
-                <input required type="password" minLength={8} value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  className={inputCls} placeholder="At least 8 characters" />
-                <p className="text-xs text-gray-400 mt-1">Share this with the client — they should change it on first login.</p>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      required
+                      type={showPassword ? "text" : "password"}
+                      minLength={8}
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      className={`${inputCls} pr-9`}
+                      placeholder="At least 8 characters"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(v => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      title={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88L6.59 6.59m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+                      const pwd = Array.from(crypto.getRandomValues(new Uint8Array(12)))
+                        .map(b => chars[b % chars.length]).join("");
+                      setAdminPassword(pwd);
+                      setShowPassword(true);
+                      navigator.clipboard.writeText(pwd).catch(() => {});
+                    }}
+                    className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 whitespace-nowrap"
+                  >
+                    Generate
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  The admin will be required to change this on first login.
+                  {adminPassword && showPassword && (
+                    <span className="ml-1 text-blue-600 font-medium">Password copied to clipboard.</span>
+                  )}
+                </p>
               </div>
             </div>
           </div>
@@ -409,32 +456,44 @@ export default function PlatformTenantsPage() {
 
       <section className="border border-gray-200 rounded-lg overflow-hidden bg-white">
         {loading ? (
-          <p className="p-6 text-sm text-gray-400">Loading…</p>
+                <p className="px-5 py-4 text-sm text-gray-400">Loading...</p>
         ) : tenants.length === 0 ? (
-          <p className="p-6 text-sm text-gray-400 italic">No tenants match the current filters.</p>
+          <p className="px-5 py-4 text-sm text-gray-400 italic">No tenants match the current filters.</p>
         ) : (
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50 border-b border-gray-100">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500 font-medium">
               <tr>
-                {["Name", "Slug", "Country", "Environment", "Lifecycle", "Users", "Created"].map((h) => (
-                  <th key={h} className="text-left py-2.5 px-3 font-medium text-gray-500">{h}</th>
-                ))}
+                <th className="text-left py-3 px-4">Name</th>
+                <th className="text-left py-3 px-4">Slug</th>
+                <th className="text-left py-3 px-4">Country</th>
+                <th className="text-left py-3 px-4">Environment</th>
+                <th className="text-left py-3 px-4">Lifecycle</th>
+                <th className="text-left py-3 px-4">Users</th>
+                <th className="text-left py-3 px-4">Created</th>
               </tr>
             </thead>
             <tbody>
               {tenants.map((t) => (
-                <tr key={t.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                  <td className="py-2.5 px-3">
-                    <Link href={`/platform/tenants/${t.id}`} className="font-medium text-blue-700 hover:underline">
+                <tr key={t.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-2.5 px-4">
+                    <a href={`/platform/tenants/${t.id}`} className="font-medium text-blue-600 hover:underline">
                       {t.name}
-                    </Link>
+                    </a>
                   </td>
                   <td className="py-2.5 px-3 text-gray-500 font-mono">{t.slug}</td>
-                  <td className="py-2.5 px-3 text-gray-500">{t.country}</td>
-                  <td className="py-2.5 px-3"><Badge value={t.environment} map={ENV_CLS} /></td>
-                  <td className="py-2.5 px-3"><Badge value={t.lifecycle_status} map={LIFECYCLE_CLS} /></td>
-                  <td className="py-2.5 px-3 text-gray-600">{t.user_count}</td>
-                  <td className="py-2.5 px-3 text-gray-400">{new Date(t.created_at).toLocaleDateString()}</td>
+                  <td className="py-2.5 px-4 text-gray-500">{t.country}</td>
+                  <td className="py-2.5 px-4">
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                      t.environment === "test"
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-blue-50 text-blue-700"
+                    }`}>{t.environment}</span>
+                  </td>
+                  <td className="py-2.5 px-4 text-gray-500">{t.lifecycle_status}</td>
+                  <td className="py-2.5 px-4 text-gray-500">{t.user_count}</td>
+                  <td className="py-2.5 px-4 text-gray-400 text-xs">
+                    {new Date(t.created_at).toLocaleDateString()}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -442,27 +501,13 @@ export default function PlatformTenantsPage() {
         )}
       </section>
 
-      {!loading && tenants.length > 0 && (() => {
-        const live = tenants.filter((t) => t.environment === "live");
-        const parts: string[] = [];
-        const liveCount  = live.filter((t) => t.lifecycle_status === "live").length;
-        const implCount  = live.filter((t) => t.lifecycle_status === "in_implementation").length;
-        const trialCount = live.filter((t) => t.lifecycle_status === "trial").length;
-        const suspCount  = live.filter((t) => t.lifecycle_status === "suspended").length;
-        if (liveCount  > 0) parts.push(`${liveCount} live`);
-        if (implCount  > 0) parts.push(`${implCount} in implementation`);
-        if (trialCount > 0) parts.push(`${trialCount} trial`);
-        if (suspCount  > 0) parts.push(`${suspCount} suspended`);
-        return parts.length > 0 ? <p className="mt-2 text-xs text-gray-500">{parts.join(" \xb7 ")}</p> : null;
-      })()}
-      <p className="mt-1 text-xs text-gray-400">
-        {!loading && `${tenants.length} tenant${tenants.length !== 1 ? "s" : ""} shown`}
-      </p>
-
       <CreateCompanyModal
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        onCreated={handleCreated}
+        onCreated={(t) => {
+          setShowCreate(false);
+          setTenants(prev => [t as unknown as TenantListItem, ...prev]);
+        }}
         token={accessToken}
       />
     </PageContainer>

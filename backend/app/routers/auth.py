@@ -44,6 +44,7 @@ from app.models.auth import (
 )
 from app.schemas.auth import (
     AuthResponse,
+    ChangePasswordRequest,
     LoginRequest,
     LogoutRequest,
     MessageResponse,
@@ -544,6 +545,7 @@ async def login(
     return AuthResponse(
         access_token=access_token,
         refresh_token=raw_token,
+        must_change_password=getattr(user_tenant, "must_change_password", False),
         user=UserResponse.from_orm_pair(
             user, user_tenant.tenant_id,
             is_tenant_admin=admin_flag,
@@ -826,6 +828,48 @@ async def switch_environment(
             user, target_tenant.id,
             is_tenant_admin=admin_flag,
             has_non_admin_role=non_admin_flag,
-            role_tier=getattr(target_ut, "role_tier", None),
+            role_tier=getattr(target_ut, 'role_tier', None),
         ),
     )
+
+
+# -- Force-change password ---------------------------------------------------
+
+
+
+@router.post("/change-password", response_model=MessageResponse)
+async def change_password(
+    data: ChangePasswordRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """
+    Change the current user's password.
+
+    When must_change_password is True on the UserTenant, this endpoint clears
+    that flag so the user is no longer redirected to the change-password page.
+    Accessible to any authenticated user (individual or tenant member).
+    """
+    ut_res = await db.execute(
+        select(UserTenant).where(UserTenant.id == current_user.user_tenant_id)
+    )
+    user_tenant: UserTenant | None = ut_res.scalar_one_or_none()
+    if not user_tenant:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    if not verify_password(data.current_password, user_tenant.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+    if data.new_password == data.current_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from current password.",
+        )
+
+    user_tenant.password_hash = hash_password(data.new_password)
+    user_tenant.must_change_password = False
+    await db.commit()
+
+    return MessageResponse(message="Password updated successfully.")

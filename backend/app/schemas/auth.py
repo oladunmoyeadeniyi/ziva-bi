@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
@@ -178,12 +178,22 @@ class AuthResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: UserResponse | None = None  # None on token refresh (user unchanged)
+    # When True the frontend must redirect to /auth/change-password before any other route.
+    # Only set on login — never on refresh.
+    must_change_password: bool = False
 
 
 class MessageResponse(BaseModel):
     """Generic success confirmation."""
 
     message: str
+
+
+class ChangePasswordRequest(BaseModel):
+    """Body for POST /api/auth/change-password."""
+
+    current_password: str
+    new_password: str = Field(..., min_length=8)
 
 
 # ── M9.0: Environment architecture ───────────────────────────────────────────

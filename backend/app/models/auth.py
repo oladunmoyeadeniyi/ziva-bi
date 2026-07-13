@@ -223,6 +223,9 @@ class UserTenant(Base):
     user_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="employee")
     # M8.2: implementation portal role tier — 'consultant' | 'power_admin' | 'functional_admin'
     role_tier: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # When True the user must change their password before accessing any route.
+    # Set to True by SA-initiated tenant creation; cleared after successful change.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -536,8 +539,12 @@ class ImpersonationSession(Base):
         nullable=True,
         index=True,
     )
-    environment: Mapped[str] = mapped_column(String(10), nullable=False)   # "live" | "test"
-    entry_point: Mapped[str] = mapped_column(String(30), nullable=False)   # "user_list" | "employee_list"
+    environment: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="live"
+    )  # "live" | "test"
+    entry_point: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="user_list"
+    )  # "user_list" | "employee_list"
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
