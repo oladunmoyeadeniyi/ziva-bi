@@ -165,9 +165,9 @@ const MODULE_INFO: Record<string, {
     ],
   },
   "tax-engine": {
-    label: "Tax Engine",
+    label: "Tax & Compliance",
     icon: "🧮",
-    description: "Configure automated tax computation, filing schedules, and compliance reporting.",
+    description: "Configure corporate tax computation, filing schedules, capital allowances, and compliance reporting.",
     features: [
       "Company income tax computation",
       "Deferred tax calculation",

@@ -571,7 +571,7 @@ The setup portal checklist (`GET /api/setup/progress`) is now fully posting-mode
 
 ---
 
-### Mode-Aware Implementation Portal — Sidebar + Pages (2026-07-13)
+### Mode-Aware Implementation Portal — Sidebar + Pages + Module Activation (2026-07-13, commits `63f61fe`, pending)
 
 Extends task #51 (mode-aware checklist) to the sidebar nav and individual setup pages. Previously, the checklist hid steps for irrelevant modes but the sidebar and pages were mode-blind — a Lite tenant could still navigate to Chart of Accounts, Account Mapping, Tax, etc.
 
@@ -597,6 +597,33 @@ Extends task #51 (mode-aware checklist) to the sidebar nav and individual setup 
 | Bank Accounts | ✅ sidebar visible | ✅ | ✅ |
 | Accounting Periods | ✅ sidebar visible | ✅ | ✅ |
 | Expense Config coding level | Locked at 0, amber banner | ✅ | ✅ |
+
+**Backend fix (commit `63f61fe`, same day):** `backend/app/routers/setup.py` `_org_to_response()` was building `OrgConfigResponse(...)` without passing `posting_mode=org.posting_mode`, so the field always returned the Pydantic default (`"full_erp"`) regardless of actual tenant config. One-line fix added `posting_mode=org.posting_mode` — all frontend mode guards now receive the real value.
+
+**Mode-Aware Module Activation (pending commit, 2026-07-13):**
+
+- **`setup/modules/page.tsx`**: Replaced ad-hoc `MODULE_REQUIRES_GL` blocklist with `MODULE_MODE_AVAILABILITY` map — 14 module keys, each declaring which posting modes can list it. Lite allowlist: `expense`, `ap`, `ar`, `tax_engine`, `reporting` only. Connected + Full ERP: all 14 modules. `isAvailableForMode()` helper drives `visibleModules` filter (unlicensed incompatible modules hidden; licensed-but-incompatible modules stay visible with deactivate-only path for mode-downgrade cleanup). `postingMode` fetched from `/api/setup/org` in `Promise.all` alongside module list.
+- **`backend/app/routers/platform.py`** `create_tenant()`: seeds `TenantOrgConfig` with `legal_name=data.company_name.strip()` and `country=country` at creation time — Organisation tab now pre-populated on first entry instead of blank.
+- **"Tax & Compliance" rename**: `tax_engine` label updated from "Tax Engine" in `backend/app/constants/modules.py`, `frontend/src/lib/modules.ts`, and `frontend/src/app/dashboard/business/setup/modules/[module]/page.tsx`.
+
+**Module availability per mode (authoritative):**
+
+| Module | Lite | Connected | Full ERP | Notes |
+|---|---|---|---|---|
+| Expense Management | ✅ | ✅ | ✅ | Core Lite module |
+| Accounts Payable (P2P) | ✅ | ✅ | ✅ | Workflow in Lite; GL posting in Connected/Full ERP |
+| Accounts Receivable (O2C) | ✅ | ✅ | ✅ | Workflow in Lite; GL posting in Connected/Full ERP |
+| Tax & Compliance | ✅ | ✅ | ✅ | Transaction upload in Lite; GL reads in Connected/Full ERP |
+| Reporting & Analytics | ✅ | ✅ | ✅ | Operational reports in Lite; financial statements in Connected/Full ERP |
+| Payroll & HR | ❌ | ✅ | ✅ | Connected/Full ERP only |
+| Bank Reconciliation | ❌ | ✅ | ✅ | Requires GL as book-side; no standalone use in Lite |
+| Budget & Planning | ❌ | ✅ | ✅ | Actuals comparison requires GL |
+| Inventory & Warehouse | ❌ | ✅ | ✅ | Connected/Full ERP only |
+| Fixed Assets | ❌ | ✅ | ✅ | Connected/Full ERP only |
+| POSM Management | ❌ | ✅ | ✅ | Connected/Full ERP only |
+| Vendor Portal | ❌ | ✅ | ✅ | Connected/Full ERP only |
+| Customer Portal | ❌ | ✅ | ✅ | Connected/Full ERP only |
+| Warehouse / 3PL Portal | ❌ | ✅ | ✅ | Connected/Full ERP only |
 
 ---
 
@@ -883,4 +910,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-13 (Mode-Aware Implementation Portal — sidebar + pages; pending commit next). Last pushed commit: `7989709`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-13 (Mode-Aware Module Activation + `create_tenant` org seeding + Tax & Compliance rename; pending commit). Last pushed commit: `63f61fe`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

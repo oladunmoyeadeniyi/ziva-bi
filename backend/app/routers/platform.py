@@ -1667,6 +1667,8 @@ async def create_tenant(
         tenant_id=tenant.id,
         functional_currency=functional_currency,
         posting_mode=data.posting_mode,
+        legal_name=data.company_name.strip(),   # seed from SA form — avoids blank Organisation tab
+        country=country,                         # already validated 2-letter ISO above
     ))
 
     # ─ Module licenses ───────────────────────────────────────────────────────────────────────────

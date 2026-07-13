@@ -202,7 +202,7 @@ const MODULE_DETAILS: Record<string, ModuleDetail> = {
     dependencies: "Requires Chart of Accounts and Dimensions.",
   },
   tax_engine: {
-    description: "Corporate tax computation with capital allowances, deferred tax and multi-year tracking.",
+    description: "Corporate tax computation with capital allowances, deferred tax and multi-year CIT tracking.",
     features: [
       "Corporate tax computation",
       "Education tax and industry levies",
@@ -232,14 +232,53 @@ const Icon = ({ name, size = 16 }: { name: string; size?: number }) => (
   <i className={`ti ti-${name}`} style={{ fontSize: size, lineHeight: 1 }} />
 );
 
+// ── Mode availability ────────────────────────────────────────────────────────
+// Defines which modules are listed for each posting_mode.
+// Modules not listed for the current mode are hidden entirely from the activation page.
+//
+// Lite      — workflow + transactional modules only (EM, AP, AR, T&C, R&A)
+// Connected — all modules (GL coding → external ERP)
+// Full ERP  — all modules (full internal GL integration)
+const MODULE_MODE_AVAILABILITY: Record<string, string[]> = {
+  expense:         ["lite", "connected", "full_erp"],
+  ap:              ["lite", "connected", "full_erp"],
+  ar:              ["lite", "connected", "full_erp"],
+  tax_engine:      ["lite", "connected", "full_erp"],
+  reporting:       ["lite", "connected", "full_erp"],
+  payroll:         ["connected", "full_erp"],
+  bank_recon:      ["connected", "full_erp"],
+  budget:          ["connected", "full_erp"],
+  inventory:       ["connected", "full_erp"],
+  fixed_assets:    ["connected", "full_erp"],
+  posm:            ["connected", "full_erp"],
+  vendor_portal:   ["connected", "full_erp"],
+  customer_portal: ["connected", "full_erp"],
+  warehouse:       ["connected", "full_erp"],
+};
+
+const MODE_LABELS: Record<string, string> = {
+  lite: "Lite",
+  connected: "Connected",
+  full_erp: "Full ERP",
+};
+
+function isAvailableForMode(key: string, mode: string | null): boolean {
+  if (!mode) return true; // still loading — show everything
+  const allowed = MODULE_MODE_AVAILABILITY[key];
+  if (!allowed) return true; // unknown key — don't hide
+  return allowed.includes(mode);
+}
+
 function ModuleCard({
   mod,
   selected,
   onClick,
+  incompatible = false,
 }: {
   mod: ModuleState;
   selected: boolean;
   onClick: () => void;
+  incompatible?: boolean;
 }) {
   const icon = MODULE_ICONS[mod.module_key] ?? "puzzle";
   const unlicensed = !mod.is_licensed;
@@ -253,7 +292,9 @@ function ModuleCard({
         selected
           ? "bg-blue-50 border border-blue-200"
           : unlicensed
-          ? "border border-dashed border-gray-200 opacity-60 hover:opacity-80 hover:border-gray-300 bg-white"
+          ? incompatible
+            ? "border border-dashed border-gray-200 opacity-40 hover:opacity-55 hover:border-gray-300 bg-gray-50"
+            : "border border-dashed border-gray-200 opacity-60 hover:opacity-80 hover:border-gray-300 bg-white"
           : mod.is_active
           ? "border border-green-200 bg-green-50 hover:border-green-300"
           : "border border-gray-200 bg-white hover:border-gray-300",
@@ -263,7 +304,17 @@ function ModuleCard({
         <Icon name={icon} size={18} />
       </span>
       <span className="flex-1 text-[13px] font-medium text-gray-800 truncate">{mod.label}</span>
-      {mod.is_licensed && (
+      {incompatible && !mod.is_licensed && (
+        <span className="shrink-0 flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400">
+          <i className="ti ti-lock" style={{ fontSize: 10 }} />
+        </span>
+      )}
+      {incompatible && mod.is_licensed && (
+        <span className="shrink-0 text-amber-500">
+          <i className="ti ti-alert-triangle" style={{ fontSize: 13 }} />
+        </span>
+      )}
+      {!incompatible && mod.is_licensed && (
         <span
           className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
             mod.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
@@ -286,6 +337,7 @@ export default function ModuleActivationPage() {
   const [licensing, setLicensing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [postingMode, setPostingMode] = useState<string | null>(null);
 
   // Super admin (native or impersonating in implementation mode) can set licensing.
   const isSuperAdmin = user?.is_super_admin === true;
@@ -293,8 +345,12 @@ export default function ModuleActivationPage() {
   const fetchModules = useCallback(async () => {
     if (!accessToken) return;
     try {
-      const data = await apiFetch<ModulesResponse>("/api/setup/modules", { token: accessToken });
-      setModules(data.modules);
+      const [modulesData, orgData] = await Promise.all([
+        apiFetch<ModulesResponse>("/api/setup/modules", { token: accessToken }),
+        apiFetch<{ posting_mode?: string }>("/api/setup/org", { token: accessToken }),
+      ]);
+      setModules(modulesData.modules);
+      if (orgData.posting_mode) setPostingMode(orgData.posting_mode);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load modules");
     } finally {
@@ -346,8 +402,15 @@ export default function ModuleActivationPage() {
     }
   };
 
-  const subscribed = modules.filter((m) => m.is_licensed);
-  const available = modules.filter((m) => !m.is_licensed);
+  // Visible modules = those available for current posting mode, PLUS any already-licensed
+  // modules even if mode-incompatible (e.g. tenant downgraded from Full ERP to Lite while
+  // a module was active). Licensed-but-incompatible modules show deactivate-only so SA can
+  // clean up; unlicensed incompatible modules are hidden entirely.
+  const visibleModules = modules.filter(
+    (m) => m.is_licensed || isAvailableForMode(m.module_key, postingMode)
+  );
+  const subscribed = visibleModules.filter((m) => m.is_licensed);
+  const available = visibleModules.filter((m) => !m.is_licensed);
   const selectedMod = modules.find((m) => m.module_key === selected) ?? null;
   const detail = selected ? MODULE_DETAILS[selected] : null;
 
@@ -398,6 +461,7 @@ export default function ModuleActivationPage() {
                     mod={mod}
                     selected={selected === mod.module_key}
                     onClick={() => setSelected(mod.module_key)}
+                    incompatible={!isAvailableForMode(mod.module_key, postingMode)}
                   />
                 ))
               )}
@@ -417,6 +481,7 @@ export default function ModuleActivationPage() {
                     mod={mod}
                     selected={selected === mod.module_key}
                     onClick={() => setSelected(mod.module_key)}
+                    incompatible={!isAvailableForMode(mod.module_key, postingMode)}
                   />
                 ))}
               </div>
@@ -485,29 +550,62 @@ export default function ModuleActivationPage() {
             {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
             {successMsg && <p className="mb-3 text-sm text-green-600">{successMsg}</p>}
 
+            {/* Mode gate — shown before action buttons when module is incompatible with current posting mode */}
+            {!isAvailableForMode(selectedMod.module_key, postingMode) && postingMode && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <i className="ti ti-lock text-amber-600" style={{ fontSize: 15 }} />
+                  <p className="text-sm font-medium text-amber-800">
+                    Not available in {MODE_LABELS[postingMode] ?? postingMode} mode
+                  </p>
+                </div>
+                <p className="text-xs text-amber-700">
+                  This module requires Chart of Accounts and Dimensions, which are not configured
+                  in {MODE_LABELS[postingMode] ?? postingMode} mode. Contact your Ziva BI consultant
+                  to update the organisation&apos;s configuration mode before activating this module.
+                </p>
+              </div>
+            )}
+
             {/* Action — SA-only controls; tenants see read-only status */}
             {selectedMod.is_licensed ? (
               <div className="space-y-2">
                 {isSuperAdmin ? (
                   <>
-                    <button
-                      type="button"
-                      disabled={toggling || !!licensing}
-                      onClick={() => handleToggle(selectedMod)}
-                      className={[
-                        "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-                        selectedMod.is_active
-                          ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-                          : "bg-green-600 text-white hover:bg-green-700",
-                        toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
-                      ].join(" ")}
-                    >
-                      {toggling
-                        ? "Saving…"
-                        : selectedMod.is_active
-                        ? `Deactivate ${selectedMod.label}`
-                        : `Activate ${selectedMod.label}`}
-                    </button>
+                    {/* Activate/Deactivate — blocked when incompatible */}
+                    {isAvailableForMode(selectedMod.module_key, postingMode) ? (
+                      <button
+                        type="button"
+                        disabled={toggling || !!licensing}
+                        onClick={() => handleToggle(selectedMod)}
+                        className={[
+                          "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                          selectedMod.is_active
+                            ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                            : "bg-green-600 text-white hover:bg-green-700",
+                          toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
+                        ].join(" ")}
+                      >
+                        {toggling
+                          ? "Saving…"
+                          : selectedMod.is_active
+                          ? `Deactivate ${selectedMod.label}`
+                          : `Activate ${selectedMod.label}`}
+                      </button>
+                    ) : selectedMod.is_active ? (
+                      /* Module is active but mode changed — allow deactivation only */
+                      <button
+                        type="button"
+                        disabled={toggling || !!licensing}
+                        onClick={() => handleToggle(selectedMod)}
+                        className={[
+                          "px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-red-50 border border-red-200 text-red-700 hover:bg-red-100",
+                          toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
+                        ].join(" ")}
+                      >
+                        {toggling ? "Saving…" : `Deactivate ${selectedMod.label}`}
+                      </button>
+                    ) : null}
                     <div>
                       <button
                         type="button"
@@ -532,17 +630,25 @@ export default function ModuleActivationPage() {
               </div>
             ) : isSuperAdmin ? (
               <div className="space-y-1.5">
-                <button
-                  type="button"
-                  disabled={licensing === selectedMod.module_key || toggling}
-                  onClick={() => handleLicense(selectedMod.module_key, true)}
-                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  {licensing === selectedMod.module_key ? "Saving…" : "Add to subscription"}
-                </button>
-                <p className="text-xs text-gray-400">
-                  Adds this module to the tenant&apos;s active subscription.
-                </p>
+                {isAvailableForMode(selectedMod.module_key, postingMode) ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={licensing === selectedMod.module_key || toggling}
+                      onClick={() => handleLicense(selectedMod.module_key, true)}
+                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      {licensing === selectedMod.module_key ? "Saving…" : "Add to subscription"}
+                    </button>
+                    <p className="text-xs text-gray-400">
+                      Adds this module to the tenant&apos;s active subscription.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-400">
+                    Change the organisation&apos;s configuration mode to enable this module.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">

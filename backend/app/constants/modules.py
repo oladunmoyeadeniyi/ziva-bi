@@ -25,7 +25,7 @@ MODULE_CATALOGUE: list[dict[str, str]] = [
     {"key": "payroll",          "label": "Payroll & HR"},
     {"key": "bank_recon",       "label": "Bank Reconciliation"},
     {"key": "budget",           "label": "Budget & Planning"},
-    {"key": "tax_engine",       "label": "Tax Engine"},
+    {"key": "tax_engine",       "label": "Tax & Compliance"},
     {"key": "inventory",        "label": "Inventory & Warehouse"},
     {"key": "fixed_assets",     "label": "Fixed Assets"},
     {"key": "posm",             "label": "POSM Management"},
