@@ -1001,12 +1001,12 @@ async def download_org_structure_template(
     ins.row_dimensions[4].height = 24
 
     col_rows = [
-        ("Node Type *",      "Required. Select from dropdown:\n• Parent company — top-level holding / group entity (e.g. Red Bull GMBH)\n• Legal entity — subsidiary registered in a specific country\n• Division / Business unit — major grouping\n• Department — functional unit\n• Cost center — lowest level where costs are posted"),
-        ("Name *",           "Required. Full display name. Examples: Sales, Finance, Off Premise"),
-        ("Code *",           "Required. Unique short code, no spaces. Examples: N22341SA, NG_FIN"),
+        ("Node Type *",      "Required. Select from dropdown:\n• Parent company — top-level holding / group entity\n• Legal entity — subsidiary registered in a specific country\n• Division / Business unit — major grouping\n• Department — functional unit\n• Cost center — lowest level where costs are posted"),
+        ("Name *",           "Required. Full display name. Examples: Finance, Sales, Operations"),
+        ("Code *",           "Required. Unique short code, no spaces. Examples: LEG001, FIN-NG"),
         ("Parent Code",      "Code of this node's parent. Leave blank only for the top-level Legal entity.\nMust exactly match a Code in this file or already in the system."),
         ("Cost Center Code", "Required when Node Type = Cost center. Must match the dimension value code in Ziva BI.\nLeave blank for Legal entity, Division, and Department nodes.\nConditional formatting flags missing values in red."),
-        ("Entity Code",      "Optional. Legal entity nodes only. Stores the ERP profit centre / entity code.\nExample: N22341 (Sage X3 profit centre for Red Bull Nigeria)."),
+        ("Entity Code",      "Optional. Legal entity nodes only. Stores the ERP profit centre / entity code.\nExample: ENT001 (your ERP profit centre or entity code)."),
         ("Description",      "Optional. Any notes about this node."),
     ]
 
@@ -1095,27 +1095,22 @@ async def download_org_structure_template(
         )
     )
 
-    # Sample rows
-    samples = [
-        ("Legal entity",            "Acme Corporation", "ACME",   "",     "",         "ACM001", "Top-level legal entity"),
-        ("Cost center",             "Finance",          "FIN",    "ACME", "FIN001",   "",       "Finance department"),
-        ("Cost center",             "Sales",            "SAL",    "ACME", "SAL001",   "",       "Sales department"),
-        ("Cost center",             "Off Premise",      "SAL_OP", "SAL",  "SAL_OP01", "",       "Off premise sales"),
-        ("Cost center",             "Marketing",        "MKT",    "ACME", "",         "",       "Missing cost center code — intentional demo of red flag"),
+    # No sample data rows — guidance is in cell comments on header cells
+    from openpyxl.comments import Comment as XlComment
+    header_tips = [
+        "Select from the dropdown:\n• Parent company\n• Legal entity\n• Division / Business unit\n• Department\n• Cost center",
+        "Full display name.\nExamples: Finance, Sales, Operations",
+        "Unique short code, no spaces.\nExamples: LEG001, FIN-NG",
+        "Code of this node\'s parent.\nLeave blank only for the top-level node.\nMust exactly match a Code in this file or already in the system.",
+        "Required when Node Type = Cost center.\nMust match the dimension value code in Ziva BI.\nLeave blank for Legal entity, Division, Department nodes.",
+        "Optional. Legal entity nodes only.\nYour ERP profit centre or entity code.\nExample: ENT001",
+        "Optional. Any notes about this node.",
     ]
-    s_font = Font(name="Arial", size=10, color="444444", italic=True)
-    for r, row in enumerate(samples, 2):
-        for c, val in enumerate(row, 1):
-            cell = ws.cell(row=r, column=c, value=val)
-            cell.font = s_font
-            cell.alignment = Alignment(vertical="center", indent=1)
-        ws.row_dimensions[r].height = 20
-
-    note_row = len(samples) + 3
-    ws.cell(row=note_row, column=1,
-        value="↑ Delete all sample rows above before uploading. Marketing row intentionally has no Cost Center Code to demonstrate the red flag."
-    ).font = Font(name="Arial", size=10, color="AA0000", italic=True)
-    ws.merge_cells(f"A{note_row}:G{note_row}")
+    for ci, tip in enumerate(header_tips, 1):
+        comment = XlComment(tip, "Ziva BI")
+        comment.width = 260
+        comment.height = 100
+        ws.cell(row=1, column=ci).comment = comment
 
     ws.freeze_panes = "A2"
 

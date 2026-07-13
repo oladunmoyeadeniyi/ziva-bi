@@ -2007,7 +2007,7 @@ function OrganisationPage() {
                           value={roleForm.sub_area}
                           onChange={e => setRoleForm(f => ({ ...f, sub_area: e.target.value }))}
                           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="e.g. Lagos Mainland, Modern Trade, SME Segment"
+                          placeholder="e.g. Abuja Central, Modern Trade, SME Segment"
                         />
                       </div>
                     </div>
@@ -2063,7 +2063,7 @@ function OrganisationPage() {
                       <Input
                         value={newNode.entity_code}
                         onChange={e => setNewNode(n => ({ ...n, entity_code: e.target.value }))}
-                        placeholder="e.g. N22341 (ERP profit centre code)"
+                        placeholder="e.g. ENT001 (ERP profit centre code)"
                       />
                     </Field>
                   )}
@@ -2122,7 +2122,7 @@ function OrganisationPage() {
                   )}
                   {(editForm.node_type === "Legal entity" || editForm.node_type === "Parent company") && (
                     <Field label="Entity code (optional)">
-                      <Input value={editForm.entity_code} onChange={e => setEditForm(f => ({ ...f, entity_code: e.target.value }))} placeholder="e.g. N22341" />
+                      <Input value={editForm.entity_code} onChange={e => setEditForm(f => ({ ...f, entity_code: e.target.value }))} placeholder="e.g. ENT001" />
                     </Field>
                   )}
                 </div>

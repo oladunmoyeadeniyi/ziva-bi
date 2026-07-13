@@ -296,14 +296,14 @@ async def download_employee_template(
     # Examples go in cell comments on header cells
     header_examples = [
         f"Select the employee's org chart role (mandatory).\ne.g. {role_names_for_template[0] if role_names_for_template else 'Finance Manager'}\nControls approval authority and org-chart placement.",
-        "e.g. Adeniyi",
-        "e.g. Oladunmoye",
-        "e.g. adeniyi@company.com",
-        "e.g. Chukwuemeka (middle or other name)",
-        "e.g. Ade (display name on expense forms)",
+        "e.g. Amara",
+        "e.g. Okafor",
+        "e.g. amara.okafor@company.com",
+        "e.g. Grace (middle or other name)",
+        "e.g. Amy (display name on expense forms)",
         "e.g. EMP-00001 (leave blank to auto-generate)",
         "e.g. +234-801-234-5678",
-        f"Optional if the role has a fixed cost centre (auto-assigns).\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'N22341FI'}",
+        f"Optional if the role has a fixed cost centre (auto-assigns).\ne.g. {cc_codes_for_template[0] if cc_codes_for_template else 'CC001'}",
         "Date the employee started (mandatory). Format: dd/mm/yyyy.\ne.g. 01/01/2024",
     ]
 
