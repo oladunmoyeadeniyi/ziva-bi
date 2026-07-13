@@ -689,14 +689,14 @@ Major SA portal and signup overhaul:
 **Backend:**
 - `backend/app/constants/modules.py` — `_ALL_MODULES` dict (single source of truth for module codes + display names + descriptions). `backend/app/constants/__init__.py` created.
 - `app/routers/platform.py` — new `POST /api/platform/tenants` endpoint: SA creates a company directly (name, country, admin email, admin password, posting mode, modules). Auto-creates the test tenant + `TenantOrgConfig` + `power_admin` `UserTenant` with `must_change_password=True`. Sets the environment toggle default correctly. Audit-logged.
-- `app/routers/setup.py` — module activation now checks `is_licensed` AND `is_super_admin` — only SA can toggle module activation (tenants can see but not change).
+- `app/routers/setup.py` — module activation checks `is_licensed` (enforced, 403 if unlicensed). Guard changed from `_require_consultant` (SA-only) to `_require_admin` (power_admin+). Licensing is SA-only via the SA portal; activation toggling is available to power_admin and above.
 - `app/schemas/auth.py` — signup schema extended with `company_size` and `interested_modules`.
 - `app/schemas/platform.py` — `CreateTenantRequest`, `CreateTenantResponse`.
 
 **Frontend:**
 - `auth/signup/page.tsx` — 2-step form: Step 1 = company basics + account creation; Step 2 = intent fields (company size, modules of interest). Both fields optional, stored on `tenants` row.
 - `platform/tenants/page.tsx` — "Create Company" button + modal with name, country, admin email, password (show/hide + generator), posting mode selector, module checkboxes. On submit: `POST /api/platform/tenants`.
-- `dashboard/business/setup/modules/page.tsx` — module activation toggle now SA-only (locked for tenant users — shows lock icon + "contact your Ziva BI consultant").
+- `dashboard/business/setup/modules/page.tsx` — module activation toggle available to power_admin and above. Licensing actions (Add/Remove subscription) removed from this page — SA portal only. "Available to add" renamed "Not licensed"; unlicensed modules show a lock note.
 - `dashboard/business/setup/roles/page.tsx` — "ZivaBI Consultant" system role row removed from the visible role list (SA-internal, not relevant to tenant admins).
 - `lib/modules.ts` — module list now imports from the shared SOT; labels unified everywhere.
 - `d596f14` follow-up: fixed Create Company environment toggle default + corrected remaining module SOT label inconsistencies.
@@ -770,6 +770,25 @@ Removed the manual "Temporary password" input from the Create Company modal. Bac
 - `admin_password` removed from the POST body.
 - Entire password input section (input field, eye-toggle, Generate button) replaced with a static grey info note: "A secure temporary password will be auto-generated and shown once after creation."
 - On successful creation, modal switches to a **credential-reveal screen** instead of closing immediately. Reveals `created.admin_email` and `created.temp_password` (monospace, with a Copy-to-clipboard button + 2s "Copied!" state). Amber note: "The admin will be forced to change this on first login." "Go to tenant →" button clears the reveal state and forwards to `onCreated()`.
+
+---
+
+### Fix: Module activation guard + licensing separation + delete confirm hardening (pending commit, 2026-07-13)
+
+**1. `PATCH /api/setup/modules` guard: `_require_consultant` → `_require_admin`:**
+- Previously SA-only. Now available to power_admin and above.
+- *Licensing* (which modules a tenant can use) remains SA-only via SA portal Consultant Config.
+- *Activation* (turning a licensed module on/off) is a tenant-admin action — power_admin controls this.
+
+**2. Module licensing removed from `setup/modules/page.tsx`:**
+- "Add to subscription" and "Remove from subscription" buttons removed entirely.
+- Unlicensed modules show a grey lock note pointing to the SA portal.
+- `isSuperAdmin` gate on activate/deactivate removed; `handleLicense()` and `licensing` state removed.
+- Left panel section renamed "Available to add" → "Not licensed".
+
+**3. Delete tenant confirmation input hardened (`platform/tenants/[id]/page.tsx`):**
+- `onPaste` and `onDrop` prevented — forces SA to type the slug manually.
+- `autoComplete="off"` prevents browser autofill.
 
 ---
 
@@ -952,4 +971,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-13 (auto-generated admin temp password + credential-reveal screen; pending commit). Last pushed commit: `4f9f9a9`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-13 (module activation guard fix + licensing separation + delete confirm hardening; pending commit). Last pushed commit: `fb8d54b`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

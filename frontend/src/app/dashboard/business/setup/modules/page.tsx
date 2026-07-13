@@ -309,19 +309,15 @@ function ModuleCard({
 }
 
 export default function ModuleActivationPage() {
-  const { accessToken, user } = useAuth();
+  const { accessToken } = useAuth();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [modules, setModules] = useState<ModuleState[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
-  const [licensing, setLicensing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [postingMode, setPostingMode] = useState<string | null>(null);
-
-  // Super admin (native or impersonating in implementation mode) can set licensing.
-  const isSuperAdmin = user?.is_super_admin === true;
 
   const fetchModules = useCallback(async () => {
     if (!accessToken) return;
@@ -361,25 +357,6 @@ export default function ModuleActivationPage() {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setToggling(false);
-    }
-  };
-
-  const handleLicense = async (moduleKey: string, isLicensed: boolean) => {
-    if (!accessToken) return;
-    setLicensing(moduleKey);
-    setError(null);
-    try {
-      await apiFetch<ModuleState>(
-        `/api/setup/modules/${moduleKey}/license?is_licensed=${isLicensed}`,
-        { method: "PATCH", token: accessToken },
-      );
-      await fetchModules();
-      setSuccessMsg(isLicensed ? "Module added to subscription." : "Module removed from subscription.");
-      setTimeout(() => setSuccessMsg(null), 2500);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "License change failed");
-    } finally {
-      setLicensing(null);
     }
   };
 
@@ -453,7 +430,7 @@ export default function ModuleActivationPage() {
           {available.length > 0 && (
             <div>
               <p className="px-1 pb-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
-                Available to add
+                Not licensed
               </p>
               <div className="space-y-1">
                 {available.map((mod) => (
@@ -548,94 +525,54 @@ export default function ModuleActivationPage() {
               </div>
             )}
 
-            {/* Action — SA-only controls; tenants see read-only status */}
+            {/* Action — activation toggle for licensed modules; lock note for unlicensed */}
             {selectedMod.is_licensed ? (
               <div className="space-y-2">
-                {isSuperAdmin ? (
-                  <>
-                    {/* Activate/Deactivate — blocked when incompatible */}
-                    {isAvailableForMode(selectedMod.module_key, postingMode) ? (
-                      <button
-                        type="button"
-                        disabled={toggling || !!licensing}
-                        onClick={() => handleToggle(selectedMod)}
-                        className={[
-                          "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-                          selectedMod.is_active
-                            ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-                            : "bg-green-600 text-white hover:bg-green-700",
-                          toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
-                        ].join(" ")}
-                      >
-                        {toggling
-                          ? "Saving…"
-                          : selectedMod.is_active
-                          ? `Deactivate ${selectedMod.label}`
-                          : `Activate ${selectedMod.label}`}
-                      </button>
-                    ) : selectedMod.is_active ? (
-                      /* Module is active but mode changed — allow deactivation only */
-                      <button
-                        type="button"
-                        disabled={toggling || !!licensing}
-                        onClick={() => handleToggle(selectedMod)}
-                        className={[
-                          "px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-red-50 border border-red-200 text-red-700 hover:bg-red-100",
-                          toggling || licensing ? "opacity-50 cursor-not-allowed" : "",
-                        ].join(" ")}
-                      >
-                        {toggling ? "Saving…" : `Deactivate ${selectedMod.label}`}
-                      </button>
-                    ) : null}
-                    <div>
-                      <button
-                        type="button"
-                        disabled={licensing === selectedMod.module_key || toggling}
-                        onClick={() => handleLicense(selectedMod.module_key, false)}
-                        className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
-                      >
-                        {licensing === selectedMod.module_key ? "Saving…" : "Remove from subscription"}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-                    <p className="text-sm font-medium text-gray-700">
-                      {selectedMod.is_active ? "Active" : "Inactive"}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      Contact your Ziva BI account manager to change module activation.
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : isSuperAdmin ? (
-              <div className="space-y-1.5">
+                {/* Activate/Deactivate — blocked when mode-incompatible */}
                 {isAvailableForMode(selectedMod.module_key, postingMode) ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={licensing === selectedMod.module_key || toggling}
-                      onClick={() => handleLicense(selectedMod.module_key, true)}
-                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                    >
-                      {licensing === selectedMod.module_key ? "Saving…" : "Add to subscription"}
-                    </button>
-                    <p className="text-xs text-gray-400">
-                      Adds this module to the tenant&apos;s active subscription.
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-xs text-gray-400">
-                    Change the organisation&apos;s configuration mode to enable this module.
-                  </p>
-                )}
+                  <button
+                    type="button"
+                    disabled={toggling}
+                    onClick={() => handleToggle(selectedMod)}
+                    className={[
+                      "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                      selectedMod.is_active
+                        ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                        : "bg-green-600 text-white hover:bg-green-700",
+                      toggling ? "opacity-50 cursor-not-allowed" : "",
+                    ].join(" ")}
+                  >
+                    {toggling
+                      ? "Saving…"
+                      : selectedMod.is_active
+                      ? `Deactivate ${selectedMod.label}`
+                      : `Activate ${selectedMod.label}`}
+                  </button>
+                ) : selectedMod.is_active ? (
+                  /* Mode changed after activation — allow deactivation only */
+                  <button
+                    type="button"
+                    disabled={toggling}
+                    onClick={() => handleToggle(selectedMod)}
+                    className={[
+                      "px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-red-50 border border-red-200 text-red-700 hover:bg-red-100",
+                      toggling ? "opacity-50 cursor-not-allowed" : "",
+                    ].join(" ")}
+                  >
+                    {toggling ? "Saving…" : `Deactivate ${selectedMod.label}`}
+                  </button>
+                ) : null}
               </div>
             ) : (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <p className="text-sm text-amber-800">
-                  This module is not included in your current subscription. Contact your Ziva BI account manager to add it.
-                </p>
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 flex items-start gap-2.5">
+                <i className="ti ti-lock text-gray-400 mt-0.5" style={{ fontSize: 15 }} />
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Not licensed</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Module licensing is managed by your Ziva BI consultant via the SA portal.
+                    Contact them to add this module to your subscription.
+                  </p>
+                </div>
               </div>
             )}
           </div>

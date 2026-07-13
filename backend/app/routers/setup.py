@@ -2930,14 +2930,14 @@ async def patch_modules(
     """
     Activate or deactivate modules for the tenant.
 
-    SA-ONLY — module activation is a commercial/configuration decision made by the
-    Ziva BI team. Tenant users (including power_admin) can view module status but
-    cannot toggle it. A super admin performs this via impersonation.
+    Available to power_admin and above (is_super_admin OR role_tier == 'power_admin').
+    Licensing is separate and SA-only (PATCH /api/platform/tenants/{id}/system-config).
+    This endpoint only toggles is_active on already-licensed modules.
 
     Enforces: a module can only be activated if is_licensed = true.
     Returns 403 if attempting to activate an unlicensed module.
     """
-    _require_consultant(current_user)
+    _require_admin(current_user)
     tenant_id = _require_tenant(current_user)
 
     result = await db.execute(

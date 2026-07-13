@@ -618,7 +618,10 @@ export default function TenantDetailPage() {
                 type="text"
                 value={nukeSlug}
                 onChange={e => setNukeSlug(e.target.value)}
+                onPaste={e => e.preventDefault()}
+                onDrop={e => e.preventDefault()}
                 placeholder={tenant.slug}
+                autoComplete="off"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>

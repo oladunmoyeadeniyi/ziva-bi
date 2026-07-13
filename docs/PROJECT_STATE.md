@@ -414,7 +414,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | GET | /api/setup/periods/{id}/checklist | Per-period checklist with completion |
 | POST | /api/setup/periods/{id}/checklist/{item_id}/prepare | Mark prepared |
 | POST | /api/setup/periods/{id}/checklist/{item_id}/approve | Mark approved (SOD enforced) |
-| GET/PATCH | /api/setup/modules | Module activation |
+| GET/PATCH | /api/setup/modules | Module activation. GET: all modules with `is_licensed` + `is_active`. PATCH: toggles `is_active` on licensed modules — guard `_require_admin` (power_admin+). Cannot activate unlicensed (403). Licensing is SA-only via `PATCH /api/platform/tenants/{id}/system-config`. |
 | POST | /api/setup/dimensions/not-applicable | Mark not using dimensions |
 | GET/PATCH | /api/setup/currencies | FX config |
 | GET/PATCH | /api/setup/tax | Tax config |
@@ -602,7 +602,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | Employee cascade deactivation | ✅ Fixed `d7ddea6`, `db69e51` | Email fallback when `emp.user_id` is None; session revocation uses correct `Session.user_tenant_id`. |
 | Signup 2-step (intent fields) | ✅ Committed `336e7b4` | Captures `company_size` + `interested_modules` at signup. Stored on `tenants` (migration `n2o3p4q5r6s7`). |
 | Module SOT (`_ALL_MODULES`) | ✅ Committed `336e7b4` | `backend/app/constants/modules.py` is the single source of truth for module codes + labels. All consumers import from here. |
-| SA-only module activation | ✅ Committed `336e7b4` | Module toggle on setup/modules page is locked for non-SA users (shows lock icon + "contact consultant"). |
+| Module activation guard | ✅ Committed `336e7b4`, corrected (pending push) | `PATCH /api/setup/modules` guard `_require_consultant` → `_require_admin`. Licensing (Add/Remove subscription) removed from tenant setup page — SA portal only. Delete confirm input blocks paste/drop. |
 | Force-change-password on first login | ✅ Committed `7989709` | `must_change_password` on `user_tenants` (migration `o3p4q5r6s7t8`). Login returns flag; if true, redirects to `/auth/change-password`. Page cannot be skipped. |
 | Posting mode guard | ✅ Committed `7989709` | `PATCH /system-config` returns 409 if tenant has posted journal entries and mode is being changed. |
 | Collapsible tenant user list | ✅ Committed `7989709` | Users section on `/platform/tenants/[id]` collapsed by default; header shows count summary. |
