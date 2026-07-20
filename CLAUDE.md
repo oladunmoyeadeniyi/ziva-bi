@@ -131,52 +131,116 @@ ruff check app/
 
 ## Milestone Status
 
-> Full detail and dates for every row below: `docs/MASTER_CONTEXT.md` §5 (completed) and §9/§10 (pending, in recommended order). Reconciled 2026-06-29 — this table previously omitted ~10 shipped milestones. Update this table (and §5 of MASTER_CONTEXT.md) every time a milestone ships — do not let it drift again.
+> **Authoritative as of 2026-07-20.** Reconciled against live codebase, git log (265 commits), and `docs/ZIVA_BI_EVALUATION_2026_07_20.md`. Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
+>
+> **Overall completion: ~40% of full product vision. ~85% of MVP-for-first-customer.**
 
-| # | Milestone | Status |
+### ✅ COMPLETED (ordered chronologically)
+
+| # | Milestone | Commit / Notes |
 |---|---|---|
-| M1 | Foundation deployed (Next.js + FastAPI + PostgreSQL on Render) | ✅ Done |
-| M2 | Auth & User Management (signup, login, JWT, roles) | ✅ Done |
-| M3 | Business Expense Submission (multi-line reports, DRAFT→SUBMITTED) | ✅ Done |
-| M4 | Approval Workflow (matrix, multi-level approve/reject) | ✅ Done |
-| M4+ | Approval Enhancements (refer-back, audit trail, snapshots, separation of duties) | ✅ Done |
-| M5 | Tenant User Management (invite, roles, deactivate) | ✅ Done |
-| M6 | Supporting Documents (file upload per expense line, Supabase Storage) | ✅ Done |
-| M7 | Expense Categories & GL Coding Mode Config | ✅ Done |
-| M8 | Intelligent Expense Form Foundation (dimensions, CoA, coding levels 0–4) | ✅ Done |
-| M8.1 | Advanced CoA, Dimensions & Employee Foundation | ✅ Done |
-| M9 | Intelligent Expense Form (GL picker, dimensions, split lines, AI suggestions) | ✅ Done |
-| M8.2 | Implementation Portal (setup dashboard, org, modules, dimensions, CoA, employees) | ✅ Done |
-| — | M8.2 Post-release fixes (login/auth, currency auto-detect, signup polish, org structure edit/delete) | ✅ Done |
-| M8.3 | Accounting Periods Engine (generation, grace, close checklist, soft/hard close, year-end audit, statutory close) | ✅ Done |
-| — | Period Management Enhancements + Hardening (auto-generation, FY name formats, duplicate-FY fix, stub-year fix) | ✅ Done |
-| — | Currencies & FX (4-tab UI + backend; JSONB-based, not dedicated tables — see MASTER_CONTEXT §5) | ✅ Done |
-| M8.4 | Tax & Statutory (VAT/WHT/PAYE/other, JSONB backend) | ✅ Done |
-| — | GL Posting Engine & Reporting (journal entries, trial balance, account ledger) | ✅ Done |
-| — | Account Mapping & Bank Accounts (posting roles → GL, bank account register) | ✅ Done |
-| M9.0 | Shadow Test Environment — live-first clone model (superseded by M9.0.1, kept for on-demand use) | ✅ Done |
-| M9.1 | Super Admin Portal — tenant lifecycle slice (list/detail/lifecycle/suspend/enter/promote) | ✅ Done |
-| — | User Profile, Sessions & 2FA | ✅ Done |
-| M9.0.1 | Test-first tenant environment flow inversion + unified promotion engine | ✅ Done |
-| — | Resolve `organisation/page.tsx` working-tree diff (was CRLF noise + 1 legit small fix — see MASTER_CONTEXT §9) | ✅ Done |
-| — | Organisation tab restructuring (BRIEF-0 — confirmed already shipped 2026-06-30, was a doc lapse, not a build) | ✅ Done |
-| — | Fix CoA account_type normalisation gap (Remap inline-create) — commit `2eda43f`, verified: zero affected rows | ✅ Done |
-| — | Default-CoA feature (3 starter CoA templates + adoption + smart re-download) — commit `7965f33`; DB-level facts verified, live endpoint/UI smoke test outstanding — see MASTER_CONTEXT §5 | ✅ Done* |
-| — | UI Polish Milestone — Phase 1 (shared Button/PageContainer/PageHeading, findings A/B/C) — commit `0d55ea8`; independently re-verified against shipped code — see MASTER_CONTEXT §5 | ✅ Done |
-| — | UI Polish Milestone — Phase 2 (findings D–H: date-input consistency, tab-state-on-refresh, modal backdrops, banner colors, loading states) — commit `300b22d`; independently re-verified — see MASTER_CONTEXT §5 | ✅ Done |
-| M9.3b | User Impersonation (SA enters a specific user's identity; `sub = target_user_id`; `ImpersonationUserBanner`; 2 entry points; audit log; `is_restricted_impersonation` hook) — commit `1a60a1c`; independently re-verified — see MASTER_CONTEXT §5 | ✅ Done |
-| — | Confirm Currencies & FX / BDC completeness (dedicated tables vs. JSONB) | ⏳ Pending |
-| — | Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings) | ⏳ Pending |
-| M11 | Accounts Payable | ⏳ Pending |
-| M13 | Bank Reconciliation | ⏳ Pending |
-| M14 | Accounts Receivable | ⏳ Pending |
-| M16 | Budget Engine | ⏳ Pending |
-| M19 | Tax Engine | ⏳ Pending |
-| M10 | OCR & Receipt Scanning (Anthropic Vision API) | ⏳ Pending |
-| M15 | Payroll & HR | ⏳ Pending |
-| M17 | Inventory & Warehouse | ⏳ Pending |
-| M18 | Fixed Assets | ⏳ Pending |
-| M20 | AI Intelligence Layer (98%+ accuracy target) | ⏳ Pending |
+| M1 | Foundation (Next.js + FastAPI + PostgreSQL, monorepo structure) | Initial |
+| M2 | Auth & User Management (signup, login, JWT, roles, invite flow) | |
+| M3 | Business Expense Submission (multi-line reports, DRAFT→SUBMITTED) | |
+| M4 | Approval Workflow (matrix, multi-level approve/reject) | |
+| M4+ | Approval Enhancements (refer-back, audit trail, immutable snapshots, SOD) | |
+| M5 | Tenant User Management (invite, roles, deactivate) | |
+| M6 | Supporting Documents (file upload per line + report, Supabase Storage) | |
+| M7 | Expense Categories & GL Coding Mode Config | |
+| M8 | Intelligent Expense Form Foundation (dimensions, CoA, coding levels 0–4) | |
+| M8.1 | Advanced CoA, Dimensions & Employee Foundation (IFRS types, cascades, bulk upload) | |
+| M9 | Intelligent Expense Form (GL picker + hierarchy, dimensions, split lines, AI suggestions) | |
+| M8.2 | Implementation Portal (setup dashboard, org, modules, CoA, employees, self-onboarding) | |
+| — | M8.2 Post-release fixes (login/auth, currency auto-detect, signup polish, org structure edit/delete) | |
+| M8.3 | Accounting Periods Engine (generate, grace, close checklist, soft/hard close, year-end, statutory close) | |
+| — | Period Management Enhancements + Hardening (auto-generation, FY name formats, duplicate-FY fix, stub-year fix) | `b3e70e3` |
+| — | Currencies & FX (4-tab UI + JSONB backend; decision on dedicated tables still open) | |
+| M8.4 | Tax & Statutory (VAT/WHT/PAYE/other, JSONB per tenant) | |
+| — | GL Posting Engine (journal entries/lines, immutable once posted, reversing entries) | |
+| — | Trial Balance + Account Ledger (query builders + API endpoints) | |
+| — | Account Mapping & Bank Accounts (posting roles → GL catalogue + per-tenant mapping) | |
+| M9.0 | Shadow Test Environment clone engine (13-step; on-demand use only after M9.0.1) | |
+| M9.1 | Super Admin Portal — tenant lifecycle (list/detail/lifecycle/suspend/enter/promote) | |
+| — | User Profile, Sessions & 2FA (TOTP enroll/verify/disable; session list + revoke) | |
+| M9.0.1 | Test-first environment flow inversion + unified promotion engine | `b3e70e3` |
+| — | Default CoA templates (3 templates: FMCG 94, Prof Svc 76, Generic 57 accounts; smart re-download) | `7965f33` |
+| — | UI Polish Phase 1 (shared Button/PageContainer/PageHeading components, 41 files) | `0d55ea8` |
+| — | UI Polish Phase 2 (date-input, tab-state, modal backdrops, Banner component, loading skeletons) | `300b22d` |
+| M9.3b | User Impersonation (sub=target user_id; ImpersonationUserBanner; 2 entry points; audit log) | `1a60a1c` |
+| — | Role Hierarchy v2 (3-col PA/FA/UA; area+sub_area disambiguation; occupant avatars; zoom/fullscreen) | `3d2cf71`–`68608fd` |
+| — | Finance Review Workflow (step builder UI; drag-drop ordering; function-scoped chains) | `6cbbf09`–`57e05a8` |
+| — | System Function Mapping (maps business functions to org nodes; drives finance review scoping) | `290945a`–`7aa91bc` |
+| — | People Module v1 → Positions merged into Approval Roles (single-source-of-truth; code + grade on roles) | `a2c0b35`–`1ddeaba` |
+| — | Employee-User Link (employees.user_id FK; cascade deactivate/reactivate; user_type badge) | `6458fcd`, `a656f65` |
+| — | Three-Mode Architecture (Lite/Connected/Full ERP; posting_batches; mode-aware portal/sidebar/pages) | `f24c2fe`, `63f61fe` |
+| — | SA Portal — Consultant Config Panel (posting mode + module licensing per tenant) | `803618e` |
+| — | SA Portal — Trials & Signups lead management page | `8dc89be` |
+| — | SA Portal — Create Company (direct SA tenant creation + auto-generated temp password) | `336e7b4` |
+| — | SA Portal — Nuke Tenant (hard-delete both test+live pair; lifecycle guard) | `946aa16`, `c6d05ee` |
+| — | Document Security Hardening (magic bytes, ZIP validation, SHA-256 dedup, compression, 15-yr retention, access log) | Tasks #53–#55 |
+| — | Demo Seed Script (`seed_demo_tenant.py` — idempotent; org, roles, CoA, employees, reports) | `ceb2862` |
+| — | Designation-based Approval Policy (ceiling + thresholds + finance chain by designation, not role_id) | `a227417` |
+| — | Finance Chain reads FinanceReviewStep (was dead code; now correctly routes via step-builder output) | `a227417` |
+| — | Approval Matrix — Advisory Steps (is_advisory; non-blocking advance; all-advisory guard) | `fac40a9` |
+| — | Approval Matrix — Selective-tree routing + open step types + function_code per step | `c27adcd` |
+| — | Number formatting consolidated (formatMoney/fmtCommaInput/stripCommas in utils.ts; all local duplicates removed) | `a227417` |
+| — | Branding / CSS variable injection (--ziva-primary, sidebar vars; Button uses them) | `c27adcd` |
+| — | Force-change-password on first login (must_change_password flag; un-skippable page) | `7989709` |
+| — | Mode-aware implementation portal (sidebar, pages, expense config fully respond to posting_mode) | `63f61fe` |
+
+---
+
+### ⏳ PENDING (in priority order — do not reorder without discussion)
+
+> **Three-mode build rule (non-negotiable):** Every transaction module must support all three modes from the first commit. This is a core architectural invariant (see §3b). Design the module for all three before writing a single line. The mode is set by the consultant per tenant — Cowork never hardcodes mode-specific forks in feature code; routing lives in the service layer only.
+>
+> Mode abbreviations used below: **L** = Lite (workflow only, no GL), **C** = Connected (GL coding → posting_batches → external ERP), **E** = Full ERP (GL coding → journal_entries → in-app statements).
+
+#### TIER 0 — Production Gates (must complete before first customer)
+
+| # | Milestone | Notes |
+|---|---|---|
+| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | #1 priority. Nothing is sellable while the product lives on localhost |
+| P2 | **Email / SMTP** (Resend or SendGrid integration; replace stdout stub) | Invitations, password resets, notifications — all broken without this |
+| P3 | **Schema drift audit + cleanup** (`alembic check` unconfirmed drift; `go-live.tsx.bak` git rm) | Must verify before live data hits Render |
+
+#### TIER 1 — Quick Wins (backend exists; UI only)
+
+| # | Milestone | Mode scope | Notes |
+|---|---|---|---|
+| Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow output pages) | **E only** — show `ModeNotAvailable` for L/C | GL engine posts the data; just need formatted output. Every finance team needs this |
+| Q2 | **Manual Journal Entry UI** (post adjustments, accruals, corrections) | **E only** — show `ModeNotAvailable` for L; optional in C | Tables + GL engine exist; just need endpoints + frontend |
+| Q3 | **Snapshot M9 field fix** (include gl_id, dimension_values, split_lines in snapshot_data) | All modes | Existing snapshots are incomplete; new ones should be full |
+| Q4 | **Split-line GL posting fix** (split-parent containers currently skipped at posting) | **C + E** | Needed before Full ERP mode is fully reliable |
+
+#### TIER 2 — Module Expansion (~2–3 months)
+
+| # | Milestone | Mode scope | Notes |
+|---|---|---|---|
+| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | **All modes** — mode-agnostic | Extracts amounts/dates from receipts; works same regardless of posting mode |
+| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | **L**: vendor bill workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AP ledger | Most critical missing module; daily pain for every finance team |
+| M11b | **Bank Reconciliation** | **L**: statement import + manual match. **C**: match to posting batches + export recon entries. **E**: match to GL bank account + clearing journal | Flows directly from AP; cannot operate AP cleanly without bank recon |
+| M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | **L**: invoice workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AR ledger | Revenue-side; needed for companies that issue invoices |
+| SA-B | **SA Portal — Billing & Subscription backend** (pricing plans, subscription tracking, payment integration) | SA portal only — mode-agnostic | Needed to charge customers |
+
+#### TIER 3 — Strategic Expansion (~3–6 months)
+
+| # | Milestone | Mode scope | Notes |
+|---|---|---|---|
+| M16 | **Budget & Planning** (budget entry, budget vs. actuals reporting, variance alerts) | **L**: budget vs CSV exports. **C**: budget vs posting batch values. **E**: budget vs GL actuals | High retention driver; CFOs need this |
+| M19 | **Tax Engine — transaction level** (VAT on AP invoices, WHT on vendor payments, PAYE payroll tax) | **L**: tax calcs on invoices, CSV output. **C**: + VAT/WHT in posting_batches. **E**: + auto-post tax journals (VAT payable, WHT payable, PAYE payable) | Nigerian compliance requirement for most customers |
+| M15 | **Payroll & HR** (salary, deductions, payslips, leave management) | **L**: payroll run + manual pay. **C**: payroll run + posting_batches. **E**: payroll run + salary journal entry | Complex; major competitive moat; builds on People module foundation |
+| ICE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD exists: `docs/ICE_PRD.md` |
+
+#### TIER 4 — Long-term / Specialist
+
+| # | Milestone | Mode scope | Notes |
+|---|---|---|---|
+| M18 | **Fixed Assets** (asset register, depreciation schedules, disposal) | **L**: asset register only. **C**: + posting_batches for depreciation. **E**: + depreciation journal entries | Capital-intensive companies |
+| M17 | **Inventory & Warehouse** (stock management, COGS, warehouse locations) | **L**: stock tracking only. **C**: + COGS posting batch. **E**: + COGS journal entries | Narrows vs. broadens market; build last |
+| M20 | **AI Intelligence Layer** (auto-categorization, anomaly detection, cash flow forecasting) | **All modes** — trains on whichever transaction data exists | Built on top of accumulated transaction history; ~98%+ accuracy target |
+| Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | — | Before scale |
+| FX | **Currencies & FX dedicated tables decision** (JSONB vs. tenant_currencies/tenant_fx_rates) | — | Revisit when BDC register volume or reporting complexity demands it |
 
 ## Module PRDs
 

@@ -983,68 +983,66 @@ Architectural invariants that are durable decisions (the WHY):
 
 ---
 
-## 9. NEXT MILESTONE
+## 9. PRIORITY ROADMAP
 
-> M8.3 Backend and M8.4 Tax & Statutory (the previous contents of this section) are both **done** — see §5. This section is rewritten to reflect the real current priority queue, in recommended build order.
+> **Reconciled 2026-07-20 against `docs/ZIVA_BI_EVALUATION_2026_07_20.md` and the CLAUDE.md milestone table.** All previously-completed items from the old §9/§10 lists are done — see §5 for the full completed record. This section now carries only forward-looking priorities in a 4-tier structure that matches CLAUDE.md exactly. If the two docs ever disagree, **this document wins on architecture (WHY); CLAUDE.md wins on task sequence (WHAT NEXT).**
 
-### Immediate (cleanup / consolidation, before new features)
-1. ~~Resolve `organisation/page.tsx` working-tree diff~~ — **Resolved 2026-06-30.** The apparent ~1,500-line rewrite was almost entirely CRLF/LF noise (no `core.autocrlf` normalization on that diff). The real change was 7 lines, two hunks: (a) the `first_fiscal_year_end` date-picker upper bound widened from `+1 year` to `+2 years` with matching help text, and (b) that same date input switched from controlled (`value=`) to the locked uncontrolled pattern (`defaultValue=` + a `key` prop keyed on tenant id) — see §11/rule 5 in workflow guidance. Both changes are correct and consistent with already-decided patterns; committed alongside this doc update.
-2. ~~Organisation tab restructuring~~ — **Resolved 2026-06-30 (was already shipped, doc lapse).** Confirmed via direct code read that `docs/BRIEF-0-org-tax-restructure.md` is fully implemented — see §5 "Organisation Page / Tax Restructuring." No build work needed, only this doc closure.
-3. ~~Verify CoA PL/BS filter~~ — **Resolved 2026-06-30, commit `2eda43f`.** Real bug, not a doc lapse: `InlineNewAccountFields` (Remap codes → "Create new" inline account) had no validator normalising `account_type` to canonical `SOCI`/`SOFP`, so it could store literal `"PL"`/`"BS"`, which broke the CoA Dimension Matrix tab's filter (raw `===` against hardcoded `SOCI`/`SOFP`). Fixed: validator added to `InlineNewAccountFields`; Dimension Matrix filter now uses `normaliseAccountType()`; `/coa/fs-mappings`'s unnormalised `account_type` filter fixed via a shared `_account_type_filter_clause()` helper also used by `list_coa`. DB check confirmed zero existing rows had literal `PL`/`BS` stored — no backfill needed.
-4. ~~UI Polish Milestone~~ — **Fully shipped 2026-06-30.** Phase 1 (commit `0d55ea8`, findings A/B/C) and Phase 2 (commit `300b22d`, findings D–H) both done and independently verified — see §5 for both entries.
-5. ~~Default-CoA feature~~ — **Shipped 2026-06-30, commit `7965f33`** — see §5 "Default-CoA Templates." Core DB-level facts verified; live endpoint/UI smoke test still outstanding (not blocking, but do it before treating this as fully closed).
-6. ~~M9.3b — User Impersonation~~ — **Shipped 2026-06-30, commit `1a60a1c`** — see §5 "M9.3b User Impersonation."
+### TIER 0 — Production Gates (immediate — nothing else matters until these are done)
 
-### Next feature work (in this order)
+| # | What | Blocker |
+|---|---|---|
+| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | App is not accessible to any customer. Zero revenue until this is done. |
+| P2 | **Email / SMTP** (Resend or SendGrid; replace stdout stub) | Invitations, password resets, and notifications are all broken without real email. |
+| P3 | **Schema drift audit + `go-live.tsx.bak` cleanup** | CC flagged `alembic check` may surface ORM/migration drift. Must verify before live data hits Render. `go-live/page.tsx.bak` was accidentally committed — needs `git rm`. |
 
-6. **Three-Mode Architecture** — ✅ ALL THREE PHASES DONE: Phase 1 (commit `f24c2fe`, backend infrastructure), Phase 2 (committed, SA portal consultant config panel #49), Phase 3 (committed: Trials & signups SA page #50, mode-aware setup portal #51, GL Group picker tab #52 — commit `55028cc`). Full spec: `docs/BRIEF_three_mode_architecture.md`.
-7. ~~**Document Security Hardening Phase 1**~~ — **✅ DONE** (5 commits: `23ff91d`, `634d93a`, `6f9e752`, `5924b08`, `3dc5f1f`, 2026-07-11). Magic bytes + ZIP structure validation, SHA-256, Pillow/pikepdf compression, dedup, 15-year retention (SA-configurable), `document_access_log`, DOCX/XLSX with macro rejection. Phase 2 (Cloudflare R2 migration) pending.
-8. **Confirm Currencies & FX / BDC completeness** — decide whether the JSONB-based implementation is final or whether BDC register volume justifies moving to dedicated tables.
-9. **Super Admin Portal backend completion** — build Billing (incl. payment provider integration), self-service Trials/provisioning, Team, Audit, Support, Settings. Currently frontend-only stubs (§3.1).
-10. **M11 — Accounts Payable (P2P)**, then **M13 — Bank Reconciliation**, **M14 — Accounts Receivable (O2C)**, **M16 — Budget & Planning**, **M19 — Tax Engine**, **M10 — OCR & Receipt Scanning**, **M15 — Payroll & HR**, **M17 — Inventory Management**, **M18 — Fixed Assets**, **M20 — AI Intelligence Layer**, in that order (see §10).
+### TIER 1 — Quick Wins (backend already exists; UI only)
 
-**Also completed since last §9 rewrite (now closed):**
-- ~~Role Hierarchy Enhancements~~ — **Done** (commits `3d2cf71`–`68608fd`, ~2026-07-01 to 2026-07-05). See §5.
-- ~~Finance Review Workflow~~ — **Done** (commits `6cbbf09`–`57e05a8`, ~2026-07-05). See §5.
-- ~~System Function Mapping~~ — **Done** (commits `290945a`–`7aa91bc`, ~2026-07-05). See §5.
-- ~~People Module v1 (Positions + Transfers)~~ — **Done** (commits `a2c0b35`, `a000794`, ~2026-07-06). See §5.
-- ~~Single Source of Truth merge (Positions → approval_roles)~~ — **Done** (commits `71025bd`–`1ddeaba`, ~2026-07-07). See §5.
-- ~~People Module Polish + Employee-User Link~~ — **Done** (commits `b8c4709`–`a656f65`, 2026-07-10/11). See §5.
-- ~~SA Portal Consultant Config Panel (#49)~~ — **Done** (committed 2026-07-11). See §5.
-- ~~SA Portal Trials & Signups page (#50)~~ — **Done** (committed 2026-07-11). See §5.
-- ~~Setup Portal mode-aware checklist (#51)~~ — **Done** (commit `eac25846`, 2026-07-11). See §5.
-- ~~GL Group hierarchy tab in ExpenseItemPicker (#52)~~ — **Done** (commit `55028cc`, 2026-07-11). See §5.
-- ~~Document Security Hardening Phase 1 (#53–#55 + DOCX/XLSX)~~ — **Done** (5 commits ending `3dc5f1f`, 2026-07-11). 15-min signed URLs, magic bytes + ZIP validation, SHA-256, Pillow/pikepdf compression, hash dedup, 15yr retention, `document_access_log`, DOCX/XLSX macro guard.
-- ~~SA Portal Hardening — Cascade Fixes~~ — **Done** (commits `d7ddea6`, `db69e51`, `3177d3d`, `83ab8b2`, 2026-07-11/12). Email fallback, session revocation hotfix, passive_deletes, impersonation FK nullable. See §5.
-- ~~Nuke Tenant — Full Hard Delete~~ — **Done** (commit `946aa16`, 2026-07-12). `DELETE /api/platform/tenants/{id}` + confirmation modal. See §5.
-- ~~Nuke Paired Environments~~ — **Done** (commit `c6d05ee`, 2026-07-12). Single operation deletes both test+live pair. See §5.
-- ~~SA Portal UX Hardening (Create Company + 2-step Signup + Module SOT)~~ — **Done** (commits `336e7b4`, `d596f14`, 2026-07-12). `POST /api/platform/tenants`, 2-step signup, `_ALL_MODULES` SOT, SA-only module toggle. Migration `n2o3p4q5r6s7`. See §5.
-- ~~Force-change-password + Posting mode guard + SA Portal Polish~~ — **Done** (commit `7989709`, 2026-07-13). Migration `o3p4q5r6s7t8`. 5 features: generic placeholder, password UX, force-change, posting mode 409 guard, collapsible user list. Run `alembic upgrade head` needed locally. See §5.
+| # | What | Mode scope |
+|---|---|---|
+| Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected |
+| Q2 | **Manual Journal Entry UI** (adjustments, accruals, corrections) | **Full ERP only** — optional in Connected |
+| Q3 | **Snapshot M9 field fix** (add gl_id, dimension_values, split_lines to snapshot_data) | All modes |
+| Q4 | **Split-line GL posting fix** (split-parent containers currently skipped) | Connected + Full ERP |
+
+### TIER 2 — Module Expansion (~2–3 months)
+
+**Three-mode build rule applies to every row.** See §3b for the invariant; see CLAUDE.md PENDING table for per-module mode breakdown.
+
+| # | What | Priority rationale |
+|---|---|---|
+| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | Mode-agnostic; biggest differentiator for expense management |
+| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | Most critical missing module; highest daily-pain for any finance team |
+| M11b | **Bank Reconciliation** | Flows directly from AP; cannot run AP cleanly without bank recon |
+| M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | Revenue-side; needed for companies that invoice clients |
+| SA-B | **SA Portal — Billing & Subscription backend** | Needed to charge customers |
+
+### TIER 3 — Strategic Expansion (~3–6 months)
+
+| # | What |
+|---|---|
+| M16 | **Budget & Planning** (budget entry, budget vs. actuals, variance alerts) |
+| M19 | **Tax Engine — transaction level** (VAT on AP invoices, WHT, PAYE payroll tax) |
+| M15 | **Payroll & HR** (salary, deductions, payslips, leave) |
+| ICE | **Inter-Company Eliminations** — PRD: `docs/ICE_PRD.md` |
+
+### TIER 4 — Long-term / Specialist
+
+M18 Fixed Assets → M17 Inventory → M20 AI Intelligence Layer → Performance & Security Audit → Cloudflare R2 migration → Currencies/FX dedicated tables decision.
+
+### Infrastructure (parallel, not a blocker on feature work)
+- Upgrade Render PostgreSQL to Standard ($50/month) — before first paying customer
+- Redis caching for tenant config (org_config, modules, dimensions) — at 10+ tenants
+- Cloudflare R2 migration — before > 5 tenants or > 5 GB stored
 
 ---
 
-## 10. FUTURE MILESTONES (recommended order)
+## 10. OPEN DECISIONS
 
-1. ~~**Three-Mode Architecture Foundation**~~ — **✅ DONE** (Phases 1-3 shipped 2026-07-11; all four tasks committed). See §5.
-2. ~~**Document Security Hardening Phase 1**~~ — **✅ DONE** (2026-07-11). Phase 2: Cloudflare R2 migration when tenants > 5 or storage > 5 GB.
-3. Currencies & FX / BDC completeness decision
-4. Super Admin Portal backend completion (Billing, Trials, Team, Audit, Support, Settings)
-5. M11 — Accounts Payable (P2P)
-6. M13 — Bank Reconciliation
-7. M14 — Accounts Receivable (O2C)
-8. M16 — Budget & Planning
-9. M19 — Tax Engine
-10. M10 — OCR & Receipt Scanning (Anthropic Vision API)
-11. M15 — Payroll & HR
-12. M17 — Inventory Management
-13. M18 — Fixed Assets
-14. M20 — AI Intelligence Layer (98%+ accuracy target)
-
-### Infrastructure (do in parallel with feature work, not as a blocker)
-- Upgrade Render PostgreSQL to Standard ($50/month) — before launch
-- Audit all `(tenant_id, ...)` composite DB indexes — as part of Three-Mode migration
-- Redis caching for tenant config (org_config, modules, dimensions) — at 10+ tenants
-- Cloudflare R2 migration — before > 5 tenants or > 5 GB stored (see §7 invariants)
+| Decision | Status | Guidance |
+|---|---|---|
+| Currencies & FX: JSONB vs. dedicated tables | Open | Stay JSONB; revisit only if BDC register volume requires row-level queries |
+| role_tier enforcement sweep | Open | Complete before first customer — power_admin must not reach SA-only endpoints |
+| Snapshot M9 fields | Open (tracked as Q3) | Fix snapshot serializer; old snapshots stay incomplete; new ones will be complete |
 
 ---
 
