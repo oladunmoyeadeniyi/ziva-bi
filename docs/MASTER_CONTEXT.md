@@ -288,7 +288,7 @@ Posting-role catalogue (`posting_roles`) with per-tenant GL mapping (`tenant_acc
 ### Organisation Page / Tax Restructuring (BRIEF-0, status corrected 2026-06-30)
 > **Doc lapse, same pattern as the M9.0.1 retrofit:** this was scoped as "Organisation tab restructuring," carried as a pending item in §9/§10 and Cowork task #36, with no record it had shipped. Reading the actual current code (2026-06-30) confirms `docs/BRIEF-0-org-tax-restructure.md` is **fully implemented**, almost certainly landed silently alongside the M8.3/M8.4 work. No further build needed — this entry just closes the loop.
 
-- Organisation page's Configuration tab is flattened exactly as specified: no sub-tabs, just **Financial features** then a divider then **Governance**, each with its own save button (`organisation/page.tsx`, `tab === "config"` block). No fiscal-year or tax-applicability content remains on this page.
+- Organisation page's Configuration tab is flattened exactly as specified: no sub-tabs, just **Financial features** then a divider then **Governance**, with a single shared **"Save configuration"** button at the bottom (`organisation/page.tsx`, `tab === "config"` block). No fiscal-year or tax-applicability content remains on this page.
 - Fiscal year settings (`fiscal_year_start_month`/`_day`, `period_closing_frequency`, `generatePeriods`) live on the dedicated Period Management page (`frontend/src/app/dashboard/business/setup/periods/page.tsx`), confirmed by direct grep — this is the M8.3 Accounting Periods Engine page above.
 - Tax applicability is the first, gating tab on the Tax & Statutory page (`frontend/src/app/dashboard/business/setup/tax/page.tsx`): `type Tab = "applicability" | "vat" | "wht" | "paye" | "other"` — matching BRIEF-0's spec exactly.
 
@@ -770,6 +770,68 @@ Removed the manual "Temporary password" input from the Create Company modal. Bac
 - `admin_password` removed from the POST body.
 - Entire password input section (input field, eye-toggle, Generate button) replaced with a static grey info note: "A secure temporary password will be auto-generated and shown once after creation."
 - On successful creation, modal switches to a **credential-reveal screen** instead of closing immediately. Reveals `created.admin_email` and `created.temp_password` (monospace, with a Copy-to-clipboard button + 2s "Copied!" state). Amber note: "The admin will be forced to change this on first login." "Go to tenant →" button clears the reveal state and forwards to `onCreated()`.
+
+---
+
+### Period Management PRD Fixes + Auto-backfill + Branding + Role Hierarchy DnD (pending commit, 2026-07-15)
+
+**Period management — 4 PRD fixes from `docs/PERIOD_MANAGEMENT_COMPLETE.md`:**
+- Fix 1: Grace override default row now has inline edit for `grace_value` + `grace_unit` (PATCH endpoint already existed; no UI did).
+- Fix 2: Super admin can self-approve a checklist item they also prepared. Backend writes a `CONSULTANT_OVERRIDE` entry to `period_audit_logs`; frontend shows a purple "SA override" badge when `prepared_by === approved_by`.
+- Fix 3: Four missing UIs added — manual soft-close button per OPEN period row; audit grace months inline edit in year-end strip; audit log viewer (auto-loads on Periods tab, filtered to selected FY); future posting exceptions create form + list (Grace tab). New `GET /api/setup/periods/future-exception` backend endpoint.
+- Fix 4: Auto-backfill fiscal years on page load (no button click needed). Fires once after `isLoading` clears; year-range start derives from `date_of_registration` → earliest existing period year → current year (fallback). FY label merge uses year-number deduplication to avoid format-mismatch duplicates (e.g. DB `"2026"` + computed `"FY2026"` → one entry). Period-grid section guard is now `allFYLabels.length > 0` only. Warning banners: red when `fiscal_year_start_month` not set; amber when only `date_of_registration` missing.
+
+**Branding (`layout.tsx` + `button.tsx`):** CSS variables (`--ziva-primary`, `--ziva-sidebar-*`) injected into `:root` on load from the tenant's active theme. `Button` variant `primary` uses `var(--ziva-primary)`.
+
+**Role hierarchy drag-and-drop (two-part fix):** `e.dataTransfer.setData("text/plain", node.id)` + `effectAllowed = "move"` added to `onDragStart`; `dropEffect = "move"` on `dragOver`. The `setDraggingId` setState call is deferred via `requestAnimationFrame(() => onDragStart(node.id))` — prevents Chrome from aborting the drag when a React re-render fires during `dragstart` inside a CSS `transform: scale()` container. A cost-centre inheritance confirmation modal appears when a role is dropped under a parent in a different cost centre.
+
+---
+
+### Period management, HR, and org polish (~2026-07-20)
+
+Batch of fixes resolving PRD gaps and functional regressions across three areas:
+
+**Period management (4 fixes on `periods/page.tsx` + `routers/setup.py`):**
+- Fix 1 — Grace default row: inline edit for `grace_value` + `grace_unit` (was read-only).
+- Fix 2 — Checklist SOD bypass: super admin can self-approve a checklist item they also prepared. Backend writes `CONSULTANT_OVERRIDE` to `period_audit_logs`; frontend shows purple "SA override" badge.
+- Fix 3 — Four missing UIs added: manual soft-close button per OPEN period row; audit grace months inline edit in year-end strip; audit log viewer (auto-loads on Periods tab); future posting exceptions create + list (Grace tab). New `GET /api/setup/periods/future-exception` endpoint.
+- Fix 4 — Auto-backfill fiscal years on page load (no button click). Year range derived from `date_of_registration` → earliest existing period year → current year. FY label merge uses year-number deduplication. Period grid guard is `allFYLabels.length > 0` only.
+
+**Employee bulk upload (`routers/hr.py`, `schemas/hr.py`, `employees/page.tsx`):**
+- Capacity exceeded and cost-centre mismatch are now **non-blocking warnings** (employee imports anyway). `EmployeeUploadResult.warnings: list[dict] = []` added. Amber warning section in upload result UI.
+- `_resolve_position()` bug: was querying `EmployeePositionAssignment` only, so bulk-uploaded employees (who set `approval_role_id` directly, never creating an EPA record) showed as 0 occupants on the Positions page. Fixed by querying `Employee.approval_role_id` directly with LEFT JOIN to EPA.
+
+**Roles & permissions (`roles/page.tsx`):** Fixed "Failed to fetch" error on Role assignments tab — second `GET /api/approvals/roles` after HoD auto-patch replaced with optimistic state update.
+
+**Org configuration (`organisation/page.tsx`):** Removed duplicate "Save features" button (mid-page between Features and Governance sections); single "Save configuration" button at the bottom.
+
+**Approval bulk-delete guard (`routers/approvals.py`):** `DELETE /api/approvals/roles` (bulk-delete all roles) now calls `_require_admin(current_user)` before executing — was missing the admin guard.
+
+---
+
+### Approval matrix enhancements (~2026-07-20, migration `q5r6s7t8u9v0`)
+
+Extended the approval-matrix system with three major capabilities:
+
+**1. Selective org-tree routing mode (`selective_tree`):**
+- New `routing_mode` value accepted everywhere (schema, router, `compute_chain()`).
+- DB: `approval_policies.selected_designations JSONB nullable` — stores `[{designation, role}]` (role = `"approve"` | `"review"`).
+- Routing engine (`approval_routing.py` `compute_chain()`): walks the org tree identically to `org_tree` but skips any manager whose `ApprovalRole.designation` is not in the `selected_designations` set. All included designations are treated as full approvers (phase 1; `"review"` distinction stored but deferred). Raises `ApprovalRoutingError` if no designations are selected.
+- Frontend (`approval-matrix/page.tsx`): new routing mode radio option shows a checklist of all approver-eligible designations (TL, MGR, HoD, HoE), each with an "Approves / Reviews only" toggle. `selected_designations` sent in save body; null for other modes.
+
+**2. Open/configurable step types on finance review chain:**
+- `step_type` on `finance_review_steps` is now a free-form string (max 50 chars). The old `VALID_STEP_TYPES = {"capture","validate","review","approve"}` validator is removed.
+- Five built-in suggestions (including `internal_audit`) are offered via `<datalist>` and quick-add chips. Tenants can type any value.
+- `label` (display name) is fully decoupled from `step_type` — changing the behavior tag no longer overwrites the label.
+- `BUILTIN_STEP_BEHAVIORS = {"capture","validate","review","approve"}` retained as a comment reference only.
+
+**3. Function-code per finance review step:**
+- DB: `finance_review_steps.function_code VARCHAR(50) nullable` — links a step to a `SystemFunctionMapping` code.
+- When set, the assignee picker in the approval-matrix UI filters to employees whose `user_id` is in the function's mapped user list (`GET /api/setup/functions` grouped by code).
+- Shows an amber warning if the selected function has 0 mapped employees.
+- `function_code` passed through schema → router → `_serialize_step` → frontend.
+
+**Key file changes:** `alembic/versions/q5r6s7t8u9v0_approval_matrix_enhancements.py` (migration), `models/approvals.py` (`selected_designations`, `function_code`), `schemas/approvals.py` (open step_type, function_code, selected_designations on all policy schemas), `routers/approvals.py` (_serialize_step, bulk_save, upsert/update policy), `services/approval_routing.py` (selective_tree branch in compute_chain), `approval-matrix/page.tsx` (full rewrite).
 
 ---
 

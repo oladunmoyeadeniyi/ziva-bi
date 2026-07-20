@@ -17,6 +17,18 @@ import ImpersonationUserBanner from "@/components/ImpersonationUserBanner";
 import { apiFetch } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 
+// ── Branding ──────────────────────────────────────────────────────────────────
+interface BrandingThemeMin { primary: string; sidebar: string; }
+
+function isDark(hex: string): boolean {
+  const h = hex.replace("#", "");
+  if (h.length < 6) return false;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return r * 0.299 + g * 0.587 + b * 0.114 < 128;
+}
+
 interface ApprovalQueueItem {
   approval_id: string;
 }
@@ -127,6 +139,7 @@ export default function BusinessLayout({
   const [activeModules, setActiveModules] = useState<ModuleState[] | null>(null);
   const [orgConfig, setOrgConfig] = useState<{ use_dimensions?: boolean; use_multi_currency?: boolean } | null>(null);
   const [postingMode, setPostingMode] = useState<'lite' | 'connected' | 'full_erp' | null>(null);
+  const [activeTheme, setActiveTheme] = useState<BrandingThemeMin | null>(null);
 
   // Admin sections require an active tenant context.
   //
@@ -186,9 +199,14 @@ export default function BusinessLayout({
       const data = await apiFetch<{
         org_configuration?: { use_dimensions?: boolean; use_multi_currency?: boolean };
         posting_mode?: string;
+        branding?: { active_theme_id?: string; themes?: Array<{ id: string; primary: string; sidebar: string }> };
       }>("/api/setup/org", { token: accessToken });
       if (data.org_configuration) setOrgConfig(data.org_configuration);
       if (data.posting_mode) setPostingMode(data.posting_mode as 'lite' | 'connected' | 'full_erp');
+      if (data.branding?.active_theme_id && data.branding?.themes) {
+        const t = data.branding.themes.find(th => th.id === data.branding!.active_theme_id);
+        if (t) setActiveTheme({ primary: t.primary, sidebar: t.sidebar });
+      }
     } catch {
       // silently fail
     }
@@ -197,6 +215,21 @@ export default function BusinessLayout({
   useEffect(() => {
     fetchOrgConfig();
   }, [fetchOrgConfig]);
+
+  // Apply branding CSS variables to :root whenever the active theme changes
+  useEffect(() => {
+    const t = activeTheme;
+    const root = document.documentElement;
+    const dark = t ? isDark(t.sidebar) : false;
+    root.style.setProperty("--ziva-primary",            t?.primary ?? "#2563EB");
+    root.style.setProperty("--ziva-sidebar-bg",         t?.sidebar ?? "#F9FAFB");
+    root.style.setProperty("--ziva-sidebar-text",       dark ? "rgba(255,255,255,0.85)" : "#374151");
+    root.style.setProperty("--ziva-sidebar-muted",      dark ? "rgba(255,255,255,0.40)" : "#9CA3AF");
+    root.style.setProperty("--ziva-sidebar-active-bg",  dark ? "rgba(255,255,255,0.12)" : "#FFFFFF");
+    root.style.setProperty("--ziva-sidebar-active-text",dark ? "#FFFFFF" : "#111827");
+    root.style.setProperty("--ziva-sidebar-hover-bg",   dark ? "rgba(255,255,255,0.07)" : "#F3F4F6");
+    root.style.setProperty("--ziva-sidebar-border",     dark ? "rgba(255,255,255,0.10)" : "#E5E7EB");
+  }, [activeTheme]);
 
   const isActive = (href: string, exact = false) =>
     exact
@@ -222,10 +255,17 @@ export default function BusinessLayout({
       <Link
         href={href}
         className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
-          active
-            ? "bg-white text-gray-900 font-[500] border border-gray-200 shadow-sm"
-            : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+          active ? "" : "hover:bg-[var(--ziva-sidebar-hover-bg,#F3F4F6)]"
         }`}
+        style={active ? {
+          background: "var(--ziva-sidebar-active-bg, #FFFFFF)",
+          color: "var(--ziva-sidebar-active-text, #111827)",
+          fontWeight: 500,
+          border: "1px solid var(--ziva-sidebar-border, #E5E7EB)",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+        } : {
+          color: "var(--ziva-sidebar-text, #4B5563)",
+        }}
       >
         <Icon name={icon} size={14} />
         <span className="flex-1 truncate">{label}</span>
@@ -239,7 +279,10 @@ export default function BusinessLayout({
   };
 
   const SectionLabel = ({ label }: { label: string }) => (
-    <p className="px-3 pt-4 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest select-none">
+    <p
+      className="px-3 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-widest select-none"
+      style={{ color: "var(--ziva-sidebar-muted, #9CA3AF)" }}
+    >
       {label}
     </p>
   );
@@ -305,7 +348,10 @@ export default function BusinessLayout({
       {/* Body: sidebar + content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar — 240px, scrolls independently */}
-        <nav className="w-60 shrink-0 bg-gray-50 border-r border-gray-200 py-2 flex flex-col overflow-y-auto h-full">
+        <nav
+          className="w-60 shrink-0 py-2 flex flex-col overflow-y-auto h-full"
+          style={{ background: "var(--ziva-sidebar-bg, #F9FAFB)", borderRight: "1px solid var(--ziva-sidebar-border, #E5E7EB)" }}
+        >
 
           {/* WORKSPACE — hidden when SA is in tenant-context mode (not user impersonation) */}
           {!hideWorkspace && (

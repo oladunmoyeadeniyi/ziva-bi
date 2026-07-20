@@ -39,7 +39,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -274,6 +274,15 @@ class ApprovalPolicy(Base):
     )
     finance_amount_threshold_l2: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
     finance_amount_threshold_l3: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
+    selected_designations: Mapped[Optional[list]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Used when routing_mode='selective_tree'. "
+            "Array of {designation, role} objects — e.g. "
+            '[{"designation":"team_lead","role":"approve"},{"designation":"manager","role":"skip"}]'
+        ),
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -535,6 +544,14 @@ class FinanceReviewStep(Base):
         comment="capture | validate | review | approve",
     )
     label: Mapped[str] = mapped_column(String(100), nullable=False)
+    function_code: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment=(
+            "Links to a SystemFunctionMapping code (e.g. gl_validation, internal_audit). "
+            "When set, the assignee picker is filtered to users mapped to that function."
+        ),
+    )
     assigned_employee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("employees.id", ondelete="SET NULL"),

@@ -469,8 +469,8 @@ function RoleChartNode({
       <div
         draggable
         title={node.name}
-        onDragStart={(e) => { e.stopPropagation(); onDragStart(node.id); }}
-        onDragOver={(e)  => { e.preventDefault();  e.stopPropagation(); onDragEnter(node.id); }}
+        onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.setData("text/plain", node.id); e.dataTransfer.effectAllowed = "move"; requestAnimationFrame(() => onDragStart(node.id)); }}
+        onDragOver={(e)  => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; e.stopPropagation(); onDragEnter(node.id); }}
         onDragLeave={(e) => { e.stopPropagation(); if (dropTargetId === node.id) onDragEnter(null); }}
         onDrop={(e)      => { e.preventDefault();  e.stopPropagation(); onDrop(node.id); }}
         onDragEnd={onDragEnd}
@@ -988,6 +988,19 @@ function OrganisationPage() {
   // Drag-and-drop state
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null); // "__root__" = root drop zone
+  // Pending drop: set when the drop would change the cost centre — awaiting user confirmation
+  interface PendingDrop {
+    roleId: string;
+    roleName: string;
+    newParentId: string | null;      // null = root
+    newParentName: string;
+    currentCostCenterId: string | null;
+    currentCostCenterName: string | null;
+    newCostCenterId: string | null;
+    newCostCenterName: string | null;
+  }
+  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+  const [committingDrop, setCommittingDrop] = useState(false);
   const [savingRole, setSavingRole] = useState(false);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
   const [showFullNames, setShowFullNames] = useState<boolean>(() => {
@@ -1103,24 +1116,42 @@ function OrganisationPage() {
     setClearingRoles(true);
     setClearRolesError(null);
     setShowClearConfirm(false);
-    const snapshot = [...orgRoles]; // capture list before any re-renders
-    const errors: string[] = [];
-    for (const r of snapshot) {
-      try {
-        await apiFetch(`/api/approvals/roles/${r.id}`, { method: "DELETE", token: accessToken });
-      } catch (e: unknown) {
-        errors.push(`${r.name}: ${(e as Error).message}`);
-      }
+    try {
+      // Single atomic call — backend deletes all roles for the tenant in one transaction.
+      // All FK references to approval_roles are SET NULL so order doesn't matter.
+      await apiFetch("/api/approvals/roles", { method: "DELETE", token: accessToken });
+      await loadRoles();
+    } catch (e: unknown) {
+      const msg = (e as Error).message ?? "Unknown error";
+      const isAuth = msg.toLowerCase().includes("token") || msg.includes("401") || msg.toLowerCase().includes("unauthorized");
+      setClearRolesError(
+        isAuth
+          ? "Your session has expired. Please refresh the page and try again."
+          : `Failed to clear roles: ${msg}`
+      );
     }
-    await loadRoles(); // always reload regardless of individual errors
-    if (errors.length) setClearRolesError(errors.join(" · "));
     setClearingRoles(false);
   };
 
   const handleRoleDragStart = (id: string) => { setDraggingId(id); setDropTargetId(null); };
   const handleRoleDragEnter = (id: string | null) => setDropTargetId(id);
   const handleRoleDragEnd   = () => { setDraggingId(null); setDropTargetId(null); };
-  const handleRoleDrop = async (targetId: string | null) => {
+
+  /** Executes the actual PATCH after the user has confirmed (or skipped) the cost-centre prompt. */
+  const commitRoleDrop = async (roleId: string, newParentId: string | null, updateCostCenter: boolean, newCostCenterId: string | null) => {
+    if (!accessToken) return;
+    setCommittingDrop(true);
+    try {
+      const body: Record<string, unknown> = { parent_role_id: newParentId };
+      if (updateCostCenter) body.cost_center_id = newCostCenterId;
+      await apiFetch(`/api/approvals/roles/${roleId}`, { method: "PATCH", token: accessToken, body });
+      await loadRoles();
+    } catch (_) {}
+    setCommittingDrop(false);
+    setPendingDrop(null);
+  };
+
+  const handleRoleDrop = (targetId: string | null) => {
     // targetId === "__root__" → make the role a root (parent_role_id = null)
     const newParentId = (targetId === "__root__") ? null : targetId;
     if (!draggingId || !accessToken) { handleRoleDragEnd(); return; }
@@ -1128,15 +1159,33 @@ function OrganisationPage() {
     if (newParentId !== null && getDescendantIds(draggingId).has(newParentId)) {
       handleRoleDragEnd(); return; // would create a cycle
     }
+    const draggedRole = orgRoles.find(r => r.id === draggingId);
+    const newParentRole = newParentId ? orgRoles.find(r => r.id === newParentId) : null;
     const prevDragging = draggingId;
     handleRoleDragEnd();
-    try {
-      await apiFetch(`/api/approvals/roles/${prevDragging}`, {
-        method: "PATCH", token: accessToken,
-        body: { parent_role_id: newParentId },
+
+    // If the new parent has a different cost centre → ask the user before patching
+    const costCentreDiffers =
+      newParentRole !== undefined &&
+      newParentRole !== null &&
+      newParentRole.cost_center_id !== null &&
+      newParentRole.cost_center_id !== (draggedRole?.cost_center_id ?? null);
+
+    if (costCentreDiffers && newParentRole) {
+      setPendingDrop({
+        roleId: prevDragging,
+        roleName: draggedRole?.name ?? "",
+        newParentId,
+        newParentName: newParentRole.name,
+        currentCostCenterId: draggedRole?.cost_center_id ?? null,
+        currentCostCenterName: draggedRole?.cost_center_name ?? null,
+        newCostCenterId: newParentRole.cost_center_id,
+        newCostCenterName: newParentRole.cost_center_name,
       });
-      await loadRoles();
-    } catch (_) {}
+    } else {
+      // Same cost centre or moving to root — patch immediately, no prompt
+      commitRoleDrop(prevDragging, newParentId, false, null);
+    }
   };
 
   const openAddRole = (parentId: string | null) => {
@@ -1639,6 +1688,44 @@ function OrganisationPage() {
                 </div>
               ) : (
                 <>
+                  {/* ── Cost-centre inheritance confirmation modal ── */}
+                  {pendingDrop && (
+                    <div style={{ position: "fixed", inset: 0, zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
+                      <div style={{ background: "#fff", borderRadius: 12, padding: "24px 28px", maxWidth: 420, width: "100%", margin: "0 16px", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }}>
+                        <p style={{ fontWeight: 700, fontSize: 15, color: "#0f172a", marginBottom: 6 }}>Update cost centre?</p>
+                        <p style={{ fontSize: 13, color: "#475569", lineHeight: 1.55, marginBottom: 16 }}>
+                          <strong>{pendingDrop.roleName}</strong> has been moved under <strong>{pendingDrop.newParentName}</strong>, which belongs to{" "}
+                          <strong>{pendingDrop.newCostCenterName}</strong>.
+                          {pendingDrop.currentCostCenterName
+                            ? <> The role is currently assigned to <strong>{pendingDrop.currentCostCenterName}</strong>.</>
+                            : <> The role currently has no cost centre.</>
+                          }
+                        </p>
+                        <p style={{ fontSize: 12, color: "#64748b", marginBottom: 20 }}>
+                          Would you like to update this role&apos;s cost centre to match its new parent?
+                        </p>
+                        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            disabled={committingDrop}
+                            onClick={() => commitRoleDrop(pendingDrop.roleId, pendingDrop.newParentId, false, null)}
+                            style={{ padding: "7px 16px", fontSize: 13, borderRadius: 7, border: "1px solid #e2e8f0", background: "#fff", color: "#374151", cursor: "pointer", fontWeight: 500 }}
+                          >
+                            No, keep <strong>{pendingDrop.currentCostCenterName ?? "none"}</strong>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={committingDrop}
+                            onClick={() => commitRoleDrop(pendingDrop.roleId, pendingDrop.newParentId, true, pendingDrop.newCostCenterId)}
+                            style={{ padding: "7px 16px", fontSize: 13, borderRadius: 7, border: "none", background: committingDrop ? "#93c5fd" : "#2563eb", color: "#fff", cursor: committingDrop ? "default" : "pointer", fontWeight: 600 }}
+                          >
+                            {committingDrop ? "Saving…" : `Yes, change to ${pendingDrop.newCostCenterName}`}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Root drop zone — visible only while dragging */}
                   {draggingId && (
                     <div
@@ -2682,11 +2769,6 @@ function OrganisationPage() {
               </label>
             </div>
 
-            <div className="pt-4 flex justify-end">
-              <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
-                {saving ? "Saving..." : saved ? "Saved" : "Save features"}
-              </Button>
-            </div>
           </div>
 
           <hr className="my-6 border-gray-200" />
@@ -2723,7 +2805,7 @@ function OrganisationPage() {
 
             <div className="pt-4 flex justify-end border-t border-gray-100">
               <Button variant="primary" onClick={() => save({ org_configuration: config })} disabled={saving} loading={saving}>
-                {saving ? "Saving..." : saved ? "Saved" : "Save governance settings"}
+                {saving ? "Saving..." : saved ? "Saved" : "Save configuration"}
               </Button>
             </div>
           </div>
@@ -2891,7 +2973,7 @@ function OrganisationPage() {
 export default function OrganisationPageWrapper() {
   return (
     <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading...</div>}>
-      <OrganisationPage />
+         <OrganisationPage />
     </Suspense>
   );
 }

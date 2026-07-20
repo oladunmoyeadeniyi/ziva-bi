@@ -11,6 +11,7 @@ Endpoints:
     GET    /api/approvals/roles                                 List approver roles (auto-seeds defaults)
     POST   /api/approvals/roles                                 Create an approver role
     PATCH  /api/approvals/roles/{role_id}                       Update an approver role
+    DELETE /api/approvals/roles                                 Delete ALL approver roles for tenant (single transaction)
     DELETE /api/approvals/roles/{role_id}                       Delete an approver role
     POST   /api/approvals/roles/bulk-upload                     Bulk-upload roles from Excel/CSV template
     GET    /api/approvals/policies                              List all policies for tenant
@@ -576,6 +577,28 @@ async def update_approval_role(
         .where(ApprovalRole.id == role.id)
     )).scalar_one()
     return ApprovalRoleResponse.from_orm(role)
+
+
+@router.delete("/roles", status_code=204)
+async def clear_all_approval_roles(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Delete ALL approval roles for the current tenant in a single transaction.
+
+    All FK references to approval_roles (parent_role_id, employees.approval_role_id,
+    employee_position_assignments.approval_role_id) are SET NULL on delete, so no
+    ordering constraint applies. One round-trip; no partial-failure risk.
+    """
+    _require_admin(current_user)
+    block_if_readonly_impersonation(current_user)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=400, detail="Tenant context required.")
+    await db.execute(
+        delete(ApprovalRole).where(ApprovalRole.tenant_id == current_user.tenant_id)
+    )
+    await db.commit()
 
 
 @router.delete("/roles/{role_id}", status_code=204)
@@ -1248,6 +1271,7 @@ async def upsert_policy(
 
     if policy:
         policy.routing_mode = data.routing_mode
+        policy.selected_designations = data.selected_designations
         policy.ceiling_role_id = _to_uuid(data.ceiling_role_id)
         policy.vacant_seat_behavior = data.vacant_seat_behavior
         policy.fallback_approver_id = _to_uuid(data.fallback_approver_id)
@@ -1271,6 +1295,7 @@ async def upsert_policy(
             tenant_id=tenant_id,
             module=data.module,
             routing_mode=data.routing_mode,
+            selected_designations=data.selected_designations,
             ceiling_role_id=_to_uuid(data.ceiling_role_id),
             vacant_seat_behavior=data.vacant_seat_behavior,
             fallback_approver_id=_to_uuid(data.fallback_approver_id),
@@ -1333,6 +1358,8 @@ async def update_policy(
 
     if data.routing_mode is not None:
         policy.routing_mode = data.routing_mode
+    if data.selected_designations is not None:
+        policy.selected_designations = data.selected_designations
     if data.ceiling_role_id is not None:
         policy.ceiling_role_id = _to_uuid(data.ceiling_role_id)
     if data.vacant_seat_behavior is not None:
@@ -2556,6 +2583,7 @@ def _serialize_step(step, emp_name=None):
         "level": step.level,
         "step_type": step.step_type,
         "label": step.label,
+        "function_code": step.function_code,
         "assigned_employee_id": str(step.assigned_employee_id) if step.assigned_employee_id else None,
         "assigned_designation": step.assigned_designation,
         "min_amount": float(step.min_amount) if step.min_amount is not None else None,
@@ -2650,6 +2678,7 @@ async def bulk_save_finance_steps(
             level=idx,
             step_type=step_in.step_type,
             label=step_in.label,
+            function_code=step_in.function_code,
             assigned_employee_id=emp_id,
             assigned_designation=step_in.assigned_designation,
             min_amount=Decimal(str(step_in.min_amount)) if step_in.min_amount is not None else None,

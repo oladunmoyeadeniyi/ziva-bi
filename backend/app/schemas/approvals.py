@@ -147,7 +147,13 @@ class ApprovalRoleThresholdIn(BaseModel):
 class ApprovalPolicyCreate(BaseModel):
     """Create or replace the approval policy for a module."""
     module: str
-    routing_mode: str = "org_tree"  # org_tree | requestor_selects | direct_to_hod
+    routing_mode: str = "org_tree"
+    # org_tree          — full org-chart chain up to ceiling role
+    # requestor_selects — requestor picks the approver at submission time
+    # direct_to_hod     — goes straight to the head of department
+    # selective_tree    — org-chart chain but tenant chooses which designation
+    #                     levels participate; stored in selected_designations
+    selected_designations: list | None = None
     ceiling_role_id: str | None = None
     vacant_seat_behavior: str = "skip"  # skip | hold | escalate_to_fallback
     fallback_approver_id: str | None = None
@@ -163,8 +169,9 @@ class ApprovalPolicyCreate(BaseModel):
     @field_validator("routing_mode")
     @classmethod
     def validate_routing_mode(cls, v: str) -> str:
-        if v not in ("org_tree", "requestor_selects", "direct_to_hod"):
-            raise ValueError("routing_mode must be org_tree, requestor_selects, or direct_to_hod.")
+        valid = {"org_tree", "requestor_selects", "direct_to_hod", "selective_tree"}
+        if v not in valid:
+            raise ValueError(f"routing_mode must be one of: {', '.join(sorted(valid))}.")
         return v
 
     @field_validator("vacant_seat_behavior")
@@ -185,6 +192,7 @@ class ApprovalPolicyCreate(BaseModel):
 class ApprovalPolicyUpdate(BaseModel):
     """Partial update for an approval policy."""
     routing_mode: str | None = None
+    selected_designations: list | None = None   # used when routing_mode = selective_tree
     ceiling_role_id: str | None = None
     vacant_seat_behavior: str | None = None
     fallback_approver_id: str | None = None
@@ -224,6 +232,7 @@ class ApprovalPolicyResponse(BaseModel):
     tenant_id: str
     module: str
     routing_mode: str
+    selected_designations: list | None = None
     ceiling_role_id: str | None
     ceiling_role_name: str | None
     vacant_seat_behavior: str
@@ -249,6 +258,7 @@ class ApprovalPolicyResponse(BaseModel):
             tenant_id=str(p.tenant_id),
             module=p.module,
             routing_mode=p.routing_mode,
+            selected_designations=p.selected_designations,
             ceiling_role_id=str(p.ceiling_role_id) if p.ceiling_role_id else None,
             ceiling_role_name=p.ceiling_role.name if p.ceiling_role else None,
             vacant_seat_behavior=p.vacant_seat_behavior,
@@ -577,15 +587,20 @@ class RoleScopeUpdate(BaseModel):
 
 # ── Finance Review Steps ──────────────────────────────────────────────────────
 
-VALID_STEP_TYPES = {"capture", "validate", "review", "approve"}
+# step_type is now open — tenants can use any non-empty string up to 50 chars.
+# The four built-in behavioral categories (capture / validate / review / approve)
+# are suggested defaults; custom values (e.g. "internal_audit", "compliance_check")
+# are fully supported. The value controls what the step reviewer can do at runtime.
+BUILTIN_STEP_BEHAVIORS = {"capture", "validate", "review", "approve"}
 
 
 class FinanceReviewStepIn(BaseModel):
     """One finance review step in the bulk-save payload."""
 
     level: int
-    step_type: str
-    label: str
+    step_type: str          # open — any non-empty string ≤ 50 chars
+    label: str              # tenant's display name for this step
+    function_code: str | None = None   # optional link to SystemFunctionMapping
     assigned_employee_id: str | None = None
     assigned_designation: str | None = None
     min_amount: float | None = None
@@ -597,8 +612,11 @@ class FinanceReviewStepIn(BaseModel):
     @field_validator("step_type")
     @classmethod
     def validate_step_type(cls, v: str) -> str:
-        if v not in VALID_STEP_TYPES:
-            raise ValueError(f"step_type must be one of: {', '.join(sorted(VALID_STEP_TYPES))}")
+        v = v.strip()
+        if not v:
+            raise ValueError("step_type is required.")
+        if len(v) > 50:
+            raise ValueError("step_type must be 50 characters or fewer.")
         return v
 
     @field_validator("label")
@@ -625,6 +643,7 @@ class FinanceReviewStepResponse(BaseModel):
     level: int
     step_type: str
     label: str
+    function_code: str | None = None
     assigned_employee_id: str | None
     assigned_designation: str | None
     min_amount: float | None

@@ -64,6 +64,7 @@ interface UploadResult {
   updated: number;
   skipped: number;
   errors: { row: number; reason: string }[];
+  warnings?: { row: number; reason: string }[];
   head_assignments?: number;
 }
 
@@ -542,7 +543,10 @@ function EmployeesPage() {
               </div>
               {uploadResult && (
                 <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700 space-y-0.5">
-                  <div>{uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.errors.length} errors</div>
+                  <div>
+                    {uploadResult.imported} imported · {uploadResult.updated} updated · {uploadResult.errors.length} errors
+                    {(uploadResult.warnings?.length ?? 0) > 0 && ` · ${uploadResult.warnings!.length} warnings`}
+                  </div>
 
                   {uploadResult.errors.length > 0 && (
                     <div className="mt-1 space-y-0.5">
@@ -550,6 +554,16 @@ function EmployeesPage() {
                         <div key={i} className="text-red-600">Row {e.row}: {e.reason}</div>
                       ))}
                       {uploadResult.errors.length > 5 && <div className="text-red-500">…and {uploadResult.errors.length - 5} more errors</div>}
+                    </div>
+                  )}
+
+                  {(uploadResult.warnings?.length ?? 0) > 0 && (
+                    <div className="mt-1 space-y-0.5 border-t border-yellow-200 pt-1">
+                      <div className="text-yellow-700 font-medium">Warnings (rows imported with auto-corrections):</div>
+                      {uploadResult.warnings!.slice(0, 5).map((w, i) => (
+                        <div key={i} className="text-yellow-600">Row {w.row}: {w.reason}</div>
+                      ))}
+                      {uploadResult.warnings!.length > 5 && <div className="text-yellow-500">…and {uploadResult.warnings!.length - 5} more warnings</div>}
                     </div>
                   )}
                 </div>

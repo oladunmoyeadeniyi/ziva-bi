@@ -41,7 +41,7 @@ import io
 import re
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -1008,6 +1008,7 @@ async def upload_employees(
     imported = 0
     updated = 0
     errors: list[dict] = []
+    warnings: list[dict] = []
     email_to_emp: dict[str, Employee] = {}
 
     from datetime import datetime as _dt3
@@ -1098,34 +1099,37 @@ async def upload_employees(
             continue
         org_role_id = matched_role.id
 
-        # Capacity enforcement
+        # Capacity check — soft warning only; row still imports.
+        # Bulk upload is not the right enforcement point for headcount limits.
         if matched_role.max_occupants is not None:
             current_count = role_occupant_counts.get(matched_role.id, 0)
             batch_count = batch_role_additions.get(matched_role.id, 0)
             is_already_in_role = emp_obj is not None and getattr(emp_obj, "approval_role_id", None) == matched_role.id
             if not is_already_in_role and (current_count + batch_count) >= matched_role.max_occupants:
                 cap_label = "occupant" if matched_role.max_occupants == 1 else "occupants"
-                errors.append({"row": i, "reason": (
-                    f"Role '{matched_role.name}' is at capacity "
-                    f"({current_count + batch_count}/{matched_role.max_occupants} {cap_label}). "
-                    f"Increase the role's headcount limit or choose a different role."
+                warnings.append({"row": i, "reason": (
+                    f"Role '{matched_role.name}' was over its headcount limit "
+                    f"({current_count + batch_count}/{matched_role.max_occupants} {cap_label}) — "
+                    f"employee imported anyway. Consider updating the role's capacity in Role Hierarchy."
                 )})
-                continue
+                # Do NOT continue — fall through and import the row.
 
-        # Role vs Cost Center validation
+        # Role vs Cost Centre validation — auto-correct with warning; row still imports.
         if matched_role.cost_center_id:
             if cost_center_id and cost_center_id != matched_role.cost_center_id:
                 expected_cc_code = next(
                     (code.upper() for code, node in cc_by_code.items() if node.id == matched_role.cost_center_id),
-                    "the role's assigned cost centre"
+                    "the role's cost centre"
                 )
-                errors.append({"row": i, "reason": (
-                    f"Cost Centre mismatch: role '{matched_role.name}' belongs to '{expected_cc_code}'. "
-                    f"Remove the Cost Centre Code or enter '{expected_cc_code}'."
+                warnings.append({"row": i, "reason": (
+                    f"Cost centre overridden to '{expected_cc_code}' — "
+                    f"role '{matched_role.name}' belongs to that cost centre, "
+                    f"which takes precedence over the value in the template."
                 )})
-                continue
-            if not cost_center_id:
-                # Auto-assign cost centre from role
+                # Override to role's cost centre and continue importing.
+                cost_center_id = matched_role.cost_center_id
+            elif not cost_center_id:
+                # Auto-assign cost centre from role (silent — no warning needed)
                 cost_center_id = matched_role.cost_center_id
 
         # Track this batch addition for capacity (only if new to this role)
@@ -1182,7 +1186,7 @@ async def upload_employees(
     skipped = max(0, len([r for r in rows if any((c or "").strip() for c in r)]) - imported - updated)
     return EmployeeUploadResult(
         imported=imported, updated=updated, skipped=skipped,
-        errors=errors, head_assignments=0,
+        errors=errors, warnings=warnings, head_assignments=0,
     )
 
 
@@ -1668,15 +1672,25 @@ async def _resolve_position(role: OrgRole, db: AsyncSession) -> PositionResponse
         if par:
             parent_name = par.name
 
-    # Current active assignments (effective_to IS NULL)
-    occ_res = await db.execute(
-        select(EmployeePositionAssignment, Employee)
-        .join(Employee, Employee.id == EmployeePositionAssignment.employee_id)
-        .where(
-            EmployeePositionAssignment.approval_role_id == role.id,
-            EmployeePositionAssignment.effective_to.is_(None),
+    # Current occupants — query employees directly by approval_role_id (single source of truth).
+    # This covers both bulk-uploaded employees (approval_role_id set directly) and employees
+    # assigned via the Positions page (EPA record + approval_role_id both set).
+    # Employees without an EPA record get assignment_type="substantive" and use resumption_date.
+    today = date.today()
+    emp_res = await db.execute(
+        select(Employee, EmployeePositionAssignment)
+        .outerjoin(
+            EmployeePositionAssignment,
+            (EmployeePositionAssignment.employee_id == Employee.id)
+            & (EmployeePositionAssignment.approval_role_id == role.id)
+            & (EmployeePositionAssignment.effective_to.is_(None)),
         )
-        .order_by(EmployeePositionAssignment.effective_from)
+        .where(
+            Employee.approval_role_id == role.id,
+            Employee.tenant_id == role.tenant_id,
+            Employee.is_active.is_(True),
+        )
+        .order_by(Employee.last_name, Employee.first_name)
     )
     occupants = [
         PositionOccupant(
@@ -1684,10 +1698,10 @@ async def _resolve_position(role: OrgRole, db: AsyncSession) -> PositionResponse
             employee_code=emp.employee_code,
             full_name=f"{emp.first_name} {emp.last_name}",
             email=emp.email,
-            assignment_type=asgn.assignment_type,
-            effective_from=asgn.effective_from,
+            assignment_type=asgn.assignment_type if asgn else "substantive",
+            effective_from=asgn.effective_from if asgn else (emp.resumption_date or today),
         )
-        for asgn, emp in occ_res.all()
+        for emp, asgn in emp_res.all()
     ]
 
     return PositionResponse(

@@ -2424,6 +2424,35 @@ def _can_post_future(current_user: CurrentUser, grace_rows: list[PeriodGraceOver
     return False
 
 
+@router.get("/periods/future-exception", response_model=list[FuturePostingExceptionResponse])
+async def list_future_exceptions(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[FuturePostingExceptionResponse]:
+    """List all future-dated posting exceptions for this tenant, newest first."""
+    _require_admin(current_user)
+    tenant_id = _require_tenant(current_user)
+
+    result = await db.execute(
+        select(FuturePostingException)
+        .where(FuturePostingException.tenant_id == tenant_id)
+        .order_by(FuturePostingException.created_at.desc())
+    )
+    excs = result.scalars().all()
+    return [
+        FuturePostingExceptionResponse(
+            id=str(e.id),
+            tenant_id=str(e.tenant_id),
+            created_by=str(e.created_by),
+            target_date=e.target_date,
+            module=e.module,
+            reason=e.reason,
+            created_at=e.created_at,
+        )
+        for e in excs
+    ]
+
+
 @router.post("/periods/future-exception", response_model=FuturePostingExceptionResponse, status_code=201)
 async def create_future_exception(
     data: FuturePostingExceptionCreate,
@@ -2861,10 +2890,21 @@ async def approve_checklist_item(
         raise HTTPException(status_code=409, detail="Item is already approved.")
 
     if comp.prepared_by == current_user.user_id:
-        raise HTTPException(
-            status_code=409,
-            detail="Segregation of duties: the approver must be a different user than the preparer.",
+        if not current_user.is_super_admin:
+            raise HTTPException(
+                status_code=409,
+                detail="Segregation of duties: the approver must be a different user than the preparer.",
+            )
+        # Super admin (Ziva consultant) bypass — skip SOD, write audit log.
+        sod_audit = PeriodAuditLog(
+            tenant_id=tenant_id,
+            fiscal_year=period.fiscal_year,
+            period_id=period.id,
+            action="CONSULTANT_OVERRIDE",
+            actor_id=current_user.user_id,
+            detail=f"SOD bypass: SA self-approved checklist item {item_id} on period {period_id}.",
         )
+        db.add(sod_audit)
 
     now = datetime.now(timezone.utc)
     comp.approved_by = current_user.user_id

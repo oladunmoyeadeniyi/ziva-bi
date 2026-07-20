@@ -144,8 +144,11 @@ function RolesContent() {
               method: "PATCH", token: accessToken!, body: { permission_tier: "functional_admin" },
             }).catch(() => null)
           ));
-          const updated = await apiFetch<OrgRole[]>("/api/approvals/roles", { token: accessToken! });
-          setOrgRoles(updated);
+          // Update state optimistically — no second GET needed, avoids race-condition error.
+          const hodIds = new Set(hodRoles.map(r => r.id));
+          setOrgRoles(prev => prev.map(r =>
+            hodIds.has(r.id) ? { ...r, permission_tier: "functional_admin" } : r
+          ));
         }
       })
       .catch(e => setError(e.message))

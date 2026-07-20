@@ -24,7 +24,7 @@
  * Matches Tax page visual language: same tab bar, card/section style, save button style.
  */
 
-import { useCallback, useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
@@ -276,6 +276,9 @@ function PeriodsContent() {
   const [hardClosing, setHardClosing] = useState<string | null>(null);
   const [hardCloseMsg, setHardCloseMsg] = useState<string | null>(null);
   const [reopening, setReopening] = useState<string | null>(null);
+  const [generating, setGenerating] = useState<Set<string>>(new Set());
+  const [backfillError, setBackfillError] = useState<string | null>(null);
+  const hasAutoBackfilled = useRef(false);
 
   // ── Grace overrides state ─────────────────────────────────────────────────
   const [graceRows, setGraceRows] = useState<GraceOverride[]>([]);
@@ -291,6 +294,25 @@ function PeriodsContent() {
   });
   const [addingGrace, setAddingGrace] = useState(false);
   const [togglingBlock, setTogglingBlock] = useState(false);
+  const [editingDefaultGrace, setEditingDefaultGrace] = useState<{ id: string; grace_value: number; grace_unit: string } | null>(null);
+  const [savingDefaultGrace, setSavingDefaultGrace] = useState(false);
+
+  // ── Soft-close state ──────────────────────────────────────────────────────
+  const [softClosing, setSoftClosing] = useState<string | null>(null);
+
+  // ── Audit grace edit state ────────────────────────────────────────────────
+  const [editingAuditGrace, setEditingAuditGrace] = useState<number | null>(null);
+  const [savingAuditGrace, setSavingAuditGrace] = useState(false);
+
+  // ── Audit log state ───────────────────────────────────────────────────────
+  const [auditLogs, setAuditLogs] = useState<Array<{ id: string; action: string; actor_id: string; fiscal_year?: string | null; period_id?: string | null; detail?: string | null; created_at: string }>>([]);
+  const [loadingAuditLog, setLoadingAuditLog] = useState(false);
+
+  // ── Future exceptions state ───────────────────────────────────────────────
+  const [futureExceptions, setFutureExceptions] = useState<Array<{ id: string; target_date: string; module: string; reason: string; created_by: string; created_at: string }>>([]);
+  const [newFutureEx, setNewFutureEx] = useState({ target_date: "", module: "expense", reason: "" });
+  const [addingFutureEx, setAddingFutureEx] = useState(false);
+  const [futureExError, setFutureExError] = useState<string | null>(null);
 
   // ── Checklist state ───────────────────────────────────────────────────────
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
@@ -384,14 +406,121 @@ function PeriodsContent() {
     Promise.all([loadOrg(), loadPeriods()]).finally(() => setIsLoading(false));
   }, [loadOrg, loadPeriods]);
 
+  // Auto-backfill: once org + periods are loaded, silently generate any missing years.
+  // Runs once per mount (hasAutoBackfilled ref prevents re-running when setPeriods fires).
+  // Works even when date_of_registration is not yet set: falls back to the earliest
+  // existing period's year, then to the current calendar year (generates current year only).
+  useEffect(() => {
+    if (isLoading) return;
+    if (!accessToken) return;
+    if (hasAutoBackfilled.current) return;
+    hasAutoBackfilled.current = true;
+
+    const calYear = new Date().getFullYear();
+    const existingFYs = new Set(periods.map((p) => p.fiscal_year));
+    const fmtLocal = orgSettings.fiscal_year_name_format ?? "FY{year}";
+
+    // Determine starting year: registered year > earliest existing period year > current year
+    let startYear = calYear;
+    if (orgSettings.date_of_registration) {
+      startYear = new Date(orgSettings.date_of_registration).getUTCFullYear();
+    } else if (existingFYs.size > 0) {
+      const parsed = [...existingFYs].map(fy => { const m = fy.match(/\d{4}/); return m ? parseInt(m[0]) : calYear; });
+      startYear = Math.min(...parsed);
+    }
+
+    const allLabels = Array.from(
+      { length: calYear - startYear + 1 },
+      (_, i) => previewYearFormat(fmtLocal, startYear + i, orgSettings.fiscal_year_start_month)
+    );
+    const missing = allLabels.filter((l) => !existingFYs.has(l));
+    if (missing.length === 0) return;
+
+    (async () => {
+      for (const label of missing) {
+        setGenerating((prev) => new Set([...prev, label]));
+        try {
+          await apiFetch<unknown>("/api/setup/periods/generate", {
+            method: "POST",
+            token: accessToken,
+            body: { fiscal_year_label: label },
+          });
+        } catch {
+          // skip — leave missing; user can generate individually if needed
+        } finally {
+          setGenerating((prev) => { const s = new Set(prev); s.delete(label); return s; });
+        }
+      }
+      // Reload once after all backfill calls complete
+      const data = await apiFetch<AccountingPeriod[]>("/api/setup/periods", { token: accessToken });
+      setPeriods(data);
+    })();
+  }, [isLoading, accessToken, orgSettings.fiscal_year_start_month, orgSettings.date_of_registration, orgSettings.fiscal_year_name_format, periods]);
+
+  // Generate periods for a specific fiscal year label (e.g. "2022" or "FY2022")
+  const generateYear = async (label: string) => {
+    if (!accessToken) return;
+    setGenerating(prev => new Set([...prev, label]));
+    setBackfillError(null);
+    try {
+      await apiFetch<unknown>("/api/setup/periods/generate", {
+        method: "POST",
+        token: accessToken,
+        body: { fiscal_year_label: label },
+      });
+      // Reload all periods; then select the newly generated year
+      const data = await apiFetch<AccountingPeriod[]>("/api/setup/periods", { token: accessToken });
+      setPeriods(data);
+      setSelectedFY(label);
+    } catch (e) {
+      setBackfillError(e instanceof Error ? e.message : "Failed to generate periods.");
+    } finally {
+      setGenerating(prev => { const s = new Set(prev); s.delete(label); return s; });
+    }
+  };
+
   useEffect(() => {
     if (selectedFY) loadFyState(selectedFY);
   }, [selectedFY, loadFyState]);
 
+  const loadAuditLog = useCallback(async () => {
+    if (!accessToken) return;
+    setLoadingAuditLog(true);
+    try {
+      const params = selectedFY ? `?fiscal_year=${encodeURIComponent(selectedFY)}` : "";
+      const data = await apiFetch<Array<{ id: string; action: string; actor_id: string; fiscal_year?: string | null; period_id?: string | null; detail?: string | null; created_at: string }>>(
+        `/api/setup/periods/audit-log${params}`,
+        { token: accessToken }
+      );
+      setAuditLogs(data);
+    } catch {
+      // non-blocking
+    } finally {
+      setLoadingAuditLog(false);
+    }
+  }, [accessToken, selectedFY]);
+
+  const loadFutureExceptions = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const data = await apiFetch<Array<{ id: string; target_date: string; module: string; reason: string; created_by: string; created_at: string }>>(
+        "/api/setup/periods/future-exception",
+        { token: accessToken }
+      );
+      setFutureExceptions(data);
+    } catch {
+      // non-blocking
+    }
+  }, [accessToken]);
+
   useEffect(() => {
-    if (tab === "grace") loadGrace();
+    if (tab === "grace") { loadGrace(); loadFutureExceptions(); }
     if (tab === "checklist") loadChecklist();
-  }, [tab, loadGrace, loadChecklist]);
+  }, [tab, loadGrace, loadChecklist, loadFutureExceptions]);
+
+  useEffect(() => {
+    if (tab === "periods") loadAuditLog();
+  }, [tab, selectedFY, loadAuditLog]);
 
   useEffect(() => {
     if (selectedPeriodId) loadPeriodChecklist(selectedPeriodId);
@@ -533,6 +662,74 @@ function PeriodsContent() {
     }
   };
 
+  const saveDefaultGrace = async () => {
+    if (!accessToken || !editingDefaultGrace) return;
+    setSavingDefaultGrace(true);
+    try {
+      await apiFetch(`/api/setup/periods/grace/${editingDefaultGrace.id}`, {
+        method: "PATCH",
+        token: accessToken,
+        body: { grace_value: editingDefaultGrace.grace_value, grace_unit: editingDefaultGrace.grace_unit },
+      });
+      await loadGrace();
+      setEditingDefaultGrace(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSavingDefaultGrace(false);
+    }
+  };
+
+  const softClosePeriod = async (id: string) => {
+    if (!accessToken) return;
+    setSoftClosing(id);
+    try {
+      await apiFetch(`/api/setup/periods/${id}/soft-close`, { method: "POST", token: accessToken });
+      const data = await apiFetch<AccountingPeriod[]>("/api/setup/periods", { token: accessToken });
+      setPeriods(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Soft-close failed");
+    } finally {
+      setSoftClosing(null);
+    }
+  };
+
+  const saveAuditGrace = async () => {
+    if (!accessToken || editingAuditGrace === null || !selectedFY) return;
+    setSavingAuditGrace(true);
+    try {
+      const updated = await apiFetch<{ status: string; audit_grace_months: number; audit_grace_expires_at?: string; management_closed_at?: string; statutory_closed_at?: string }>(
+        `/api/setup/periods/year-state/${encodeURIComponent(selectedFY)}`,
+        { method: "PATCH", token: accessToken, body: { audit_grace_months: editingAuditGrace } }
+      );
+      setFyState((prev) => prev ? { ...prev, audit_grace_months: updated.audit_grace_months, audit_grace_expires_at: updated.audit_grace_expires_at ?? null } : prev);
+      setEditingAuditGrace(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSavingAuditGrace(false);
+    }
+  };
+
+  const addFutureException = async () => {
+    if (!accessToken || !newFutureEx.target_date || !newFutureEx.reason.trim()) return;
+    setAddingFutureEx(true);
+    setFutureExError(null);
+    try {
+      await apiFetch("/api/setup/periods/future-exception", {
+        method: "POST",
+        token: accessToken,
+        body: { target_date: newFutureEx.target_date, module: newFutureEx.module, reason: newFutureEx.reason.trim() },
+      });
+      setNewFutureEx({ target_date: "", module: "expense", reason: "" });
+      await loadFutureExceptions();
+    } catch (e) {
+      setFutureExError(e instanceof Error ? e.message : "Failed to create exception");
+    } finally {
+      setAddingFutureEx(false);
+    }
+  };
+
   const toggleJournalBlock = async () => {
     if (!accessToken) return;
     setTogglingBlock(true);
@@ -618,6 +815,34 @@ function PeriodsContent() {
 
   const uniqueFYs = [...new Set(periods.map((p) => p.fiscal_year))].sort();
   const fyPeriods = periods.filter((p) => p.fiscal_year === selectedFY);
+
+  // Build the full list of FY labels from registration year to current year.
+  // Used to populate the FY dropdown and detect which years still need generation.
+  // If date_of_registration is not set, fall back to the earliest existing period's
+  // fiscal year (parsed naively as a 4-digit year), then to the current calendar year.
+  const currentCalYear = new Date().getFullYear();
+  const earliestExistingYear = uniqueFYs.length > 0
+    ? Math.min(...uniqueFYs.map(fy => { const m = fy.match(/\d{4}/); return m ? parseInt(m[0]) : currentCalYear; }))
+    : currentCalYear;
+  const regYear = orgSettings.date_of_registration
+    ? new Date(orgSettings.date_of_registration).getUTCFullYear()
+    : earliestExistingYear;
+  // Build one label per year, merging by year number (not string) to avoid duplicates
+  // when the stored fiscal_year label format differs from the current display format.
+  // Priority: use the label already stored in the DB if one exists for that year,
+  // otherwise generate a new label via previewYearFormat.
+  const computedYears = Array.from({ length: currentCalYear - regYear + 1 }, (_, i) => regYear + i);
+  // Include years from existing periods that fall outside the computed range.
+  const existingYears = uniqueFYs
+    .map(fy => { const m = fy.match(/\d{4}/); return m ? parseInt(m[0]) : null; })
+    .filter((y): y is number => y !== null);
+  const allYears = [...new Set([...existingYears, ...computedYears])].sort((a, b) => a - b);
+  const allFYLabels: string[] = allYears.map(year => {
+    // Prefer the label already in the DB for this year (to avoid format mismatch).
+    const stored = uniqueFYs.find(fy => { const m = fy.match(/\d{4}/); return m ? parseInt(m[0]) === year : false; });
+    return stored ?? previewYearFormat(fmt, year, orgSettings.fiscal_year_start_month);
+  });
+  const missingFYLabels = allFYLabels.filter(label => !uniqueFYs.includes(label));
   // The FY's final period -- highest period_no, NOT a hardcoded 12. A
   // registration-truncated stub first year can have fewer than 12 periods
   // (e.g. Aug-Dec = 5), and a hardcoded 12 would never match, permanently
@@ -692,7 +917,33 @@ function PeriodsContent() {
                 </p>
               </div>
             )}
-            {!orgSettings.first_fiscal_year_end && (
+            {!orgSettings.fiscal_year_start_month && (
+              <div className="flex items-start gap-2 p-2.5 bg-red-50 border border-red-200 rounded-md">
+                <i className="ti ti-alert-triangle text-red-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                <p className="text-xs text-red-700">
+                  <strong>Fiscal year start month is not configured.</strong> Period generation will fail until this is set.
+                  Go to{" "}
+                  <a href="/dashboard/business/setup/organisation" className="underline font-medium">
+                    Organisation → Identity
+                  </a>{" "}
+                  and set the <strong>First fiscal year end date</strong> — the start month is derived from it automatically.
+                </p>
+              </div>
+            )}
+            {orgSettings.fiscal_year_start_month && !orgSettings.date_of_registration && (
+              <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-md">
+                <i className="ti ti-alert-triangle text-amber-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
+                <p className="text-xs text-amber-700">
+                  Registration date is not set — periods will only be generated for the current year.
+                  Set it on the{" "}
+                  <a href="/dashboard/business/setup/organisation" className="underline font-medium">
+                    Organisation → Identity
+                  </a>{" "}
+                  tab to enable backfill to prior years.
+                </p>
+              </div>
+            )}
+            {!orgSettings.first_fiscal_year_end && orgSettings.fiscal_year_start_month && (
               <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-md">
                 <i className="ti ti-alert-triangle text-amber-600 flex-shrink-0 mt-0.5" style={{ fontSize: 13 }} />
                 <p className="text-xs text-amber-700">
@@ -760,9 +1011,25 @@ function PeriodsContent() {
             </p>
           </section>
 
-          {/* Period grid */}
-          {uniqueFYs.length > 0 && (
+          {/* Period grid — show all FY years from registration to now */}
+          {allFYLabels.length > 0 && (
             <section className="border border-gray-200 rounded-lg p-4 space-y-3">
+              {/* Auto-backfill progress indicator */}
+              {generating.size > 0 && (
+                <div className="flex items-center gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+                  <svg className="animate-spin h-3.5 w-3.5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Generating periods for {generating.size} year{generating.size > 1 ? "s" : ""}…
+                </div>
+              )}
+              {backfillError && (
+                <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                  {backfillError}
+                  <button type="button" onClick={() => setBackfillError(null)} className="ml-2 text-red-400">✕</button>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-800">Period grid</h2>
                 <div className="flex items-center gap-2">
@@ -772,13 +1039,39 @@ function PeriodsContent() {
                     onChange={(e) => setSelectedFY(e.target.value)}
                     className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
-                    {uniqueFYs.map((fy) => (
-                      <option key={fy} value={fy}>{formatFY(fy, fmt, orgSettings.fiscal_year_start_month, periods.filter((p) => p.fiscal_year === fy))}</option>
+                    {allFYLabels.map((fy) => (
+                      <option key={fy} value={fy}>
+                        {formatFY(fy, fmt, orgSettings.fiscal_year_start_month, periods.filter((p) => p.fiscal_year === fy))}
+                        {!uniqueFYs.includes(fy) ? " — no periods" : ""}
+                      </option>
                     ))}
                   </select>
                 </div>
               </div>
 
+              {/* When a year with no periods is selected */}
+              {fyPeriods.length === 0 && selectedFY && (
+                <div className="flex flex-col items-center gap-3 py-6 text-center">
+                  <i className="ti ti-calendar-off text-gray-300" style={{ fontSize: 32 }} />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">No periods for {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, [])}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {generating.size > 0 ? "Generating periods automatically…" : "Periods will be generated automatically, or click below to generate now."}
+                    </p>
+                  </div>
+                  {generating.size === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => generateYear(selectedFY)}
+                      className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Generate periods for {formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, [])}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {fyPeriods.length > 0 && (<>
               {hardCloseMsg && (
                 <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
                   {hardCloseMsg}
@@ -821,33 +1114,46 @@ function PeriodsContent() {
                             ) : "—"}
                           </td>
                           <td className="py-2 px-2 text-right">
-                            {p.status !== "HARD_CLOSED" && (
-                              <button
-                                type="button"
-                                onClick={() => canClose ? hardClosePeriod(p.id) : undefined}
-                                disabled={!canClose || hardClosing === p.id}
-                                title={!canClose ? "Close earlier periods first" : "Hard-close this period"}
-                                className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
-                                  canClose
-                                    ? "bg-gray-800 text-white hover:bg-gray-900"
-                                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                                }`}
-                              >
-                                {hardClosing === p.id ? "Closing…" : "Hard close"}
-                              </button>
-                            )}
-                            {p.status === "HARD_CLOSED" &&
-                              user?.is_super_admin &&
-                              fyState?.status !== "STATUTORY_CLOSED" && (
+                            <div className="flex items-center gap-1 justify-end">
+                              {p.status === "OPEN" && (
                                 <button
                                   type="button"
-                                  onClick={() => requestReopen(p.id)}
-                                  disabled={reopening === p.id}
-                                  className="px-2.5 py-1 rounded text-[11px] font-medium bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50 transition-colors"
+                                  onClick={() => softClosePeriod(p.id)}
+                                  disabled={softClosing === p.id}
+                                  title="Manually soft-close this period"
+                                  className="px-2 py-1 rounded text-[11px] font-medium bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50 transition-colors"
                                 >
-                                  {reopening === p.id ? "Requesting…" : "Request reopen"}
+                                  {softClosing === p.id ? "Closing…" : "Soft close"}
                                 </button>
                               )}
+                              {p.status !== "HARD_CLOSED" && (
+                                <button
+                                  type="button"
+                                  onClick={() => canClose ? hardClosePeriod(p.id) : undefined}
+                                  disabled={!canClose || hardClosing === p.id}
+                                  title={!canClose ? "Close earlier periods first" : "Hard-close this period"}
+                                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                                    canClose
+                                      ? "bg-gray-800 text-white hover:bg-gray-900"
+                                      : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {hardClosing === p.id ? "Closing…" : "Hard close"}
+                                </button>
+                              )}
+                              {p.status === "HARD_CLOSED" &&
+                                user?.is_super_admin &&
+                                fyState?.status !== "STATUTORY_CLOSED" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => requestReopen(p.id)}
+                                    disabled={reopening === p.id}
+                                    className="px-2.5 py-1 rounded text-[11px] font-medium bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50 transition-colors"
+                                  >
+                                    {reopening === p.id ? "Requesting…" : "Request reopen"}
+                                  </button>
+                                )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -855,6 +1161,7 @@ function PeriodsContent() {
                   </tbody>
                 </table>
               </div>
+              </>)}
             </section>
           )}
 
@@ -920,7 +1227,29 @@ function PeriodsContent() {
                             {fyState.management_closed_at
                               ? new Date(fyState.management_closed_at).toLocaleDateString()
                               : ""}
-                            . Grace window: {fyState.audit_grace_months} months.
+                            . Grace window:{" "}
+                            {editingAuditGrace !== null ? (
+                              <span className="inline-flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={36}
+                                  value={editingAuditGrace}
+                                  onChange={(e) => setEditingAuditGrace(+e.target.value)}
+                                  className="w-12 border border-amber-400 rounded px-1 py-0 text-xs text-gray-800"
+                                />
+                                <span className="text-amber-700">months</span>
+                                <button type="button" onClick={saveAuditGrace} disabled={savingAuditGrace} className="text-[10px] text-blue-600 hover:text-blue-800 disabled:opacity-50">
+                                  {savingAuditGrace ? "Saving…" : "Save"}
+                                </button>
+                                <button type="button" onClick={() => setEditingAuditGrace(null)} className="text-[10px] text-gray-500 hover:text-gray-700">Cancel</button>
+                              </span>
+                            ) : (
+                              <span>
+                                {fyState.audit_grace_months} months{" "}
+                                <button type="button" onClick={() => setEditingAuditGrace(fyState.audit_grace_months)} className="text-[10px] text-amber-600 underline hover:text-amber-800">Edit</button>
+                              </span>
+                            )}
                           </p>
                           {fyState.audit_grace_expires_at && (
                             <p className="text-xs text-amber-700 mt-0.5">
@@ -982,6 +1311,57 @@ function PeriodsContent() {
               )}
             </section>
           )}
+
+          {/* Audit log */}
+          <section className="border border-gray-200 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-800">Period audit log</h2>
+              <button type="button" onClick={loadAuditLog} disabled={loadingAuditLog} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">
+                {loadingAuditLog ? "Loading…" : "Refresh"}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Append-only record of REOPEN, MANAGEMENT_CLOSE, STATUTORY_CLOSE, HARD_CLOSE, and CONSULTANT_OVERRIDE events.
+              {selectedFY && <span> Filtered to <strong>{selectedFY}</strong>.</span>}
+            </p>
+            {auditLogs.length === 0 && !loadingAuditLog && (
+              <p className="text-xs text-gray-400 italic">No audit events yet{selectedFY ? ` for ${selectedFY}` : ""}.</p>
+            )}
+            {auditLogs.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      {["When", "Action", "FY", "Detail"].map((h) => (
+                        <th key={h} className="text-left py-2 px-2 font-medium text-gray-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((lg) => (
+                      <tr key={lg.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="py-2 px-2 text-gray-500 whitespace-nowrap">
+                          {new Date(lg.created_at).toLocaleString()}
+                        </td>
+                        <td className="py-2 px-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            lg.action === "CONSULTANT_OVERRIDE" ? "bg-purple-100 text-purple-700" :
+                            lg.action === "REOPEN" ? "bg-amber-100 text-amber-700" :
+                            lg.action === "STATUTORY_CLOSE" ? "bg-green-100 text-green-700" :
+                            "bg-gray-100 text-gray-600"
+                          }`}>
+                            {lg.action}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2 text-gray-500">{lg.fiscal_year ?? "—"}</td>
+                        <td className="py-2 px-2 text-gray-500 max-w-xs truncate" title={lg.detail ?? ""}>{lg.detail ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </div>
       )}
 
@@ -1033,31 +1413,83 @@ function PeriodsContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {graceRows.map((r) => (
-                    <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="py-2 px-2">{r.module}</td>
-                      <td className="py-2 px-2">
-                        {r.applies_to_type}
-                        {r.applies_to_role ? ` (${r.applies_to_role})` : ""}
-                        {r.applies_to_user_id ? ` (user)` : ""}
-                      </td>
-                      <td className="py-2 px-2">{r.period_type}</td>
-                      <td className="py-2 px-2 font-medium">{r.grace_value}</td>
-                      <td className="py-2 px-2">{r.grace_unit}</td>
-                      <td className="py-2 px-2">{r.is_default ? "Yes" : "—"}</td>
-                      <td className="py-2 px-2 text-right">
-                        {!r.is_default && (
-                          <button
-                            type="button"
-                            onClick={() => deleteGraceRow(r.id)}
-                            className="text-red-400 hover:text-red-600 text-[11px]"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {graceRows.map((r) => {
+                    const isEditingThis = editingDefaultGrace?.id === r.id;
+                    return (
+                      <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="py-2 px-2">{r.module}</td>
+                        <td className="py-2 px-2">
+                          {r.applies_to_type}
+                          {r.applies_to_role ? ` (${r.applies_to_role})` : ""}
+                          {r.applies_to_user_id ? ` (user)` : ""}
+                        </td>
+                        <td className="py-2 px-2">{r.period_type}</td>
+                        <td className="py-2 px-2 font-medium">
+                          {r.is_default && isEditingThis ? (
+                            <input
+                              type="number"
+                              min={0}
+                              value={editingDefaultGrace.grace_value}
+                              onChange={(e) => setEditingDefaultGrace((g) => g ? { ...g, grace_value: +e.target.value } : g)}
+                              className="w-16 border border-blue-300 rounded px-1 py-0.5 text-xs"
+                            />
+                          ) : r.grace_value}
+                        </td>
+                        <td className="py-2 px-2">
+                          {r.is_default && isEditingThis ? (
+                            <select
+                              value={editingDefaultGrace.grace_unit}
+                              onChange={(e) => setEditingDefaultGrace((g) => g ? { ...g, grace_unit: e.target.value } : g)}
+                              className="border border-blue-300 rounded px-1 py-0.5 text-xs"
+                            >
+                              <option value="workdays">Workdays</option>
+                              <option value="calendar_days">Calendar days</option>
+                            </select>
+                          ) : r.grace_unit}
+                        </td>
+                        <td className="py-2 px-2">{r.is_default ? "Yes" : "—"}</td>
+                        <td className="py-2 px-2 text-right">
+                          {r.is_default ? (
+                            isEditingThis ? (
+                              <span className="flex items-center gap-1 justify-end">
+                                <button
+                                  type="button"
+                                  onClick={saveDefaultGrace}
+                                  disabled={savingDefaultGrace}
+                                  className="text-blue-600 hover:text-blue-800 text-[11px] disabled:opacity-50"
+                                >
+                                  {savingDefaultGrace ? "Saving…" : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingDefaultGrace(null)}
+                                  className="text-gray-400 hover:text-gray-600 text-[11px]"
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setEditingDefaultGrace({ id: r.id, grace_value: r.grace_value, grace_unit: r.grace_unit })}
+                                className="text-blue-500 hover:text-blue-700 text-[11px]"
+                              >
+                                Edit
+                              </button>
+                            )
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => deleteGraceRow(r.id)}
+                              className="text-red-400 hover:text-red-600 text-[11px]"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1157,6 +1589,96 @@ function PeriodsContent() {
               </button>
             </div>
           </section>
+
+          {/* Future posting exceptions */}
+          <section className="border border-gray-200 rounded-lg p-4 space-y-4">
+            <h2 className="text-sm font-semibold text-gray-800">Future posting exceptions</h2>
+            <p className="text-xs text-gray-500">
+              Grant permission to post a journal entry into a future period. Requires consultant access or a
+              <code className="mx-0.5 px-1 bg-gray-100 rounded">future_exception</code> grace row.
+            </p>
+
+            {futureExError && (
+              <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                {futureExError}
+                <button type="button" onClick={() => setFutureExError(null)} className="ml-2 text-red-400">✕</button>
+              </div>
+            )}
+
+            {/* Create form */}
+            <div className="border border-dashed border-gray-300 rounded-md p-3 space-y-3">
+              <p className="text-xs font-medium text-gray-600">New exception</p>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Target date</label>
+                  <input
+                    type="date"
+                    value={newFutureEx.target_date}
+                    onChange={(e) => setNewFutureEx((f) => ({ ...f, target_date: e.target.value }))}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">Module</label>
+                  <select
+                    value={newFutureEx.module}
+                    onChange={(e) => setNewFutureEx((f) => ({ ...f, module: e.target.value }))}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                  >
+                    {["expense", "manual_journal", "future_exception", "default"].map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-span-3">
+                  <label className="block text-[11px] text-gray-500 mb-1">Reason</label>
+                  <input
+                    type="text"
+                    placeholder="Reason for future-dated posting"
+                    value={newFutureEx.reason}
+                    onChange={(e) => setNewFutureEx((f) => ({ ...f, reason: e.target.value }))}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={addFutureException}
+                disabled={addingFutureEx || !newFutureEx.target_date || !newFutureEx.reason.trim()}
+                className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50"
+              >
+                {addingFutureEx ? "Creating…" : "+ Create exception"}
+              </button>
+            </div>
+
+            {/* Exception list */}
+            {futureExceptions.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      {["Target date", "Module", "Reason", "Created"].map((h) => (
+                        <th key={h} className="text-left py-2 px-2 font-medium text-gray-500">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {futureExceptions.map((ex) => (
+                      <tr key={ex.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="py-2 px-2 font-medium">{ex.target_date}</td>
+                        <td className="py-2 px-2">{ex.module}</td>
+                        <td className="py-2 px-2 text-gray-500 max-w-xs truncate" title={ex.reason}>{ex.reason}</td>
+                        <td className="py-2 px-2 text-gray-400 whitespace-nowrap">{new Date(ex.created_at).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {futureExceptions.length === 0 && (
+              <p className="text-xs text-gray-400 italic">No exceptions yet.</p>
+            )}
+          </section>
         </div>
       )}
 
@@ -1240,7 +1762,7 @@ function PeriodsContent() {
             <h2 className="text-sm font-semibold text-gray-800">Per-period sign-off</h2>
             <p className="text-xs text-gray-500">
               Select a period to prepare and approve applicable checklist items.
-              Preparer ≠ approver is enforced server-side.
+              Preparer ≠ approver is enforced server-side (super admins may self-approve with audit log).
             </p>
 
             <div className="flex items-center gap-2 max-w-xs">
@@ -1267,13 +1789,18 @@ function PeriodsContent() {
                 {checklistEntries.map((entry) => (
                   <div
                     key={entry.checklist_item_id}
-                    className="flex items-center justify-between px-3 py-2 border border-gray-200 rounded"
+                         className="flex items-center justify-between px-3 py-2 border border-gray-200 rounded"
                   >
                     <div>
                       <p className="text-xs font-medium text-gray-800">{entry.label}</p>
                       <p className="text-[11px] text-gray-500">{entry.applies_to.replace("_", " ")}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      {entry.prepared_by && entry.prepared_by === entry.approved_by && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">
+                          SA override
+                        </span>
+                      )}
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
                           entry.status === "approved"
@@ -1299,7 +1826,7 @@ function PeriodsContent() {
                         <button
                           type="button"
                           onClick={() => approveEntry(selectedPeriodId, entry.checklist_item_id)}
-                          disabled={entryAction === entry.checklist_item_id + ":approve"}
+                                                 disabled={entryAction === entry.checklist_item_id + ":approve"}
                           className="px-2 py-0.5 text-[11px] bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
                         >
                           Approve

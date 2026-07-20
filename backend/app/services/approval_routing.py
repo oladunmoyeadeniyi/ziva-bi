@@ -7,6 +7,8 @@ that the submit endpoint converts into ExpenseApproval records.
 
 Routing modes:
     org_tree          — walk employee.line_manager_id upward; thresholds determine how far.
+    selective_tree    — same traversal as org_tree but only designation levels listed in
+                        policy.selected_designations participate; others are skipped.
     requestor_selects — caller provides approver_id; engine validates they are above in hierarchy.
     direct_to_hod     — route straight to the head of the submitter's org structure node.
 
@@ -418,6 +420,93 @@ async def compute_chain(
             delegated_from_id=delegated_from,
         ))
         level += 1
+
+    elif policy.routing_mode == "selective_tree":
+        # Walk the org-tree (same traversal as org_tree) but include only managers
+        # whose ApprovalRole.designation is in policy.selected_designations.
+        # selected_designations: [{designation: str, role: "approve"|"review"}, ...]
+        # Phase 1: all included designations are treated as full approvers.
+        submitter_emp = await _find_employee_by_user(submitter_user_id, tenant_id, db)
+        if not submitter_emp:
+            raise ApprovalRoutingError(
+                "The submitter does not have an employee record. "
+                "Assign this user to an employee profile before submitting."
+            )
+
+        sd = policy.selected_designations or []
+        included_designations: set[str] = {
+            d["designation"]
+            for d in sd
+            if isinstance(d, dict) and "designation" in d
+        }
+        if not included_designations:
+            raise ApprovalRoutingError(
+                "Selective org-tree routing is configured but no designation levels are selected. "
+                "Edit the approval policy to include at least one designation level."
+            )
+
+        managers = await _load_employee_with_managers(submitter_emp, max_depth=20, db=db)
+
+        for manager_emp in managers:
+            # Skip designations not in the selected set
+            mgr_desig = (
+                manager_emp.approval_role.designation
+                if manager_emp.approval_role
+                else None
+            )
+            if mgr_desig not in included_designations:
+                continue
+
+            manager_user = await _find_user_by_employee(manager_emp, db)
+
+            if not manager_user:
+                if policy.vacant_seat_behavior == "skip":
+                    continue
+                elif policy.vacant_seat_behavior == "hold":
+                    raise ApprovalChainHoldError(
+                        f"Approver seat '{manager_emp.first_name} {manager_emp.last_name}' "
+                        "is vacant. Submission is on hold until the seat is filled."
+                    )
+                else:  # escalate_to_fallback
+                    if not policy.fallback_approver_id:
+                        raise ApprovalRoutingError(
+                            "Vacant seat encountered but no fallback approver is configured. "
+                            "Set a fallback approver in the approval policy."
+                        )
+                    manager_user_id = policy.fallback_approver_id
+            else:
+                manager_user_id = manager_user.id
+
+            effective_id, delegated_from = await _resolve_delegation(
+                manager_user_id, tenant_id, today, db
+            )
+            role_label = (
+                manager_emp.approval_role.name
+                if manager_emp.approval_role
+                else f"{manager_emp.first_name} {manager_emp.last_name}"
+            )
+            chain.append(ChainStep(
+                level=level,
+                approver_user_id=effective_id,
+                role_label=role_label,
+                chain_type="management",
+                delegated_from_id=delegated_from,
+            ))
+            level += 1
+
+            # Ceiling role check
+            if (
+                policy.ceiling_role_id
+                and manager_emp.approval_role
+                and manager_emp.approval_role.id == policy.ceiling_role_id
+            ):
+                break
+
+            # Threshold check (same logic as org_tree)
+            if manager_emp.approval_role:
+                role_max = thresholds.get(manager_emp.approval_role.id)
+                if role_max is None or total_amount <= role_max:
+                    break
 
     else:
         raise ApprovalRoutingError(f"Unknown routing_mode: '{policy.routing_mode}'.")

@@ -21,6 +21,24 @@ Read docs/PENDING_COMMIT.md
 ```
 This contains: intent summary, files changed, what to verify, and the suggested commit message.
 
+
+### 1b. Verify docs are updated before committing
+
+Read both:
+```
+Read docs/MASTER_CONTEXT.md     (§5 Completed Milestones, §9 Next Milestone, footer)
+Read docs/PROJECT_STATE.md      (header git commit/migration head, §2 schema, §4 endpoints, §5 page map, §6 feature status, §7 environment facts)
+```
+
+Check whether they already reflect the work in PENDING_COMMIT.md:
+- If they **do** → proceed to Step 2.
+- If they **do not** → **block the commit**. Write `docs/CC_RESULT.md` with status `BLOCKED — docs not updated`. Do NOT commit until Cowork updates the docs.
+
+In CC_RESULT.md (both PASSED and FAILED), always include a **"Docs review"** section:
+- Whether MASTER_CONTEXT.md and PROJECT_STATE.md were up to date before this commit
+- Any inaccuracies spotted in the docs vs the actual code (wrong endpoint paths, stale migration heads, missing schema columns, etc.)
+- Any CC architectural notes from this review that Cowork should incorporate into the docs
+
 ### 2. Check for unexpected file changes
 Run:
 ```bash

@@ -277,7 +277,8 @@ class EmployeeUploadResult(BaseModel):
     imported: int
     updated: int = 0
     skipped: int
-    errors: list[dict]  # [{row, reason}]
+    errors: list[dict]   # [{row, reason}] — rows that were NOT imported
+    warnings: list[dict] = []  # [{row, reason}] — rows that WERE imported but had auto-corrections
     head_assignments: int = 0  # CostCenterConfig rows upserted via head-of-cc column
 
 
