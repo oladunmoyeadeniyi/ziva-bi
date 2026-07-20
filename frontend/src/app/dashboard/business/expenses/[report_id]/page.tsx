@@ -19,6 +19,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { formatMoney } from "@/lib/utils";
 import PageContainer from "@/components/PageContainer";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/Banner";
@@ -115,10 +116,6 @@ interface ApprovalRecord {
   is_advisory?: boolean;
 }
 
-function formatNGN(amount: string | number): string {
-  const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  return "₦" + num.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";
   return new Date(dateStr).toLocaleDateString("en-GB");
@@ -737,7 +734,7 @@ export default function ExpenseDetailPage() {
                     <td className="px-3 py-2 text-gray-600">{line.invoice_number ?? "—"}</td>
                     <td className="px-3 py-2 text-gray-900">{line.description}</td>
                     <td className="px-3 py-2 text-gray-900 font-semibold text-right whitespace-nowrap">
-                      {formatNGN(line.amount)}
+                      {formatMoney(line.amount)}
                     </td>
                   </tr>
                 ))}
@@ -749,7 +746,7 @@ export default function ExpenseDetailPage() {
                     Grand Total
                   </td>
                   <td className="px-3 py-3 text-right text-base font-bold text-gray-900 whitespace-nowrap">
-                    {formatNGN(report.total_amount)}
+                    {formatMoney(report.total_amount)}
                   </td>
                 </tr>
               </tfoot>

@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { formatMoney } from "@/lib/utils";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
@@ -33,10 +34,6 @@ interface ExpenseReport {
   rejection_comment: string | null;
 }
 
-function formatNGN(amount: string | number): string {
-  const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  return "₦" + num.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -278,7 +275,7 @@ function ExpensesListContent() {
                     <StatusBadge status={report.status} />
                   </td>
                   <td className="px-5 py-3 text-sm font-semibold text-gray-900 text-right whitespace-nowrap">
-                    {formatNGN(report.total_amount)}
+                    {formatMoney(report.total_amount)}
                   </td>
                   <td className="px-5 py-3 text-right">
                     <div className="inline-flex items-center gap-3">

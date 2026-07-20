@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { formatMoney } from "@/lib/utils";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Banner } from "@/components/Banner";
@@ -36,10 +37,6 @@ interface ApprovalQueueItem {
 
 type Tab = "pending" | "rejected";
 
-function formatNGN(amount: string): string {
-  const num = parseFloat(amount);
-  return "₦" + num.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-GB");
@@ -174,7 +171,7 @@ function ApprovalsContent() {
                     {formatDate(item.report_date)}
                   </td>
                   <td className="px-5 py-3 text-sm font-semibold text-gray-900 text-right whitespace-nowrap">
-                    {formatNGN(item.total_amount)}
+                    {formatMoney(item.total_amount)}
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-1.5 flex-wrap">

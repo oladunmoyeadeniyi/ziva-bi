@@ -244,6 +244,9 @@ class ApprovalPolicy(Base):
     )
     module: Mapped[str] = mapped_column(String(50), nullable=False)
     routing_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="org_tree")
+    # Designation-based ceiling (replaces ceiling_role_id FK approach)
+    ceiling_designation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Keep ceiling_role_id for backward compat (not used by routing service)
     ceiling_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("approval_roles.id", ondelete="SET NULL"),
@@ -257,6 +260,11 @@ class ApprovalPolicy(Base):
     )
     requires_finance_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     finance_levels: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Designation-based finance levels (replaces finance_l[1-3]_role_id FK approach)
+    finance_l1_designation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    finance_l2_designation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    finance_l3_designation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Kept for backward compat (not used by routing service)
     finance_l1_role_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("approval_roles.id", ondelete="SET NULL"),
@@ -311,15 +319,15 @@ class ApprovalPolicy(Base):
 
 class ApprovalRoleThreshold(Base):
     """
-    Per-policy amount cap for each approval role, used during org_tree traversal.
+    Per-policy amount cap per designation level, used during org_tree traversal.
 
-    max_amount: the maximum report total this role can be the final approver for.
-      None means no limit -- this role is always the ceiling for the chain.
+    max_amount: the maximum report total this designation can be the final approver for.
+      None means no limit -- this designation is always the ceiling for the chain.
 
-    During traversal: if the current manager's approval role has max_amount >= report total
+    During traversal: if the current manager's designation has max_amount >= report total
     (or max_amount is None), they are the last management approver. Otherwise, escalate up.
 
-    UNIQUE on (policy_id, approval_role_id).
+    UNIQUE on (policy_id, designation).
     """
 
     __tablename__ = "approval_role_thresholds"
@@ -333,21 +341,14 @@ class ApprovalRoleThreshold(Base):
         nullable=False,
         index=True,
     )
-    approval_role_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("approval_roles.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    designation: Mapped[str] = mapped_column(String(50), nullable=False)
     max_amount: Mapped[Optional[Decimal]] = mapped_column(NUMERIC(15, 2), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("policy_id", "approval_role_id", name="uq_threshold_policy_role"),
+        UniqueConstraint("policy_id", "designation", name="uq_threshold_policy_desig"),
     )
 
     policy: Mapped["ApprovalPolicy"] = relationship("ApprovalPolicy", back_populates="thresholds")
-    role: Mapped["ApprovalRole"] = relationship(
-        "ApprovalRole", foreign_keys=[approval_role_id]
-    )
 
 
 class ApprovalDelegation(Base):
@@ -579,4 +580,7 @@ class FinanceReviewStep(Base):
 
     policy: Mapped["ApprovalPolicy"] = relationship(
         "ApprovalPolicy", back_populates="finance_steps",
+    )
+    assigned_employee: Mapped[Optional["Employee"]] = relationship(  # type: ignore[name-defined]
+        "Employee", foreign_keys=[assigned_employee_id],
     )

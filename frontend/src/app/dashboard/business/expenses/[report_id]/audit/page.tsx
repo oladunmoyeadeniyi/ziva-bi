@@ -13,6 +13,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { formatMoney } from "@/lib/utils";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Banner } from "@/components/Banner";
@@ -66,7 +67,7 @@ function EventDetail({ entry }: { entry: AuditLogEntry }) {
             </p>
           )}
           <p className="text-xs text-gray-500">
-            Total: ₦{parseFloat(m.total_amount as string).toLocaleString("en-NG", { minimumFractionDigits: 2 })}
+            Total: {formatMoney(m.total_amount as string)}
           </p>
         </div>
       );

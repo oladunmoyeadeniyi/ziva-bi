@@ -31,6 +31,7 @@ import SplitLinePanel, {
   type SplitLineState,
 } from "@/components/expenses/SplitLinePanel";
 import { Banner } from "@/components/Banner";
+import { fmtCommaInput, stripCommas, formatMoney } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -267,27 +268,13 @@ function calcTotal(lines: LineState[]) {
 }
 
 function fmtTotal(lines: LineState[]) {
-  return "₦" + calcTotal(lines).toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatMoney(calcTotal(lines));
 }
 
 function fmtBytes(b: number) {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** Format a raw numeric string with comma separators for display. */
-function fmtCommaInput(val: string): string {
-  if (!val) return "";
-  const clean = val.replace(/[^0-9.]/g, "");
-  const [intPart, decPart] = clean.split(".");
-  const formatted = (intPart || "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return decPart !== undefined ? `${formatted}.${decPart}` : formatted;
-}
-
-/** Strip commas from a formatted amount string before storing. */
-function stripCommas(v: string): string {
-  return v.replace(/,/g, "");
 }
 
 function FileIcon({ mime }: { mime: string }) {
@@ -1057,7 +1044,7 @@ export default function EditExpensePage() {
 
                   {/* Amount */}
                   <span className="text-sm font-semibold text-gray-700 shrink-0">
-                    {line.amount ? `₦${(parseFloat(line.amount) || 0).toLocaleString("en-NG", { minimumFractionDigits: 2 })}` : "—"}
+                    {line.amount ? formatMoney(line.amount) : "—"}
                   </span>
 
                   {/* Fix 3: Dimension value pills (hidden on mobile to keep row compact) */}

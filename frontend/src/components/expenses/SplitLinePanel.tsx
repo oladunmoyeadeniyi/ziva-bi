@@ -12,17 +12,7 @@
  * should equal parentAmount. The parent amount field never changes when splits are added.
  */
 
-function fmtCommaInput(val: string): string {
-  if (!val) return "";
-  const clean = val.replace(/[^0-9.]/g, "");
-  const [intPart, decPart] = clean.split(".");
-  const formatted = (intPart || "").replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return decPart !== undefined ? `${formatted}.${decPart}` : formatted;
-}
-
-function stripCommas(v: string): string {
-  return v.replace(/,/g, "");
-}
+import { fmtCommaInput, stripCommas } from "@/lib/utils";
 
 export interface SplitLineState {
   localId: string;

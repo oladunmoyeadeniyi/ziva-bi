@@ -859,6 +859,28 @@ Extended the approval-matrix system with three major capabilities:
 
 ---
 
+### Designation-based approval policy + Number formatting consolidation (~2026-07-20, migration `s1t2u3v4w5x6`)
+
+**1. Designation-based approval policy (fixes "Field required; Field required; Field required" on approval-matrix save):**
+- Root cause: the approval-matrix frontend (redesigned in M112) sends `designation` strings per threshold row and per ceiling/finance-level config. The backend schema still required `approval_role_id` UUIDs — Pydantic raised "Field required" × threshold count.
+- **Migration `s1t2u3v4w5x6`** — adds `ceiling_designation`, `finance_l1/l2/l3_designation` (VARCHAR 50, nullable) to `approval_policies`. Drops `uq_threshold_policy_role` + `approval_role_id` from `approval_role_thresholds`. Adds `designation VARCHAR(50) NOT NULL DEFAULT ''` + `uq_threshold_policy_desig (policy_id, designation)`.
+- `ApprovalRoleThreshold` model: `approval_role_id` FK + `role` relationship removed; `designation` field + new unique constraint added.
+- `ApprovalPolicy` model: four `*_designation` columns added. Old `ceiling_role_id`/`finance_l[1-3]_role_id` kept on model only (soft-deprecated; not used by routing service; avoids extra migration churn now).
+- All schemas (`ApprovalRoleThresholdIn`, `ApprovalPolicyCreate/Update/Response`): `approval_role_id` → `designation`; `requires_finance_review` default flipped to `False`.
+- Router: all role_id field references replaced with designation equivalents. Stale `selectinload` on deleted relationships removed.
+
+**2. Finance chain rewrite — now actually reads `FinanceReviewStep` records:**
+- The old routing service code used `policy.finance_l1_role_id`/`l2`/`l3` — dead fields completely disconnected from the step-builder UI. Steps saved by the step-builder (`FinanceReviewStep` table) were never read by `compute_chain()`.
+- Rewritten: queries `FinanceReviewStep` rows for the policy (ordered by level), resolves each step's assignee via two-tier hierarchy (`assigned_employee_id` first, `assigned_designation` fallback), handles vacant seat behavior (skip/hold/escalate_to_fallback). `FinanceReviewStep.assigned_employee` relationship added to model.
+
+**3. Number formatting consolidated into `utils.ts`:**
+- Four shared helpers added to `frontend/src/lib/utils.ts`: `fmtCommaInput` (comma display for amount inputs), `stripCommas` (strip before storing), `formatMoney` (₦ display, 2dp), `formatNumber` (plain comma-formatted number).
+- Local duplicate `formatNGN`/`fmtCommaInput`/`stripCommas` functions removed from 9 files across expenses/approvals pages and SplitLinePanel. All inline `toLocaleString` patterns replaced with `formatMoney`.
+
+**Key files:** `alembic/versions/s1t2u3v4w5x6_designation_based_policy.py` (new migration), `models/approvals.py`, `schemas/approvals.py`, `routers/approvals.py`, `services/approval_routing.py`, `frontend/src/lib/utils.ts` + 9 frontend pages/components.
+
+---
+
 ### Fix: Module activation guard + licensing separation + delete confirm hardening (pending commit, 2026-07-13)
 
 **1. `PATCH /api/setup/modules` guard: `_require_consultant` → `_require_admin`:**
@@ -1057,4 +1079,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-13 (module activation guard fix + licensing separation + delete confirm hardening; pending commit). Last pushed commit: `fb8d54b`. All migrations applied; run `alembic upgrade head` locally if not done. For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-20 (designation-based approval policy + finance chain FinanceReviewStep rewrite + number formatting consolidation; migration `s1t2u3v4w5x6`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*

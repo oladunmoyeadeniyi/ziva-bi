@@ -38,8 +38,10 @@ from app.models.auth import User, UserTenant
 from app.models.master_data import Employee
 from app.models.approvals import (
     ApprovalPolicy,
+    ApprovalRole,
     ApprovalRoleThreshold,
     ApprovalDelegation,
+    FinanceReviewStep,
 )
 
 
@@ -147,12 +149,12 @@ async def _resolve_delegation(
 
 async def _get_thresholds(
     policy_id: uuid.UUID, db: AsyncSession
-) -> dict[uuid.UUID, Optional[Decimal]]:
-    """Return {approval_role_id: max_amount} for all thresholds on this policy."""
+) -> dict[str, Optional[Decimal]]:
+    """Return {designation: max_amount} for all thresholds on this policy."""
     result = await db.execute(
         select(ApprovalRoleThreshold).where(ApprovalRoleThreshold.policy_id == policy_id)
     )
-    return {t.approval_role_id: t.max_amount for t in result.scalars().all()}
+    return {t.designation: t.max_amount for t in result.scalars().all()}
 
 
 async def _load_employee_with_managers(
@@ -308,21 +310,21 @@ async def compute_chain(
             ))
             level += 1
 
-            # Stop if this manager is the ceiling role
+            # Stop if this manager is at the ceiling designation
             if (
-                policy.ceiling_role_id
+                policy.ceiling_designation
                 and manager_emp.approval_role
-                and manager_emp.approval_role.id == policy.ceiling_role_id
+                and manager_emp.approval_role.designation == policy.ceiling_designation
             ):
                 break
 
-            # Stop if this role's threshold covers the amount (or no threshold = they are final)
-            if manager_emp.approval_role:
-                role_max = thresholds.get(manager_emp.approval_role.id)
-                # None max_amount means this role has no limit — they are ceiling
-                if role_max is None or total_amount <= role_max:
+            # Stop if this designation's threshold covers the amount (or no threshold = ceiling)
+            if manager_emp.approval_role and manager_emp.approval_role.designation:
+                desig_max = thresholds.get(manager_emp.approval_role.designation)
+                # None max_amount means this designation has no limit — they are ceiling
+                if desig_max is None or total_amount <= desig_max:
                     break
-            # else: no role assigned → no threshold → keep climbing
+            # else: no designation → no threshold → keep climbing
 
     elif policy.routing_mode == "requestor_selects":
         if not requestor_selected_approver_id:
@@ -504,100 +506,92 @@ async def compute_chain(
             ))
             level += 1
 
-            # Ceiling role check
+            # Ceiling designation check
             if (
-                policy.ceiling_role_id
+                policy.ceiling_designation
                 and manager_emp.approval_role
-                and manager_emp.approval_role.id == policy.ceiling_role_id
+                and manager_emp.approval_role.designation == policy.ceiling_designation
             ):
                 break
 
             # Threshold check (same logic as org_tree)
-            if manager_emp.approval_role:
-                role_max = thresholds.get(manager_emp.approval_role.id)
-                if role_max is None or total_amount <= role_max:
+            if manager_emp.approval_role and manager_emp.approval_role.designation:
+                desig_max = thresholds.get(manager_emp.approval_role.designation)
+                if desig_max is None or total_amount <= desig_max:
                     break
 
     else:
         raise ApprovalRoutingError(f"Unknown routing_mode: '{policy.routing_mode}'.")
 
-    # ── Finance review chain ──────────────────────────────────────────────────
+    # ── Finance review chain (FinanceReviewStep-based) ────────────────────────
 
-    if policy.requires_finance_review and policy.finance_levels > 0:
-        finance_role_ids = [
-            (policy.finance_l1_role_id, 1),
-            (policy.finance_l2_role_id, 2),
-            (policy.finance_l3_role_id, 3),
-        ]
-        for role_id, finance_level in finance_role_ids:
-            if finance_level > policy.finance_levels:
-                break
-            if not role_id:
+    if policy.requires_finance_review:
+        # Load explicitly-configured finance review steps for this policy
+        steps_result = await db.execute(
+            select(FinanceReviewStep)
+            .options(selectinload(FinanceReviewStep.assigned_employee))
+            .where(FinanceReviewStep.policy_id == policy.id)
+            .order_by(FinanceReviewStep.level.asc())
+        )
+        finance_steps_list = steps_result.scalars().all()
+
+        for fs in finance_steps_list:
+            # Skip if report total doesn't meet this step's min_amount threshold
+            if fs.min_amount is not None and total_amount <= fs.min_amount:
                 continue
 
-            # Apply finance-level thresholds
-            if finance_level == 2 and policy.finance_amount_threshold_l2 is not None:
-                if total_amount <= policy.finance_amount_threshold_l2:
-                    continue
-            if finance_level == 3 and policy.finance_amount_threshold_l3 is not None:
-                if total_amount <= policy.finance_amount_threshold_l3:
-                    continue
+            finance_user_id: Optional[uuid.UUID] = None
+            role_label = fs.label
 
-            # Find the user holding this finance role
-            # We look for employees with this approval_role_id in the tenant
-            result = await db.execute(
-                select(Employee)
-                .options(selectinload(Employee.approval_role))
-                .where(
-                    and_(
-                        Employee.tenant_id == tenant_id,
-                        Employee.approval_role_id == role_id,
-                        Employee.is_active == True,  # noqa: E712
+            if fs.assigned_employee_id:
+                # Named assignee: resolve to user
+                if fs.assigned_employee and fs.assigned_employee.is_active:
+                    u = await _find_user_by_employee(fs.assigned_employee, db)
+                    if u:
+                        finance_user_id = u.id
+
+            if not finance_user_id and fs.assigned_designation:
+                # Designation fallback: find first active employee with this designation
+                desig_result = await db.execute(
+                    select(Employee)
+                    .options(selectinload(Employee.approval_role))
+                    .join(Employee.approval_role)
+                    .where(
+                        and_(
+                            Employee.tenant_id == tenant_id,
+                            Employee.is_active == True,  # noqa: E712
+                            ApprovalRole.designation == fs.assigned_designation,
+                        )
                     )
+                    .limit(1)
                 )
-            )
-            role_holders = result.scalars().all()
+                desig_emp = desig_result.scalars().first()
+                if desig_emp:
+                    u = await _find_user_by_employee(desig_emp, db)
+                    if u:
+                        finance_user_id = u.id
 
-            if not role_holders:
+            if not finance_user_id:
+                if not fs.is_required:
+                    continue
                 if policy.vacant_seat_behavior == "skip":
                     continue
                 elif policy.vacant_seat_behavior == "hold":
                     raise ApprovalChainHoldError(
-                        f"Finance review step {finance_level} has no user assigned to the required role."
+                        f"Finance review step '{fs.label}' has no assigned user."
                     )
                 elif policy.vacant_seat_behavior == "escalate_to_fallback" and policy.fallback_approver_id:
                     finance_user_id = policy.fallback_approver_id
                     role_label = "Finance Reviewer"
                 else:
                     raise ApprovalRoutingError(
-                        f"Finance review role (level {finance_level}) has no user assigned."
+                        f"Finance review step '{fs.label}' has no assignee and no fallback."
                     )
-            else:
-                # If multiple users hold the role, take the first active one
-                role_user: Optional[User] = None
-                role_label = role_holders[0].approval_role.name if role_holders[0].approval_role else "Finance Reviewer"
-                for holder in role_holders:
-                    u = await _find_user_by_employee(holder, db)
-                    if u:
-                        role_user = u
-                        break
-                if not role_user:
-                    if policy.vacant_seat_behavior == "skip":
-                        continue
-                    elif policy.vacant_seat_behavior == "hold":
-                        raise ApprovalChainHoldError(f"Finance reviewer seat (level {finance_level}) is vacant.")
-                    elif policy.vacant_seat_behavior == "escalate_to_fallback" and policy.fallback_approver_id:
-                        finance_user_id = policy.fallback_approver_id
-                    else:
-                        raise ApprovalRoutingError(
-                            f"Finance reviewer (level {finance_level}) has no active user account."
-                        )
-                else:
-                    finance_user_id = role_user.id
 
             effective_id, delegated_from = await _resolve_delegation(
-                finance_user_id, tenant_id, today, db
+                finance_user_id, tenant_id, today, db  # type: ignore[arg-type]
             )
+
             chain.append(ChainStep(
                 level=level,
                 approver_user_id=effective_id,

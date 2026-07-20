@@ -1233,8 +1233,7 @@ async def list_policies(
     result = await db.execute(
         select(ApprovalPolicy)
         .options(
-            selectinload(ApprovalPolicy.ceiling_role),
-            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+            selectinload(ApprovalPolicy.thresholds),
         )
         .where(ApprovalPolicy.tenant_id == tenant_id)
         .order_by(ApprovalPolicy.module)
@@ -1261,8 +1260,7 @@ async def upsert_policy(
     existing_result = await db.execute(
         select(ApprovalPolicy)
         .options(
-            selectinload(ApprovalPolicy.ceiling_role),
-            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+            selectinload(ApprovalPolicy.thresholds),
         )
         .where(
             and_(ApprovalPolicy.tenant_id == tenant_id, ApprovalPolicy.module == data.module)
@@ -1276,14 +1274,14 @@ async def upsert_policy(
     if policy:
         policy.routing_mode = data.routing_mode
         policy.selected_designations = data.selected_designations
-        policy.ceiling_role_id = _to_uuid(data.ceiling_role_id)
+        policy.ceiling_designation = data.ceiling_designation
         policy.vacant_seat_behavior = data.vacant_seat_behavior
         policy.fallback_approver_id = _to_uuid(data.fallback_approver_id)
         policy.requires_finance_review = data.requires_finance_review
         policy.finance_levels = data.finance_levels
-        policy.finance_l1_role_id = _to_uuid(data.finance_l1_role_id)
-        policy.finance_l2_role_id = _to_uuid(data.finance_l2_role_id)
-        policy.finance_l3_role_id = _to_uuid(data.finance_l3_role_id)
+        policy.finance_l1_designation = data.finance_l1_designation
+        policy.finance_l2_designation = data.finance_l2_designation
+        policy.finance_l3_designation = data.finance_l3_designation
         policy.finance_amount_threshold_l2 = data.finance_amount_threshold_l2
         policy.finance_amount_threshold_l3 = data.finance_amount_threshold_l3
         policy.is_active = True
@@ -1300,14 +1298,14 @@ async def upsert_policy(
             module=data.module,
             routing_mode=data.routing_mode,
             selected_designations=data.selected_designations,
-            ceiling_role_id=_to_uuid(data.ceiling_role_id),
+            ceiling_designation=data.ceiling_designation,
             vacant_seat_behavior=data.vacant_seat_behavior,
             fallback_approver_id=_to_uuid(data.fallback_approver_id),
             requires_finance_review=data.requires_finance_review,
             finance_levels=data.finance_levels,
-            finance_l1_role_id=_to_uuid(data.finance_l1_role_id),
-            finance_l2_role_id=_to_uuid(data.finance_l2_role_id),
-            finance_l3_role_id=_to_uuid(data.finance_l3_role_id),
+            finance_l1_designation=data.finance_l1_designation,
+            finance_l2_designation=data.finance_l2_designation,
+            finance_l3_designation=data.finance_l3_designation,
             finance_amount_threshold_l2=data.finance_amount_threshold_l2,
             finance_amount_threshold_l3=data.finance_amount_threshold_l3,
         )
@@ -1317,7 +1315,7 @@ async def upsert_policy(
     for t in data.thresholds:
         db.add(ApprovalRoleThreshold(
             policy_id=policy.id,
-            approval_role_id=uuid.UUID(t.approval_role_id),
+            designation=t.designation,
             max_amount=t.max_amount,
         ))
 
@@ -1327,8 +1325,7 @@ async def upsert_policy(
     reloaded = (await db.execute(
         select(ApprovalPolicy)
         .options(
-            selectinload(ApprovalPolicy.ceiling_role),
-            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+            selectinload(ApprovalPolicy.thresholds),
         )
         .where(ApprovalPolicy.id == policy.id)
     )).scalar_one()
@@ -1352,8 +1349,7 @@ async def update_policy(
     policy = (await db.execute(
         select(ApprovalPolicy)
         .options(
-            selectinload(ApprovalPolicy.ceiling_role),
-            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+            selectinload(ApprovalPolicy.thresholds),
         )
         .where(and_(ApprovalPolicy.id == policy_id, ApprovalPolicy.tenant_id == tenant_id))
     )).scalar_one_or_none()
@@ -1364,8 +1360,8 @@ async def update_policy(
         policy.routing_mode = data.routing_mode
     if data.selected_designations is not None:
         policy.selected_designations = data.selected_designations
-    if data.ceiling_role_id is not None:
-        policy.ceiling_role_id = _to_uuid(data.ceiling_role_id)
+    if data.ceiling_designation is not None:
+        policy.ceiling_designation = data.ceiling_designation
     if data.vacant_seat_behavior is not None:
         policy.vacant_seat_behavior = data.vacant_seat_behavior
     if data.fallback_approver_id is not None:
@@ -1374,12 +1370,12 @@ async def update_policy(
         policy.requires_finance_review = data.requires_finance_review
     if data.finance_levels is not None:
         policy.finance_levels = data.finance_levels
-    if data.finance_l1_role_id is not None:
-        policy.finance_l1_role_id = _to_uuid(data.finance_l1_role_id)
-    if data.finance_l2_role_id is not None:
-        policy.finance_l2_role_id = _to_uuid(data.finance_l2_role_id)
-    if data.finance_l3_role_id is not None:
-        policy.finance_l3_role_id = _to_uuid(data.finance_l3_role_id)
+    if data.finance_l1_designation is not None:
+        policy.finance_l1_designation = data.finance_l1_designation
+    if data.finance_l2_designation is not None:
+        policy.finance_l2_designation = data.finance_l2_designation
+    if data.finance_l3_designation is not None:
+        policy.finance_l3_designation = data.finance_l3_designation
     if data.finance_amount_threshold_l2 is not None:
         policy.finance_amount_threshold_l2 = data.finance_amount_threshold_l2
     if data.finance_amount_threshold_l3 is not None:
@@ -1397,7 +1393,7 @@ async def update_policy(
         for t in data.thresholds:
             db.add(ApprovalRoleThreshold(
                 policy_id=policy.id,
-                approval_role_id=uuid.UUID(t.approval_role_id),
+                designation=t.designation,
                 max_amount=t.max_amount,
             ))
 
@@ -1406,8 +1402,7 @@ async def update_policy(
     reloaded = (await db.execute(
         select(ApprovalPolicy)
         .options(
-            selectinload(ApprovalPolicy.ceiling_role),
-            selectinload(ApprovalPolicy.thresholds).selectinload(ApprovalRoleThreshold.role),
+            selectinload(ApprovalPolicy.thresholds),
         )
         .where(ApprovalPolicy.id == policy.id)
     )).scalar_one()

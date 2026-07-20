@@ -19,6 +19,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { fmtCommaInput, stripCommas } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -308,7 +309,7 @@ export default function ApprovalWorkflowsPage() {
     setThresholds(prev => [...prev, { designation: desig, max_amount: "" }]);
   };
   const updateThresholdAmount = (desig: string, amount: string) =>
-    setThresholds(prev => prev.map(t => t.designation === desig ? { ...t, max_amount: amount } : t));
+    setThresholds(prev => prev.map(t => t.designation === desig ? { ...t, max_amount: stripCommas(amount) } : t));
   const removeThreshold = (desig: string) =>
     setThresholds(prev => prev.filter(t => t.designation !== desig));
 
@@ -646,7 +647,7 @@ export default function ApprovalWorkflowsPage() {
                               {thresholds.map(t => (
                                 <div key={t.designation} className="flex items-center gap-2">
                                   <DesigBadge value={t.designation} />
-                                  <input type="number" value={t.max_amount}
+                                  <input type="text" inputMode="decimal" value={fmtCommaInput(t.max_amount)}
                                     onChange={e => updateThresholdAmount(t.designation, e.target.value)}
                                     placeholder="Max amount"
                                     className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -850,7 +851,7 @@ export default function ApprovalWorkflowsPage() {
                                           {/* Min amount */}
                                           <div>
                                             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Min amount to trigger (optional)</p>
-                                            <input type="number" value={step.min_amount} onChange={e => updateStep(step._key, { min_amount: e.target.value })}
+                                            <input type="text" inputMode="decimal" value={fmtCommaInput(step.min_amount)} onChange={e => updateStep(step._key, { min_amount: stripCommas(e.target.value) })}
                                               placeholder="Leave blank = always run"
                                               className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                           </div>

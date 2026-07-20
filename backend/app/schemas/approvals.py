@@ -139,29 +139,29 @@ class EntityOption(BaseModel):
 # ── Approval Policy ───────────────────────────────────────────────────────────
 
 class ApprovalRoleThresholdIn(BaseModel):
-    """One role threshold within a policy upsert payload."""
-    approval_role_id: str
-    max_amount: Decimal | None = None  # None = no limit / ceiling role
+    """One designation threshold within a policy upsert payload."""
+    designation: str           # e.g. "manager", "head_of_department"
+    max_amount: Decimal | None = None  # None = no limit / ceiling designation
 
 
 class ApprovalPolicyCreate(BaseModel):
     """Create or replace the approval policy for a module."""
     module: str
     routing_mode: str = "org_tree"
-    # org_tree          — full org-chart chain up to ceiling role
+    # org_tree          — full org-chart chain up to ceiling designation
     # requestor_selects — requestor picks the approver at submission time
     # direct_to_hod     — goes straight to the head of department
     # selective_tree    — org-chart chain but tenant chooses which designation
     #                     levels participate; stored in selected_designations
     selected_designations: list | None = None
-    ceiling_role_id: str | None = None
+    ceiling_designation: str | None = None   # e.g. "head_of_department"
     vacant_seat_behavior: str = "skip"  # skip | hold | escalate_to_fallback
     fallback_approver_id: str | None = None
-    requires_finance_review: bool = True
+    requires_finance_review: bool = False
     finance_levels: int = 0
-    finance_l1_role_id: str | None = None
-    finance_l2_role_id: str | None = None
-    finance_l3_role_id: str | None = None
+    finance_l1_designation: str | None = None
+    finance_l2_designation: str | None = None
+    finance_l3_designation: str | None = None
     finance_amount_threshold_l2: Decimal | None = None
     finance_amount_threshold_l3: Decimal | None = None
     thresholds: list[ApprovalRoleThresholdIn] = []
@@ -193,14 +193,14 @@ class ApprovalPolicyUpdate(BaseModel):
     """Partial update for an approval policy."""
     routing_mode: str | None = None
     selected_designations: list | None = None   # used when routing_mode = selective_tree
-    ceiling_role_id: str | None = None
+    ceiling_designation: str | None = None
     vacant_seat_behavior: str | None = None
     fallback_approver_id: str | None = None
     requires_finance_review: bool | None = None
     finance_levels: int | None = None
-    finance_l1_role_id: str | None = None
-    finance_l2_role_id: str | None = None
-    finance_l3_role_id: str | None = None
+    finance_l1_designation: str | None = None
+    finance_l2_designation: str | None = None
+    finance_l3_designation: str | None = None
     finance_amount_threshold_l2: Decimal | None = None
     finance_amount_threshold_l3: Decimal | None = None
     is_active: bool | None = None
@@ -210,8 +210,7 @@ class ApprovalPolicyUpdate(BaseModel):
 class ApprovalRoleThresholdResponse(BaseModel):
     """One threshold row as returned by the API."""
     id: str
-    approval_role_id: str
-    role_name: str
+    designation: str
     max_amount: Decimal | None
 
     @classmethod
@@ -220,8 +219,7 @@ class ApprovalRoleThresholdResponse(BaseModel):
         assert isinstance(t, ApprovalRoleThreshold)
         return cls(
             id=str(t.id),
-            approval_role_id=str(t.approval_role_id),
-            role_name=t.role.name if t.role else "",
+            designation=t.designation,
             max_amount=t.max_amount,
         )
 
@@ -233,15 +231,14 @@ class ApprovalPolicyResponse(BaseModel):
     module: str
     routing_mode: str
     selected_designations: list | None = None
-    ceiling_role_id: str | None
-    ceiling_role_name: str | None
+    ceiling_designation: str | None
     vacant_seat_behavior: str
     fallback_approver_id: str | None
     requires_finance_review: bool
     finance_levels: int
-    finance_l1_role_id: str | None
-    finance_l2_role_id: str | None
-    finance_l3_role_id: str | None
+    finance_l1_designation: str | None
+    finance_l2_designation: str | None
+    finance_l3_designation: str | None
     finance_amount_threshold_l2: Decimal | None
     finance_amount_threshold_l3: Decimal | None
     is_active: bool
@@ -259,15 +256,14 @@ class ApprovalPolicyResponse(BaseModel):
             module=p.module,
             routing_mode=p.routing_mode,
             selected_designations=p.selected_designations,
-            ceiling_role_id=str(p.ceiling_role_id) if p.ceiling_role_id else None,
-            ceiling_role_name=p.ceiling_role.name if p.ceiling_role else None,
+            ceiling_designation=p.ceiling_designation,
             vacant_seat_behavior=p.vacant_seat_behavior,
             fallback_approver_id=str(p.fallback_approver_id) if p.fallback_approver_id else None,
             requires_finance_review=p.requires_finance_review,
             finance_levels=p.finance_levels,
-            finance_l1_role_id=str(p.finance_l1_role_id) if p.finance_l1_role_id else None,
-            finance_l2_role_id=str(p.finance_l2_role_id) if p.finance_l2_role_id else None,
-            finance_l3_role_id=str(p.finance_l3_role_id) if p.finance_l3_role_id else None,
+            finance_l1_designation=p.finance_l1_designation,
+            finance_l2_designation=p.finance_l2_designation,
+            finance_l3_designation=p.finance_l3_designation,
             finance_amount_threshold_l2=p.finance_amount_threshold_l2,
             finance_amount_threshold_l3=p.finance_amount_threshold_l3,
             is_active=p.is_active,

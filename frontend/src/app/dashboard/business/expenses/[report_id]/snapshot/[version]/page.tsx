@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
+import { formatMoney } from "@/lib/utils";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Banner } from "@/components/Banner";
@@ -46,9 +47,6 @@ interface SnapshotResponse {
   created_at: string;
 }
 
-function formatNGN(amount: string): string {
-  return "₦" + parseFloat(amount).toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";
   return new Date(dateStr).toLocaleDateString("en-GB");
@@ -130,7 +128,7 @@ export default function SnapshotPage() {
           </div>
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</p>
-            <p className="mt-0.5 text-sm font-bold text-gray-900">{formatNGN(data.total_amount)}</p>
+            <p className="mt-0.5 text-sm font-bold text-gray-900">{formatMoney(data.total_amount)}</p>
           </div>
         </div>
 
@@ -159,7 +157,7 @@ export default function SnapshotPage() {
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{formatDate(line.invoice_date)}</td>
                   <td className="px-3 py-2 text-gray-600">{line.invoice_number ?? "—"}</td>
                   <td className="px-3 py-2 text-gray-900">{line.description}</td>
-                  <td className="px-3 py-2 text-gray-900 font-semibold text-right whitespace-nowrap">{formatNGN(line.amount)}</td>
+                  <td className="px-3 py-2 text-gray-900 font-semibold text-right whitespace-nowrap">{formatMoney(line.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -167,7 +165,7 @@ export default function SnapshotPage() {
               <tr>
                 <td colSpan={9} className="px-3 py-3 text-right text-sm font-bold text-gray-800 uppercase tracking-wider">Grand Total</td>
                 <td className="px-3 py-3 text-right text-base font-bold text-gray-900 whitespace-nowrap">
-                  {"₦" + grandTotal.toLocaleString("en-NG", { minimumFractionDigits: 2 })}
+                  {formatMoney(grandTotal)}
                 </td>
               </tr>
             </tfoot>
