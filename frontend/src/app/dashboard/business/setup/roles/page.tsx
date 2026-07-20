@@ -139,16 +139,21 @@ function RolesContent() {
           (r.designation === "head_of_department" || r.designation === "head_of_entity")
         );
         if (hodRoles.length > 0) {
-          await Promise.all(hodRoles.map(r =>
+          // Use allSettled so a transient per-item failure doesn't silently corrupt state.
+          // Only roles whose PATCH succeeded are reflected in state.
+          const results = await Promise.allSettled(hodRoles.map(r =>
             apiFetch(`/api/approvals/roles/${r.id}/permission-tier`, {
               method: "PATCH", token: accessToken!, body: { permission_tier: "functional_admin" },
-            }).catch(() => null)
+            })
           ));
-          // Update state optimistically — no second GET needed, avoids race-condition error.
-          const hodIds = new Set(hodRoles.map(r => r.id));
-          setOrgRoles(prev => prev.map(r =>
-            hodIds.has(r.id) ? { ...r, permission_tier: "functional_admin" } : r
-          ));
+          const successfulIds = new Set(
+            hodRoles.filter((_, i) => results[i].status === "fulfilled").map(r => r.id)
+          );
+          if (successfulIds.size > 0) {
+            setOrgRoles(prev => prev.map(r =>
+              successfulIds.has(r.id) ? { ...r, permission_tier: "functional_admin" } : r
+            ));
+          }
         }
       })
       .catch(e => setError(e.message))

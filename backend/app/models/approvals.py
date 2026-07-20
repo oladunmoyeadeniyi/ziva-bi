@@ -447,6 +447,9 @@ class ExpenseApproval(Base):
     # Chain metadata (nullable for backward compat with pre-engine records)
     chain_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     role_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Advisory flag: True for "Reviews only" steps in selective_tree mode.
+    # Advisory steps are non-blocking — the chain advances without waiting for them.
+    is_advisory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # For REFERRED_BACK records: whether the requestor can see the referral comment

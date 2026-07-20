@@ -448,6 +448,7 @@ class ApprovalQueueItem(BaseModel):
     level_label: str
     created_at: datetime
     rejection_comment: str | None = None
+    is_advisory: bool = False  # True for "Reviews only" steps — UI shows advisory badge
 
 
 # ── Approval Record ───────────────────────────────────────────────────────────
@@ -466,6 +467,7 @@ class ApprovalRecordResponse(BaseModel):
     response_comment: str | None
     actioned_at: datetime | None
     created_at: datetime
+    is_advisory: bool = False  # True for "Reviews only" steps — UI shows advisory badge
 
 
 # ── Approve / Reject ──────────────────────────────────────────────────────────

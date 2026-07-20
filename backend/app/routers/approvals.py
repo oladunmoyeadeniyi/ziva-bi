@@ -43,7 +43,7 @@ from email.mime.text import MIMEText
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -595,9 +595,13 @@ async def clear_all_approval_roles(
     block_if_readonly_impersonation(current_user)
     if not current_user.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant context required.")
-    await db.execute(
+    delete_result = await db.execute(
         delete(ApprovalRole).where(ApprovalRole.tenant_id == current_user.tenant_id)
     )
+    await _write_audit_log(db, "APPROVAL_ROLES_CLEARED", current_user.user_id, current_user.tenant_id, {
+        "deleted_count": delete_result.rowcount,
+        "note": "All approval roles for tenant deleted in a single transaction.",
+    })
     await db.commit()
 
 
@@ -1783,6 +1787,7 @@ async def submit_with_approvers(
                 delegated_from_id=step.delegated_from_id,
                 chain_type=step.chain_type,
                 role_label=step.role_label,
+                is_advisory=step.is_advisory,
                 status="PENDING",
             ))
 
@@ -1807,20 +1812,21 @@ async def submit_with_approvers(
             "snapshot_version": snapshot_version,
         })
 
-        # Notify Level 1 approver
+        # Notify Level 1 approver (advisory or blocking)
         l1 = chain_steps[0]
         approver_result = await db.execute(select(User).where(User.id == l1.approver_user_id))
         approver = approver_result.scalar_one_or_none()
         employee_result = await db.execute(select(User).where(User.id == report.employee_id))
         employee = employee_result.scalar_one_or_none()
         if approver and employee:
+            role_label_l1 = (l1.role_label + " (Advisory)") if l1.is_advisory else l1.role_label
             _send_approver_notification_email(
                 to_email=approver.email,
                 report_number=report.report_number,
                 report_date=str(report.report_date),
                 total_amount=report.total_amount,
                 employee_name=employee.full_name,
-                role_label=l1.role_label,
+                role_label=role_label_l1,
             )
 
         return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
@@ -1948,7 +1954,12 @@ async def get_approval_queue(
         .where(
             ExpenseApproval.approver_id == current_user.user_id,
             ExpenseApproval.status == "PENDING",
-            ExpenseReport.current_approval_level == ExpenseApproval.level,
+            # Blocking steps: only when it is the active level.
+            # Advisory steps: always show in queue (they are non-blocking and can be actioned any time).
+            or_(
+                ExpenseReport.current_approval_level == ExpenseApproval.level,
+                ExpenseApproval.is_advisory == True,  # noqa: E712
+            ),
             ExpenseApproval.tenant_id == tenant_id,
         )
         .order_by(ExpenseApproval.created_at.asc())
@@ -1965,8 +1976,12 @@ async def get_approval_queue(
             report_date=report.report_date,
             total_amount=report.total_amount,
             level=approval.level,
-            level_label=_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}",
+            level_label=(
+                approval.role_label
+                or (_role_label_for_level(matrix, approval.level) if matrix else f"Level {approval.level}")
+            ),
             created_at=approval.created_at,
+            is_advisory=approval.is_advisory,
         )
         for approval, report, employee in rows
     ]
@@ -2169,6 +2184,7 @@ async def get_report_approvals(
             response_comment=approval.response_comment,
             actioned_at=approval.actioned_at,
             created_at=approval.created_at,
+            is_advisory=approval.is_advisory,
         ))
     return deduped
 
@@ -2205,9 +2221,27 @@ async def approve(
 
     report = await _get_report_or_404(approval.report_id, tenant_id, db)
 
-    if report.current_approval_level != approval.level:
+    # Advisory steps can be actioned at any time — they don't block the chain.
+    # Blocking steps must wait for their level to become current.
+    if not approval.is_advisory and report.current_approval_level != approval.level:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="This approval level is not currently active for this report.")
+
+    # ── Advisory reviewer signs off (non-blocking) ────────────────────────────
+    if approval.is_advisory:
+        approval.status = "APPROVED"
+        approval.comment = data.comment
+        approval.response_comment = data.response_comment
+        approval.actioned_at = datetime.now(timezone.utc)
+        await _write_audit_log(db, "EXPENSE_ADVISORY_REVIEWED", current_user.user_id, tenant_id, {
+            "report_id": str(report.id),
+            "report_number": report.report_number,
+            "level": approval.level,
+            "approver_id": str(approval.approver_id),
+            "comment": data.comment,
+        })
+        await db.flush()
+        return ExpenseReportResponse.from_orm(await _reload_report(report.id, db))
 
     approval.status = "APPROVED"
     approval.comment = data.comment
@@ -2276,24 +2310,54 @@ async def approve(
             report.referred_back_from_level = None
             report.referred_back_levels = None
     else:
-        next_result = await db.execute(
+        # Find the next BLOCKING (non-advisory) PENDING step after current level.
+        # Advisory steps between this level and the next blocking one are notified but skipped.
+        next_blocking_result = await db.execute(
             select(ExpenseApproval).where(
                 ExpenseApproval.report_id == report.id,
-                ExpenseApproval.level == approval.level + 1,
+                ExpenseApproval.level > approval.level,
                 ExpenseApproval.status == "PENDING",
-            ).order_by(ExpenseApproval.created_at.desc())
+                ExpenseApproval.is_advisory == False,  # noqa: E712
+            ).order_by(ExpenseApproval.level.asc())
         )
-        next_approval = next_result.scalars().first()
+        next_blocking = next_blocking_result.scalars().first()
 
-        if next_approval:
-            report.current_approval_level = next_approval.level
+        # Notify any advisory PENDING steps that fall between current and next blocking level.
+        next_blocking_level = next_blocking.level if next_blocking else 999999
+        advisory_notify_result = await db.execute(
+            select(ExpenseApproval).where(
+                ExpenseApproval.report_id == report.id,
+                ExpenseApproval.level > approval.level,
+                ExpenseApproval.level < next_blocking_level,
+                ExpenseApproval.status == "PENDING",
+                ExpenseApproval.is_advisory == True,  # noqa: E712
+            )
+        )
+        advisory_steps_to_notify = advisory_notify_result.scalars().all()
 
-            next_approver_result = await db.execute(select(User).where(User.id == next_approval.approver_id))
+        employee_result = await db.execute(select(User).where(User.id == report.employee_id))
+        employee = employee_result.scalar_one_or_none()
+
+        for adv in advisory_steps_to_notify:
+            adv_approver_result = await db.execute(select(User).where(User.id == adv.approver_id))
+            adv_approver = adv_approver_result.scalar_one_or_none()
+            if adv_approver and employee:
+                _send_approver_notification_email(
+                    to_email=adv_approver.email,
+                    report_number=report.report_number,
+                    report_date=str(report.report_date),
+                    total_amount=report.total_amount,
+                    employee_name=employee.full_name,
+                    role_label=(adv.role_label or "Advisory Reviewer") + " (Advisory)",
+                )
+
+        if next_blocking:
+            report.current_approval_level = next_blocking.level
+
+            next_approver_result = await db.execute(select(User).where(User.id == next_blocking.approver_id))
             next_approver = next_approver_result.scalar_one_or_none()
-            employee_result = await db.execute(select(User).where(User.id == report.employee_id))
-            employee = employee_result.scalar_one_or_none()
             if next_approver and employee:
-                role_label = next_approval.role_label or f"Level {next_approval.level}"
+                role_label = next_blocking.role_label or f"Level {next_blocking.level}"
                 _send_approver_notification_email(
                     to_email=next_approver.email,
                     report_number=report.report_number,
@@ -2387,6 +2451,11 @@ async def reject(
     if approval.status != "PENDING":
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="This approval record has already been actioned.")
+    if approval.is_advisory:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Advisory reviewers cannot reject. Use the approval action to submit your advisory notes.",
+        )
 
     report = await _get_report_or_404(approval.report_id, tenant_id, db)
 

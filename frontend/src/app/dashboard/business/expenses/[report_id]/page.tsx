@@ -112,6 +112,7 @@ interface ApprovalRecord {
   response_comment: string | null;
   actioned_at: string | null;
   created_at: string;
+  is_advisory?: boolean;
 }
 
 function formatNGN(amount: string | number): string {
@@ -902,7 +903,14 @@ export default function ExpenseDetailPage() {
                           <div className="min-w-0 flex-1">
                             {/* FIX 5: name first, large and prominent */}
                             <p className="text-sm font-semibold text-gray-900 truncate">{a.approver_name}</p>
-                            <p className="text-xs text-gray-500 truncate">L{a.level} — {a.level_label}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-xs text-gray-500 truncate">L{a.level} — {a.level_label}</p>
+                              {a.is_advisory && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-600 border border-blue-100">
+                                  Advisory
+                                </span>
+                              )}
+                            </div>
                             <p className={`text-xs font-semibold mt-1 ${statusColor}`}>{statusLabel}</p>
                             {a.actioned_at && (
                               <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(a.actioned_at)}</p>

@@ -835,6 +835,30 @@ Extended the approval-matrix system with three major capabilities:
 
 ---
 
+### Approval matrix hardening — advisory steps Phase 2, roles-wipe audit log, optimistic-update fix (~2026-07-20, migration `r6s7t8u9v0w1`)
+
+**1. Advisory steps — non-blocking chain advancement (Phase 2 of selective_tree):**
+- New migration `r6s7t8u9v0w1_advisory_approval_steps.py`: adds `expense_approvals.is_advisory BOOLEAN NOT NULL DEFAULT FALSE`.
+- `approval_routing.py` `ChainStep`: new `is_advisory: bool = False` field.
+- `selective_tree` branch now builds `review_designations` from `selected_designations` entries with `role="review"`. Steps for those designations are created with `is_advisory=True`.
+- **Chain advance logic** (`approve` endpoint, `routers/approvals.py`): after a blocking approver approves, the engine queries the next blocking (non-advisory) PENDING step and separately notifies all advisory steps between the current and next blocking level. Advisory steps are skipped in `current_approval_level` advancement.
+- **Advisory sign-off**: advisory reviewers can action their step at any time (bypasses `current_approval_level == level` check). Takes an early-return branch; writes `EXPENSE_ADVISORY_REVIEWED` audit entry. Does NOT trigger chain advancement.
+- **Reject guard**: advisory reviewers receive a 422 ("Advisory reviewers cannot reject") before the report is even loaded.
+- **All-advisory guard**: `compute_chain()` raises `ApprovalRoutingError` if every step in the fully-built chain (management + finance) is advisory — prevents a report entering a permanent silent-stuck state. Consistent with the existing "no designations selected" guard pattern.
+- **Queue**: `get_approval_queue` uses `OR(current_approval_level == level, is_advisory == True)` so advisory reviewers always see their items regardless of chain position.
+- **Schemas**: `ApprovalQueueItem` and `ApprovalRecordResponse` both expose `is_advisory: bool = False`.
+- **Frontend**: approval chain card (expense detail page) and queue row (approvals page) both show a blue "Advisory" badge when `is_advisory=True`.
+
+**2. Audit log for `clear_all_approval_roles` (irreversible tenant-wide wipe):**
+- `clear_all_approval_roles` (`DELETE /api/approvals/roles`) now captures `delete_result.rowcount` and calls `_write_audit_log(db, "APPROVAL_ROLES_CLEARED", …, {deleted_count, note})` within the same transaction before `db.commit()`.
+
+**3. Roles page — optimistic HoD-tier auto-patch fix:**
+- Replaced `Promise.all(…).catch(() => null)` with `Promise.allSettled`; local state is now only updated for roles whose PATCH request settled as `"fulfilled"`. Transient per-item failures no longer silently corrupt the UI.
+
+**Key file changes:** `alembic/versions/r6s7t8u9v0w1_advisory_approval_steps.py` (new migration), `models/approvals.py` (`is_advisory` on `ExpenseApproval`), `schemas/approvals.py` (`is_advisory` on both response types), `services/approval_routing.py` (`ChainStep.is_advisory`, `review_designations`, all-advisory guard), `routers/approvals.py` (submit, approve, reject, queue, report-approvals, clear-roles), `expenses/[report_id]/page.tsx` (advisory badge), `approvals/page.tsx` (advisory badge), `setup/roles/page.tsx` (`Promise.allSettled`).
+
+---
+
 ### Fix: Module activation guard + licensing separation + delete confirm hardening (pending commit, 2026-07-13)
 
 **1. `PATCH /api/setup/modules` guard: `_require_consultant` → `_require_admin`:**

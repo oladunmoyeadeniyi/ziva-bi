@@ -66,6 +66,7 @@ class ChainStep:
     role_label: str
     chain_type: str  # "management" | "finance"
     delegated_from_id: Optional[uuid.UUID] = None  # set when this step was delegated
+    is_advisory: bool = False  # True for "Reviews only" steps (selective_tree); non-blocking
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -425,7 +426,8 @@ async def compute_chain(
         # Walk the org-tree (same traversal as org_tree) but include only managers
         # whose ApprovalRole.designation is in policy.selected_designations.
         # selected_designations: [{designation: str, role: "approve"|"review"}, ...]
-        # Phase 1: all included designations are treated as full approvers.
+        # Designations with role="approve" produce blocking steps; role="review" produces advisory
+        # (non-blocking) steps that notify the reviewer but do not gate the chain's advancement.
         submitter_emp = await _find_employee_by_user(submitter_user_id, tenant_id, db)
         if not submitter_emp:
             raise ApprovalRoutingError(
@@ -444,6 +446,12 @@ async def compute_chain(
                 "Selective org-tree routing is configured but no designation levels are selected. "
                 "Edit the approval policy to include at least one designation level."
             )
+        # Designations configured as "Reviews only" produce advisory (non-blocking) steps.
+        review_designations: set[str] = {
+            d["designation"]
+            for d in sd
+            if isinstance(d, dict) and d.get("role") == "review" and "designation" in d
+        }
 
         managers = await _load_employee_with_managers(submitter_emp, max_depth=20, db=db)
 
@@ -485,12 +493,14 @@ async def compute_chain(
                 if manager_emp.approval_role
                 else f"{manager_emp.first_name} {manager_emp.last_name}"
             )
+            step_is_advisory = mgr_desig in review_designations
             chain.append(ChainStep(
                 level=level,
                 approver_user_id=effective_id,
                 role_label=role_label,
                 chain_type="management",
                 delegated_from_id=delegated_from,
+                is_advisory=step_is_advisory,
             ))
             level += 1
 
@@ -596,6 +606,14 @@ async def compute_chain(
                 delegated_from_id=delegated_from,
             ))
             level += 1
+
+    # Guard: if every step in the chain is advisory, the report would be submitted but never
+    # advance past its initial level — a silent permanent-stuck failure. Surface it immediately.
+    if chain and not any(not step.is_advisory for step in chain):
+        raise ApprovalRoutingError(
+            "This approval policy has no blocking approver — at least one designation level must "
+            "be set to 'Approves', or finance review must be enabled with at least one level."
+        )
 
     if not chain:
         raise ApprovalRoutingError(

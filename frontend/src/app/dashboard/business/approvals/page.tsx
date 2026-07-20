@@ -31,6 +31,7 @@ interface ApprovalQueueItem {
   level_label: string;
   created_at: string;
   rejection_comment: string | null;
+  is_advisory?: boolean;
 }
 
 type Tab = "pending" | "rejected";
@@ -176,11 +177,18 @@ function ApprovalsContent() {
                     {formatNGN(item.total_amount)}
                   </td>
                   <td className="px-5 py-3">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      activeTab === "pending" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
-                    }`}>
-                      L{item.level}: {item.level_label}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        activeTab === "pending" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                      }`}>
+                        L{item.level}: {item.level_label}
+                      </span>
+                      {item.is_advisory && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-100">
+                          Advisory
+                        </span>
+                      )}
+                    </div>
                   </td>
                   {activeTab === "rejected" && (
                     <td className="px-5 py-3 text-sm text-gray-600 max-w-xs">
