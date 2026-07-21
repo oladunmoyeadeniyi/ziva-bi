@@ -110,7 +110,18 @@ def do_run_migrations(connection) -> None:
 
 async def run_migrations_online() -> None:
     """Run migrations against a live DB connection (standard mode)."""
-    connectable = create_async_engine(_get_url())
+    import os
+    import ssl
+
+    # Render's managed PostgreSQL requires TLS for all connections.
+    # The RENDER env var is injected automatically by Render in all environments
+    # (buildCommand, preDeployCommand, startCommand).
+    connect_args: dict = {}
+    if os.environ.get("RENDER"):
+        ssl_ctx = ssl.create_default_context()
+        connect_args["ssl"] = ssl_ctx
+
+    connectable = create_async_engine(_get_url(), connect_args=connect_args)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

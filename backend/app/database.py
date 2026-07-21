@@ -15,6 +15,9 @@ Pool settings are conservative for Render's Starter tier (limited connections).
 Increase pool_size and max_overflow once we upgrade to a larger DB plan.
 """
 
+import os
+import ssl
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -28,12 +31,28 @@ def _build_async_url(url: str) -> str:
     return url
 
 
+def _get_connect_args() -> dict:
+    """Return SSL connect args required by Render's managed PostgreSQL.
+
+    Render injects the RENDER env var in all service phases.  The external
+    connection string Render provides requires TLS; asyncpg does not enable
+    SSL by default, so we must pass an SSLContext explicitly.
+
+    Local dev (RENDER not set) gets an empty dict so no SSL is attempted.
+    """
+    if os.environ.get("RENDER"):
+        ssl_ctx = ssl.create_default_context()
+        return {"ssl": ssl_ctx}
+    return {}
+
+
 engine = create_async_engine(
     _build_async_url(settings.database_url),
     echo=settings.debug,      # logs SQL in debug mode; never enable in production
     pool_pre_ping=True,        # drop stale connections before handing them to app code
     pool_size=5,               # keep 5 connections warm
     max_overflow=10,           # allow up to 10 extra connections under burst load
+    connect_args=_get_connect_args(),
 )
 
 AsyncSessionLocal = async_sessionmaker(
