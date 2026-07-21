@@ -14,7 +14,7 @@ Add new config fields here as modules are built; keep secrets out of default val
 import json
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,   # allow field access by its own name, not just alias
     )
 
     # ── Database ──────────────────────────────────────────────────────────────
@@ -54,7 +55,15 @@ class Settings(BaseSettings):
     # Accepts: JSON array '["https://a.com","https://b.com"]'
     #       or comma-separated 'https://a.com,https://b.com'
     #       or a single URL 'https://a.com'
-    allowed_origins: list[str] = ["http://localhost:3000"]
+    #
+    # NOTE: stored as `str` so that pydantic-settings v2 does not attempt to
+    # JSON-parse the value at source level (which fails for plain URLs).
+    # The `allowed_origins` computed property does the actual parsing.
+    # validation_alias maps this field to the ALLOWED_ORIGINS env var.
+    allowed_origins_raw: str = Field(
+        default="http://localhost:3000",
+        validation_alias=AliasChoices("ALLOWED_ORIGINS", "allowed_origins_raw"),
+    )
 
     # ── SMTP (email notifications) ────────────────────────────────────────────
     # If SMTP_HOST / SMTP_USER / SMTP_PASSWORD are not set, rejection emails
@@ -78,11 +87,21 @@ class Settings(BaseSettings):
     # If unset, all super admins are treated as non-owner (restricted in live).
     owner_user_id: str | None = None
 
-    @field_validator("allowed_origins", mode="before")
-    @classmethod
-    def parse_allowed_origins(cls, v: Any) -> list[str]:
-        """Parse ALLOWED_ORIGINS from env regardless of whether it arrives as a
-        JSON array string, a comma-separated string, or already a list."""
+    @computed_field  # type: ignore[misc]
+    @property
+    def allowed_origins(self) -> list[str]:
+        """Parse ALLOWED_ORIGINS into a list regardless of input format.
+
+        Accepts:
+          - JSON array string: '["https://a.com","https://b.com"]'
+          - Comma-separated:   'https://a.com,https://b.com'
+          - Single URL:        'https://a.com'
+
+        Using a computed_field (rather than a field_validator on a list[str]
+        field) prevents pydantic-settings v2 from attempting JSON-parsing at
+        the source level before our own parsing logic runs.
+        """
+        v: Any = self.allowed_origins_raw
         if isinstance(v, list):
             return v
         if isinstance(v, str):
@@ -90,7 +109,7 @@ class Settings(BaseSettings):
             if stripped.startswith("["):
                 return json.loads(stripped)
             return [origin.strip() for origin in stripped.split(",") if origin.strip()]
-        return v
+        return [str(v)]
 
 
 settings = Settings()

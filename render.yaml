@@ -23,7 +23,7 @@ services:
       - key: REFRESH_TOKEN_EXPIRE_DAYS
         value: "7"
       - key: ALLOWED_ORIGINS
-        value: https://ziva-bi-frontend.onrender.com
+        value: '["https://ziva-bi-frontend.onrender.com"]'
       - key: DEBUG
         value: "false"
       - key: PYTHON_VERSION
