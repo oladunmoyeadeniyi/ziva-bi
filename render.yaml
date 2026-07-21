@@ -3,6 +3,7 @@ services:
     name: ziva-bi-backend
     runtime: python
     rootDir: backend
+    region: oregon
     buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
     healthCheckPath: /api/health
@@ -11,7 +12,7 @@ services:
       - key: DATABASE_URL
         fromDatabase:
           name: ziva-bi-db
-          property: connectionString
+          property: internalConnectionString
       - key: SECRET_KEY
         generateValue: true
       - key: ALGORITHM
@@ -69,8 +70,14 @@ services:
     name: ziva-bi-frontend
     runtime: node
     rootDir: frontend
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    region: oregon
+    # next.config.ts uses output:"standalone" — the build must copy static assets
+    # into the standalone directory and the server is started via node, not npm start.
+    buildCommand: >-
+      npm ci && npm run build &&
+      cp -r public .next/standalone/public &&
+      cp -r .next/static .next/standalone/.next/static
+    startCommand: node .next/standalone/server.js
     plan: starter
     envVars:
       - key: NEXT_PUBLIC_API_URL
