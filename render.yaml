@@ -89,5 +89,6 @@ databases:
   - name: ziva-bi-db
     databaseName: ziva_bi
     user: ziva_bi_user
-    plan: starter
+    plan: basic-256mb   # Render's new flexible plan (legacy "starter" is deprecated)
+    diskSizeGB: 5       # Minimum paid storage — 5 GB × $0.30 = $1.50/mo; upgrade easily later
     region: oregon
