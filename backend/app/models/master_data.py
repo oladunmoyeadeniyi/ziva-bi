@@ -22,7 +22,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -69,6 +69,15 @@ class TenantDimension(Base):
     icon: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Partial unique index (WHERE is_active = true) — created via raw SQL in migration
+    # h8i9j0k1l2m3. Declared here for documentation; excluded from autogenerate via
+    # include_object() in alembic/env.py.
+    # CREATE UNIQUE INDEX uq_tenant_dimensions_code ON tenant_dimensions (tenant_id, code) WHERE is_active = true
+    __table_args__ = (
+        Index("uq_tenant_dimensions_code", "tenant_id", "code", unique=True,
+              postgresql_where="is_active = true"),
     )
 
     values: Mapped[list["DimensionValue"]] = relationship(
@@ -142,6 +151,14 @@ class DimensionValue(Base):
     # M8.1: period activation
     valid_from: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     valid_to: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    # Partial unique index (WHERE is_active = true) — created via raw SQL in migration
+    # h8i9j0k1l2m3. Excluded from autogenerate via include_object() in alembic/env.py.
+    # CREATE UNIQUE INDEX uq_dimension_values_code ON dimension_values (tenant_id, dimension_id, code) WHERE is_active = true
+    __table_args__ = (
+        Index("uq_dimension_values_code", "tenant_id", "dimension_id", "code", unique=True,
+              postgresql_where="is_active = true"),
+    )
 
     dimension: Mapped["TenantDimension"] = relationship(
         "TenantDimension",
@@ -225,6 +242,14 @@ class ChartOfAccount(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+    # Partial unique index (WHERE is_active = true) — created via raw SQL in migration.
+    # Excluded from autogenerate via include_object() in alembic/env.py.
+    # CREATE UNIQUE INDEX uq_chart_of_accounts_gl_number ON chart_of_accounts (tenant_id, gl_number) WHERE (is_active = true)
+    __table_args__ = (
+        Index("uq_chart_of_accounts_gl_number", "tenant_id", "gl_number", unique=True,
+              postgresql_where="is_active = true"),
     )
 
     dimension_requirements: Mapped[list["GLDimensionRequirement"]] = relationship(
@@ -328,6 +353,10 @@ class GLDimensionRequirement(Base):
         String(20), nullable=False  # 'required', 'optional', 'na'
     )
 
+    __table_args__ = (
+        UniqueConstraint("gl_id", "dimension_id", name="uq_gl_dimension_req"),
+    )
+
     gl_account: Mapped["ChartOfAccount"] = relationship(
         "ChartOfAccount", back_populates="dimension_requirements"
     )
@@ -369,6 +398,10 @@ class CategoryGLMapping(Base):
         index=True,
     )
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (
+        UniqueConstraint("category_id", "gl_id", name="uq_category_gl_mapping"),
+    )
 
     gl_account: Mapped["ChartOfAccount"] = relationship(
         "ChartOfAccount", back_populates="category_mappings"
@@ -440,6 +473,11 @@ class Employee(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "employee_code", name="uq_employee_code_per_tenant"),
+        UniqueConstraint("tenant_id", "email", name="uq_employee_email_per_tenant"),
+    )
+
     # Relationships — read-only convenience for selectinload in hr.py.
     # No back_populates: one-directional is sufficient for eager-loading in GET routes.
     cost_center: Mapped[Optional["OrgStructureNode"]] = relationship(
@@ -502,6 +540,10 @@ class EmployeeTransfer(Base):
     Tracks cost center transfers for employees.
 
     Records the from/to cost center, effective date, and who performed the transfer.
+
+    change_type: 'retrospective' (backdated, applies to past records) or
+                 'progressive' (applies from effective_date onwards). Added M8.1.
+    is_retrospective: convenience bool mirroring change_type == 'retrospective'. Added M8.1.
     """
 
     __tablename__ = "employee_transfers"
@@ -532,6 +574,16 @@ class EmployeeTransfer(Base):
         nullable=True,
     )
     effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # M8.1 — transfer type and retrospective flag (columns exist in DB from migration
+    # j0k1l2m3n4o5; were accidentally stripped from the model during the positions merge).
+    change_type: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True,  # VARCHAR(50) matches actual DB column
+        comment="'retrospective' | 'progressive' — whether this transfer applies backwards or forwards"
+    )
+    is_retrospective: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+        comment="Convenience mirror of change_type == 'retrospective'"
+    )
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transferred_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
@@ -658,6 +710,10 @@ class CostCenterConfig(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "cost_center_id", name="uq_cost_center_config_per_tenant"),
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

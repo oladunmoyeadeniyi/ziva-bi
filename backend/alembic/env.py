@@ -40,6 +40,42 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# ── Partial indexes excluded from autogenerate comparison ─────────────────────
+# These indexes were created via raw op.execute() SQL in their respective
+# migrations (they carry WHERE clauses that SQLAlchemy cannot round-trip).
+# Listing them here prevents alembic --autogenerate from emitting spurious
+# DROP INDEX operations on every run.
+_PARTIAL_INDEXES = {
+    "uq_tenant_dimensions_code",       # tenant_dimensions (tenant_id, code) WHERE is_active
+    "uq_dimension_values_code",        # dimension_values (tenant_id, dimension_id, code) WHERE is_active
+    "uq_expense_categories_code_top",  # expense_categories (tenant_id, code) WHERE parent_id IS NULL AND is_active
+    "uq_expense_categories_code_sub",  # expense_categories (tenant_id, parent_id, code) WHERE parent_id IS NOT NULL AND is_active
+    "uq_chart_of_accounts_gl_number",  # chart_of_accounts (tenant_id, gl_number) WHERE is_active
+}
+
+# Known naming-convention mismatches: constraints that exist correctly in the DB
+# under a Postgres-generated name that differs from SQLAlchemy's auto-name.
+# Excluding prevents spurious rename operations.
+_KNOWN_NAME_MISMATCHES = {
+    "approval_matrix_tenant_id_key",   # created by unique=True on ApprovalMatrix.tenant_id
+}
+
+
+def include_object(object, name, type_, reflected, compare_to):
+    """
+    Filter objects Alembic considers during --autogenerate comparison.
+
+    Excludes:
+    - Partial indexes created via raw SQL (WHERE clause not round-trippable).
+    - Constraints whose DB name is a Postgres-generated name that differs from
+      SQLAlchemy's naming convention (known mismatches, functionally identical).
+    """
+    if type_ == "index" and name in _PARTIAL_INDEXES:
+        return False
+    if type_ == "unique_constraint" and name in _KNOWN_NAME_MISMATCHES:
+        return False
+    return True
+
 
 def _get_url() -> str:
     """Read DATABASE_URL from environment and normalise to asyncpg dialect."""
@@ -56,13 +92,18 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

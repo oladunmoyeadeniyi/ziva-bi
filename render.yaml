@@ -5,6 +5,7 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2
+    healthCheckPath: /api/health
     plan: starter
     envVars:
       - key: DATABASE_URL
@@ -25,6 +26,36 @@ services:
         value: "false"
       - key: PYTHON_VERSION
         value: "3.12.0"
+
+      # ── Supabase Storage (M6 — document attachments) ────────────────────────
+      # Fill these in the Render dashboard after creating the Supabase project.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: documents
+
+      # ── Email (P2 — fill in when Resend/SendGrid is wired up) ───────────────
+      - key: FRONTEND_URL
+        value: https://ziva-bi-frontend.onrender.com
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+
+      # ── Platform owner ───────────────────────────────────────────────────────
+      # Set to the UUID of the Ziva BI owner account after first deploy + signup.
+      - key: OWNER_USER_ID
+        sync: false
+
+      # ── Cloudflare R2 (reserved — not yet used in production) ───────────────
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID

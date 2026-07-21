@@ -464,6 +464,10 @@ class ExpenseApproval(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+    __table_args__ = (
+        UniqueConstraint("report_id", "level", name="uq_expense_approvals_report_level"),
+    )
+
 
 class ApprovalRoleScope(Base):
     """

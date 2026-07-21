@@ -43,7 +43,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DATE, NUMERIC, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DATE, Index, NUMERIC, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -281,6 +281,17 @@ class ExpenseCategory(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Partial unique indexes — created via raw SQL in migration h8i9j0k1l2m3.
+    # Excluded from autogenerate via include_object() in alembic/env.py.
+    # uq_expense_categories_code_top: ON expense_categories (tenant_id, code) WHERE parent_id IS NULL AND is_active = true
+    # uq_expense_categories_code_sub: ON expense_categories (tenant_id, parent_id, code) WHERE parent_id IS NOT NULL AND is_active = true
+    __table_args__ = (
+        Index("uq_expense_categories_code_top", "tenant_id", "code", unique=True,
+              postgresql_where="parent_id IS NULL AND is_active = true"),
+        Index("uq_expense_categories_code_sub", "tenant_id", "parent_id", "code", unique=True,
+              postgresql_where="parent_id IS NOT NULL AND is_active = true"),
     )
 
     subcategories: Mapped[list["ExpenseCategory"]] = relationship(
