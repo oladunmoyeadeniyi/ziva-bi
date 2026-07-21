@@ -41,7 +41,12 @@ def _get_connect_args() -> dict:
     Local dev (RENDER not set) gets an empty dict so no SSL is attempted.
     """
     if os.environ.get("RENDER"):
-        ssl_ctx = ssl.create_default_context()
+        # Render's Python runtime ships a minimal CA bundle that may not include
+        # the CA that signed Render's managed PostgreSQL certificate.
+        # certifi ships an up-to-date Mozilla CA bundle and is already installed
+        # as a transitive dependency of httpx — no new dependency needed.
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         return {"ssl": ssl_ctx}
     return {}
 

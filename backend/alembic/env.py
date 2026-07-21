@@ -118,7 +118,12 @@ async def run_migrations_online() -> None:
     # (buildCommand, preDeployCommand, startCommand).
     connect_args: dict = {}
     if os.environ.get("RENDER"):
-        ssl_ctx = ssl.create_default_context()
+        # Render's Python runtime ships a minimal CA bundle that may not include
+        # the CA that signed Render's managed PostgreSQL certificate.
+        # certifi ships an up-to-date Mozilla CA bundle and is already installed
+        # as a transitive dependency of httpx — no new dependency needed.
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         connect_args["ssl"] = ssl_ctx
 
     connectable = create_async_engine(_get_url(), connect_args=connect_args)
