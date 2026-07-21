@@ -41,12 +41,17 @@ def _get_connect_args() -> dict:
     Local dev (RENDER not set) gets an empty dict so no SSL is attempted.
     """
     if os.environ.get("RENDER"):
-        # Render's Python runtime ships a minimal CA bundle that may not include
-        # the CA that signed Render's managed PostgreSQL certificate.
-        # certifi ships an up-to-date Mozilla CA bundle and is already installed
-        # as a transitive dependency of httpx — no new dependency needed.
-        import certifi
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        # Render's managed PostgreSQL uses a self-signed certificate not signed
+        # by any public CA. Two attempts with verified CA bundles (system store
+        # and certifi's Mozilla bundle) both fail with CERTIFICATE_VERIFY_FAILED.
+        # This is Render's documented behaviour; their own connection guide
+        # recommends sslmode=require (encrypt-without-verify), which is the
+        # asyncpg equivalent of CERT_NONE.  The connection is still TLS-encrypted
+        # — only the CA chain is not verified against a public trust store.
+        # Future option: download Render's private CA cert and load it explicitly.
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
         return {"ssl": ssl_ctx}
     return {}
 
