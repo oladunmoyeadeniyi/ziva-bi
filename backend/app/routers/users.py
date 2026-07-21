@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import hash_password, verify_password
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
+from app.services.platform_config import get_app_name
 from app.models.auth import RefreshToken, Role, Session, User, UserRole, UserTenant
 from app.schemas.auth import UserResponse
 from app.schemas.approvals import TenantUserResponse
@@ -360,7 +361,8 @@ async def enroll_2fa(
     user.totp_enabled = False  # not yet confirmed
     await db.flush()
 
-    uri = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name="ZivaBI")
+    issuer = await get_app_name(db)
+    uri = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name=issuer)
     return TotpEnrollResponse(secret=secret, uri=uri)
 
 

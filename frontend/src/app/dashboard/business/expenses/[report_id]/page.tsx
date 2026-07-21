@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import { formatMoney } from "@/lib/utils";
 import PageContainer from "@/components/PageContainer";
@@ -146,6 +147,7 @@ function StatusBadge({ status }: { status: string }) {
 export default function ExpenseDetailPage() {
   const { report_id } = useParams<{ report_id: string }>();
   const { user, accessToken } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
 
   const [report, setReport] = useState<ExpenseReport | null>(null);
@@ -630,7 +632,7 @@ export default function ExpenseDetailPage() {
                 <h1 className="text-base font-bold text-gray-900 uppercase tracking-wide">
                   Business Expense Retirement
                 </h1>
-                <p className="mt-0.5 text-xs text-gray-500">Ziva BI — Expense Management</p>
+                <p className="mt-0.5 text-xs text-gray-500">{appName} — Expense Management</p>
               </div>
               <div className="text-right shrink-0">
                 <p className="text-sm font-semibold text-gray-800">{report.report_number}</p>

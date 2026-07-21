@@ -37,6 +37,7 @@ from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.auth import AuditLog, Role, Tenant, User, UserRole, UserTenant
 from app.models.tenant_management import TenantInvitation
+from app.services.platform_config import get_app_name
 from app.schemas.auth import CreateTestEnvRequest, PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.users import (
     InvitationCreate,
@@ -102,11 +103,12 @@ def _send_invitation_email(
     invited_by_name: str,
     role: str,
     accept_url: str,
+    app_name: str = "Ziva BI",
 ) -> None:
     """Send invitation email; console-logs when SMTP is not configured."""
-    subject = f"You've been invited to join {tenant_name} on Ziva BI"
+    subject = f"You've been invited to join {tenant_name} on {app_name}"
     body = (
-        f"{invited_by_name} has invited you to join {tenant_name} on Ziva BI as {role}.\n\n"
+        f"{invited_by_name} has invited you to join {tenant_name} on {app_name} as {role}.\n\n"
         f"Click the link below to accept your invitation:\n{accept_url}\n\n"
         f"This link expires in 48 hours."
     )
@@ -653,6 +655,7 @@ async def create_invitation(
     inviter_name = inviter.full_name if inviter else "Your administrator"
     tenant_name = tenant.name if tenant else "your company"
     accept_url = f"{settings.frontend_url}/invite/accept?token={token}"
+    app_name = await get_app_name(db)
 
     _send_invitation_email(
         to_email=data.email,
@@ -660,6 +663,7 @@ async def create_invitation(
         invited_by_name=inviter_name,
         role=data.role,
         accept_url=accept_url,
+        app_name=app_name,
     )
 
     return InvitationResponse(

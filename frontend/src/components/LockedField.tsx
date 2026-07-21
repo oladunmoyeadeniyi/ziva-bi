@@ -15,6 +15,8 @@
  *   </LockedField>
  */
 
+import { useAppConfig } from "@/contexts/AppConfigContext";
+
 interface LockedFieldProps {
   /** If true, the field is editable regardless of locked state (consultant view) */
   isConsultant: boolean;
@@ -32,6 +34,7 @@ export default function LockedField({
   children,
   label,
 }: LockedFieldProps) {
+  const { appName } = useAppConfig();
   // Consultants always see the editable field
   if (isConsultant || !locked) {
     return (
@@ -67,7 +70,7 @@ export default function LockedField({
           />
         </svg>
         <span>
-          Locked by implementation. Contact your Ziva BI consultant to modify.
+          Locked by implementation. Contact your {appName} consultant to modify.
         </span>
       </div>
     </div>

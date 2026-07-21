@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -112,6 +113,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function ProfilePage() {
   const { user, accessToken, refreshUser } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
 
   const isSuperAdmin = user?.is_super_admin === true;
@@ -331,7 +333,7 @@ export default function ProfilePage() {
         ...(user?.tenant_id ? [{ label: "Business account", color: "blue" as const }] : []),
       ];
   const metaLine = isSuperAdmin
-    ? "Ziva BI internal · no tenant"
+    ? `${appName} internal · no tenant`
     : user?.tenant_id
     ? "Business account"
     : "No tenant";

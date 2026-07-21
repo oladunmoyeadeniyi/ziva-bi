@@ -160,7 +160,9 @@ from app.routers import gl as gl_router
 from app.routers import account_mapping as account_mapping_router
 from app.routers import bank_accounts as bank_accounts_router
 from app.routers import posting_batches as posting_batches_router
+from app.routers import app_config as app_config_router
 
+app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
 app.include_router(expenses_router.router)

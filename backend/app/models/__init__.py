@@ -16,3 +16,4 @@ import app.models.gl               # noqa: F401  — registers journal_entries, 
 import app.models.account_mapping  # noqa: F401  — registers posting_roles, tenant_account_mappings with Base.metadata
 import app.models.bank_account     # noqa: F401  — registers bank_accounts with Base.metadata
 import app.models.tenant_management  # noqa: F401  — registers tenant_invitations + related tables with Base.metadata
+import app.models.platform_config    # noqa: F401  — registers platform_config table with Base.metadata

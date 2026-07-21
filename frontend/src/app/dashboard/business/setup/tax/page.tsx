@@ -19,6 +19,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -360,6 +361,7 @@ const inputCls =
 
 function TaxContent() {
   const { accessToken } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -827,7 +829,7 @@ function TaxContent() {
 
           <p className="text-xs text-gray-400 pl-2 border-l-2 border-amber-300">
             Tax information is provided for guidance only. Always verify with your tax adviser.
-            Ziva BI updates jurisdiction profiles as laws change, and your admin can add, remove,
+            {appName} updates jurisdiction profiles as laws change, and your admin can add, remove,
             or adjust applicable taxes at any time.
           </p>
 

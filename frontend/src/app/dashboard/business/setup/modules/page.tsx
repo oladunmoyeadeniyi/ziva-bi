@@ -13,6 +13,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import { MODULE_MODE_AVAILABILITY } from "@/lib/modules";
 
@@ -310,6 +311,7 @@ function ModuleCard({
 
 export default function ModuleActivationPage() {
   const { accessToken } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [modules, setModules] = useState<ModuleState[]>([]);
@@ -519,7 +521,7 @@ export default function ModuleActivationPage() {
                 </div>
                 <p className="text-xs text-amber-700">
                   This module requires Chart of Accounts and Dimensions, which are not configured
-                  in {MODE_LABELS[postingMode] ?? postingMode} mode. Contact your Ziva BI consultant
+                  in {MODE_LABELS[postingMode] ?? postingMode} mode. Contact your {appName} consultant
                   to update the organisation&apos;s configuration mode before activating this module.
                 </p>
               </div>
@@ -569,7 +571,7 @@ export default function ModuleActivationPage() {
                 <div>
                   <p className="text-sm font-medium text-gray-700">Not licensed</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Module licensing is managed by your Ziva BI consultant via the SA portal.
+                    Module licensing is managed by your {appName} consultant via the SA portal.
                     Contact them to add this module to your subscription.
                   </p>
                 </div>

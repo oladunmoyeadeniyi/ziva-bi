@@ -11,10 +11,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 
 export default function ChangePasswordPage() {
   const { accessToken, user } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
 
   const [current, setCurrent]     = useState("");
@@ -77,7 +79,7 @@ export default function ChangePasswordPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">ZivaBI</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{appName}</h1>
           <p className="mt-2 text-sm text-gray-500">Set your password to continue</p>
         </div>
 
@@ -85,7 +87,7 @@ export default function ChangePasswordPage() {
           {/* Mandatory change notice */}
           <div className="mb-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
             <strong>Action required.</strong> Your account was created with a temporary password.
-            You must set a new password before you can access ZivaBI.
+            You must set a new password before you can access {appName}.
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">

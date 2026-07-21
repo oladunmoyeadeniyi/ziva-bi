@@ -1,35 +1,58 @@
 /**
- * Root layout — ZivaBI frontend.
+ * Root layout — async Server Component.
  *
- * Wraps every page in the application. Sets global HTML metadata and applies
- * the base font/theme classes. As the design system matures, global providers
- * (theme, auth context, toast notifications) will be added here so that all
- * child pages inherit them automatically via React's context tree.
+ * Fetches public platform config (app name) on the server so client components
+ * can read it via useAppConfig() without a client-side fetch. The fetched value
+ * is passed as a prop to <ClientProviders>, which injects it into AppConfigContext.
  *
- * Next.js App Router: this file is a Server Component by default, so it runs
- * on the server — do not add "use client" here. Client-side providers should
- * be extracted into a separate ClientProviders component and composed here.
+ * Cache strategy: revalidate every 5 minutes — the app name changes at most once
+ * in the product lifetime, so a short stale window is fine and avoids hitting the
+ * DB on every page request.
+ *
+ * Next.js App Router: Server Components are allowed to be async. Do not add
+ * "use client" here. Any client-side providers live in ClientProviders.tsx.
  */
 
 import type { Metadata } from "next";
 import "./globals.css";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { ClientProviders } from "@/components/ClientProviders";
 
-export const metadata: Metadata = {
-  title: {
-    default: "ZivaBI",
-    template: "%s | ZivaBI",
-  },
-  description:
-    "Intelligent finance and operations automation platform — zero manual work, 100% automation.",
-  manifest: "/manifest.json", // PWA manifest (added in a future milestone)
-};
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export default function RootLayout({
+async function fetchAppName(): Promise<string> {
+  try {
+    const res = await fetch(`${API_URL}/api/app-config`, {
+      next: { revalidate: 300 }, // 5 minutes
+    });
+    if (!res.ok) return "Ziva BI";
+    const data = await res.json();
+    return data.app_name ?? "Ziva BI";
+  } catch {
+    return "Ziva BI";
+  }
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const appName = await fetchAppName();
+  return {
+    title: {
+      default: appName,
+      template: `%s | ${appName}`,
+    },
+    description:
+      "Intelligent finance and operations automation platform — zero manual work, 100% automation.",
+    manifest: "/manifest.json",
+  };
+}
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const appName = await fetchAppName();
+
   return (
     <html lang="en">
       <head>
@@ -40,8 +63,7 @@ export default function RootLayout({
         />
       </head>
       <body>
-        {/* AuthProvider is a Client Component — Next.js App Router handles the boundary */}
-        <AuthProvider>{children}</AuthProvider>
+        <ClientProviders appName={appName}>{children}</ClientProviders>
       </body>
     </html>
   );

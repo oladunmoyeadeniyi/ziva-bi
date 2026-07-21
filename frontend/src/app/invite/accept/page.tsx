@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 
 interface InviteDetails {
   email: string;
@@ -44,6 +45,7 @@ const ROLE_LABELS: Record<string, string> = {
 export default function AcceptInvitePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { appName } = useAppConfig();
   const token = searchParams.get("token") ?? "";
 
   const [invite, setInvite] = useState<InviteDetails | null>(null);
@@ -117,7 +119,7 @@ export default function AcceptInvitePage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-12">
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">ZivaBI</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{appName}</h1>
           <p className="mt-3 text-gray-700">
             You&apos;ve been invited to join{" "}
             <span className="font-semibold">{invite?.tenant_name}</span> as{" "}

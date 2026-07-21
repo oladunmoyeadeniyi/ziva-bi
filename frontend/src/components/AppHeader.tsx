@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 
 // ── Icon helper (mirrors the one in business/layout.tsx) ─────────────────────
@@ -35,6 +36,7 @@ interface AppHeaderProps {
 
 export default function AppHeader({ context }: AppHeaderProps) {
   const { user, accessToken, logout, impersonation, exitImpersonation, exitUserImpersonation } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
   const [showMenu, setShowMenu] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
@@ -117,7 +119,7 @@ export default function AppHeader({ context }: AppHeaderProps) {
 
       {/* Left — wordmark */}
       <div className="flex items-center gap-2">
-        <span className="text-lg font-bold text-gray-900">ZivaBI</span>
+        <span className="text-lg font-bold text-gray-900">{appName}</span>
         {context === "platform" && (
           <>
             <span className="text-xs text-gray-300 select-none">·</span>

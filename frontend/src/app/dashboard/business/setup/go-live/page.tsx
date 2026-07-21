@@ -18,6 +18,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -65,6 +66,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function GoLivePage() {
   const { user, accessToken } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -211,7 +213,7 @@ export default function GoLivePage() {
 
           {!isConsultant && (
             <p className="text-sm text-gray-500">
-              Only Ziva BI consultants and super admins can mark a tenant as live.
+              Only {appName} consultants and super admins can mark a tenant as live.
             </p>
           )}
         </>

@@ -11,6 +11,7 @@
 import { useEffect, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -85,6 +86,7 @@ function TabBtn({ id, active, onClick, label }: { id: Tab; active: boolean; onCl
 
 function RolesContent() {
   const { accessToken, logout } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "tiers");
@@ -382,7 +384,7 @@ function RolesContent() {
       {tab === "tiers" && (
         <div className="space-y-4">
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
-            Role tier structure is defined by Ziva BI. Contact your account manager to modify.
+            Role tier structure is defined by {appName}. Contact your account manager to modify.
           </div>
           <div className="overflow-hidden border border-gray-200 rounded-lg">
             <table className="w-full text-sm">
@@ -398,7 +400,7 @@ function RolesContent() {
                 <tr>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-xs font-semibold ${TIER_BADGE.power_admin}`}>Tenant Power Admin</span></td>
                   <td className="px-4 py-3 text-gray-700">Finance Director / CFO</td>
-                  <td className="px-4 py-3 text-gray-700">Ziva BI</td>
+                  <td className="px-4 py-3 text-gray-700">{appName}</td>
                   <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800 border border-green-300">Full by default — adjustable per role</span></td>
                 </tr>
                 <tr>

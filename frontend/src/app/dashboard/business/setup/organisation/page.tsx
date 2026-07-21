@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -642,6 +643,7 @@ function RoleChartNode({
 
 function OrganisationPage() {
   const { accessToken } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
@@ -2583,7 +2585,7 @@ function OrganisationPage() {
                 <div className="flex" style={{ height: 340 }}>
                   <div className="w-36 flex-shrink-0 py-4" style={{ background: editTheme.sidebar }}>
                     <div className="px-3 pb-3 mb-2" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.1)" }}>
-                      <p className="text-xs font-medium text-white">ZivaBI</p>
+                      <p className="text-xs font-medium text-white">{appName}</p>
                     </div>
                     <div className="px-0">
                       <p className="text-xs px-3 mb-1 mt-2" style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: "0.05em" }}>COMMON DATA</p>
@@ -2818,7 +2820,7 @@ function OrganisationPage() {
         <div className="space-y-6 max-w-2xl">
           <div>
             <p className="text-sm text-gray-600">
-              Tell Ziva BI which department is your <strong>Finance</strong> team, your <strong>HR</strong> department, and so on.
+              Tell {appName} which department is your <strong>Finance</strong> team, your <strong>HR</strong> department, and so on.
               The system uses these mappings to automatically scope approval chains, assignee dropdowns, and access controls &mdash;
               so only the right people appear in the right places.
             </p>

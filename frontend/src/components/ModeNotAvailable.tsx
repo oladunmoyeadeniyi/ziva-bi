@@ -12,6 +12,7 @@
  */
 
 import { useRouter } from "next/navigation";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 
 const MODE_LABELS: Record<string, string> = {
   lite: "Lite",
@@ -42,6 +43,7 @@ export default function ModeNotAvailable({
   currentMode,
 }: ModeNotAvailableProps) {
   const router = useRouter();
+  const { appName } = useAppConfig();
   const modeLabel = MODE_LABELS[currentMode] ?? currentMode;
   const availableList = availableIn.join(" or ");
 
@@ -57,7 +59,7 @@ export default function ModeNotAvailable({
 
       <p className="text-[13px] text-gray-500 max-w-md leading-relaxed mb-6">
         This section is available in {availableList} mode. Your posting mode is
-        configured by your Ziva BI consultant in the system configuration.
+        configured by your {appName} consultant in the system configuration.
       </p>
 
       <button

@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PromotionReviewDialog from "@/components/PromotionReviewDialog";
 import PageContainer from "@/components/PageContainer";
@@ -103,6 +104,7 @@ const inputCls =
 export default function TenantDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user, accessToken, enterTenant, startUserImpersonation } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
 
   const [tenant, setTenant] = useState<TenantDetail | null>(null);
@@ -944,7 +946,7 @@ export default function TenantDetailPage() {
                     [
                       { value: "lite",       label: "Lite",        desc: "No GL — approve only" },
                       { value: "connected",  label: "Connected",   desc: "Export to external ERP" },
-                      { value: "full_erp",   label: "Full ERP",    desc: "Ziva BI internal GL" },
+                      { value: "full_erp",   label: "Full ERP",    desc: `${appName} internal GL` },
                     ] as const
                   ).map(opt => (
                     <label

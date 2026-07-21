@@ -7,13 +7,15 @@
 
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 
 export default function PlatformTeamPage() {
+  const { appName } = useAppConfig();
   return (
     <PageContainer maxWidth="4xl">
       <PageHeading title="Team & delegation" />
       <p className="text-sm text-gray-500 mb-8">
-        Manage Ziva BI internal staff accounts and assign delegation rights over tenants.
+        Manage {appName} internal staff accounts and assign delegation rights over tenants.
       </p>
 
       {/* Coming-soon card */}
@@ -25,7 +27,7 @@ export default function PlatformTeamPage() {
           <div>
             <p className="text-sm font-semibold text-gray-800 mb-1">Coming in milestone M9.1b</p>
             <ul className="text-sm text-gray-500 space-y-1 list-disc list-inside">
-              <li>Invite and manage Ziva BI internal staff (account managers, support agents)</li>
+              <li>Invite and manage {appName} internal staff (account managers, support agents)</li>
               <li>Assign staff as delegates over specific tenants</li>
               <li>Scope what each delegate can view and action</li>
               <li>Audit trail of delegated actions</li>

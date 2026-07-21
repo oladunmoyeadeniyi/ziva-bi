@@ -900,6 +900,38 @@ Extended the approval-matrix system with three major capabilities:
 
 ---
 
+### Dynamic App Name — platform_config single source of truth (2026-07-21, pending CC commit `u3v4w5x6y7z8`)
+
+All hardcoded product name strings (`"Ziva BI"` / `"ZivaBI"`) removed from frontend, emails, and TOTP issuer. The name now lives in `platform_config` and propagates everywhere with no code redeploy.
+
+**Migration `u3v4w5x6y7z8` (`platform_config_table`):**
+- Creates `platform_config` table: `key VARCHAR(100) PK`, `value TEXT NOT NULL`, `description TEXT`, `updated_at`, `updated_by FK→users nullable`. Seeded with `app_name = 'Ziva BI'`.
+
+**Backend — new files:**
+- `app/models/platform_config.py` — `PlatformConfig` ORM model.
+- `app/services/platform_config.py` — `get_app_name(db)` async helper; 5-minute in-process LRU cache (module-level dict; intentional simplicity trade-off — cache is per-worker, consistent with `render.yaml`'s 2-worker config).
+- `app/routers/app_config.py` — `GET /api/app-config` (no auth required); returns `{ app_name: str }`. Registered before auth middleware.
+
+**Backend — modified files:**
+- `app/routers/platform.py` — two new SA-only endpoints:
+  - `GET /api/platform/config` → list all `platform_config` rows.
+  - `PATCH /api/platform/config/{key}` → update a key's value; 404 for unknown keys; 422 for blank values; writes audit log entry `platform.config.updated`.
+- `app/routers/tenant.py` — `_send_invitation_email()` now takes `app_name: str` param (default `"Ziva BI"`); call site resolves `await get_app_name(db)`.
+- `app/routers/users.py` — TOTP provisioning URI `issuer_name` now reads `await get_app_name(db)` instead of `"ZivaBI"`.
+- `app/main.py` — registers `app_config_router`.
+- `app/models/__init__.py` — imports `PlatformConfig`.
+
+**Frontend — new files:**
+- `src/contexts/AppConfigContext.tsx` — `AppConfigProvider` + `useAppConfig()` hook; receives `appName` as prop from server; no client-side fetch.
+- `src/components/ClientProviders.tsx` — single `"use client"` boundary wrapping `AppConfigProvider` + `AuthProvider`.
+
+**Frontend — modified files:**
+- `src/app/layout.tsx` — rewritten as async Server Component; `fetchAppName()` with `next: { revalidate: 300 }`; `generateMetadata()` is now async for dynamic title; passes `appName` to `<ClientProviders>`.
+- 20 files across auth pages, dashboard pages, SA portal pages, and shared components — all `useAppConfig()` + `{appName}` to replace hardcoded strings. Full list in `docs/PENDING_COMMIT.md`.
+- `src/app/platform/settings/page.tsx` — replaced placeholder with real settings form (`GET /api/platform/config` + `PATCH /api/platform/config/app_name`; blank-value guard; 5-min cache notice).
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -947,6 +979,7 @@ Architectural invariants that are durable decisions (the WHY):
 - **Currency source of truth:** functional currency, reporting currency, and enabled currencies live exclusively in `tenant_org_config`. `tenant_fx_config` holds ONLY FX mechanics (rates, revaluation rules).
 - **Environment isolation:** test tenants are shadow tenants with distinct `tenant_id` values — NOT an environment column on shared tables. This was the explicit architectural choice (Option 3 in the M9 design session) over environment columns (Option 1) and schema-per-env (Option 2).
 - **Tenant lifecycle direction (M9.0.1, 2026-06-29):** signup creates ONLY a test tenant; live is born second, only via explicit super-admin promotion. `parent_tenant_id` runs test→live (live points back at the test it came from) — the inverse of the original live-first/clone design. Test stays active permanently after go-live; it's never archived.
+- **App name source of truth:** `platform_config` table, key `app_name`. Public endpoint `GET /api/app-config` serves it without auth. SA-only `GET/PATCH /api/platform/config` endpoints manage it. Backend cache: 5-minute in-process dict (`app/services/platform_config.py`). Frontend: async root layout fetches on server render (5-min Next.js revalidation), distributes via `AppConfigContext` — no client-side fetch.
 - **Expense→GL posting is synchronous, same-transaction** at final approval. This is intentional so a GL failure rolls back the approval — no partial state.
 - **Three-mode architecture (2026-07-11 — see `docs/BRIEF_three_mode_architecture.md`):** Every module supports three posting modes: `'lite'` (workflow-only, no GL), `'connected'` (GL coding in Ziva, posts to external ERP via export), `'full_erp'` (GL posts internally). Mode is set by the consultant in SA portal (`tenant_org_config.posting_mode VARCHAR(20) DEFAULT 'full_erp'`) — tenants never see this setting. The `posting_batches` table is the export queue for Connected Mode. Existing tenants default to `'full_erp'` — no migration of existing data.
 - **Module independence:** every module must work standalone. A company subscribing to only one module (e.g. only expense management, only AP) should be production-ready within the hour. CoA/Dimensions/Currencies/Tax are OPTIONAL in Lite/Connected mode and REQUIRED in Full ERP mode. The setup portal shows/hides steps based on `posting_mode` + active modules.

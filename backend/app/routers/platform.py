@@ -35,6 +35,8 @@ from app.middleware.auth import CurrentUser, require_auth, require_super_admin
 from app.config import settings
 from app.models.auth import AuditLog, ImpersonationSession, Role, Tenant, User, UserRole, UserTenant
 from app.models.gl import JournalEntry
+from app.models.platform_config import PlatformConfig
+from app.services.platform_config import get_platform_config, set_config
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
     CreateTenantRequest,
@@ -1740,3 +1742,95 @@ async def create_tenant(
         admin_email=admin_user.email,
         temp_password=temp_password,
     )
+
+
+# ── Platform Config (SA only) ─────────────────────────────────────────────────
+
+from pydantic import BaseModel as _BaseModel  # local import to avoid circular
+
+
+class PlatformConfigItem(_BaseModel):
+    """A single platform config entry."""
+    key: str
+    value: str
+    description: str | None = None
+
+
+class PlatformConfigUpdate(_BaseModel):
+    """Request body for updating a platform config key."""
+    value: str
+
+
+@router.get("/config", response_model=list[PlatformConfigItem], summary="List platform config (SA only)")
+async def list_platform_config(
+    current_user: CurrentUser = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> list[PlatformConfigItem]:
+    """
+    Return all platform config key/value pairs.  Super Admin only.
+
+    Returns:
+        List of all current platform config entries.
+    """
+    config = await get_platform_config(db)
+    rows = await db.execute(select(PlatformConfig))
+    items = rows.scalars().all()
+    return [
+        PlatformConfigItem(key=r.key, value=r.value, description=r.description)
+        for r in items
+    ]
+
+
+@router.patch("/config/{key}", response_model=PlatformConfigItem, summary="Update platform config key (SA only)")
+async def update_platform_config(
+    key: str,
+    body: PlatformConfigUpdate,
+    current_user: CurrentUser = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+) -> PlatformConfigItem:
+    """
+    Update a single platform config value.  Super Admin only.
+
+    The change takes effect immediately — the in-process cache is invalidated
+    on write, so the next request to GET /api/app-config returns the new value.
+    Frontend pages refresh the config on load (60-second Next.js revalidation),
+    so the new name appears within one minute across all connected browsers.
+
+    Parameters:
+        key:  Config key to update (e.g. 'app_name').
+        body: New value.
+
+    Returns:
+        Updated PlatformConfigItem.
+
+    Raises:
+        404 if the key does not exist in platform_config (only known keys may
+        be updated — new keys must be seeded via migration to prevent typos).
+    """
+    existing = await db.get(PlatformConfig, key)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Config key '{key}' does not exist. New keys must be added via migration.",
+        )
+
+    if not body.value.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Value for '{key}' cannot be blank.",
+        )
+
+    row = await set_config(db, key=key, value=body.value.strip(), updated_by=current_user.user_id)
+    await db.commit()
+    await db.refresh(row)
+
+    await _log(
+        "platform.config.updated",
+        current_user.user_id,
+        None,
+        {"key": key, "new_value": body.value.strip()},
+        db,
+    )
+    await db.commit()
+
+    return PlatformConfigItem(key=row.key, value=row.value, description=row.description)

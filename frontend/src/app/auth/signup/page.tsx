@@ -16,6 +16,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth, SignupData } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { MODULE_CATALOGUE } from "@/lib/modules";
 
 // ── Country list (ISO 3166-1 alpha-2) ────────────────────────────────────────
@@ -100,6 +101,7 @@ const inputCls =
 
 export default function SignupPage() {
   const { signup } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
 
   // Step 1 fields
@@ -228,7 +230,7 @@ export default function SignupPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">ZivaBI</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{appName}</h1>
           <p className="mt-2 text-sm text-gray-500">Create your business account</p>
         </div>
 

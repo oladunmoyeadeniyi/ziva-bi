@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
@@ -101,6 +102,7 @@ function CreateCompanyModal({
   onCreated: (t: CreateTenantResponse) => void;
   token: string | null;
 }) {
+  const { appName } = useAppConfig();
   const [companyName,    setCompanyName]    = useState("");
   const [country,        setCountry]        = useState("NG");
   const [adminName,      setAdminName]      = useState("");
@@ -239,7 +241,7 @@ function CreateCompanyModal({
             </div>
             <div>
               <p className="text-sm font-medium text-gray-800">Internal sandbox</p>
-              <p className="text-xs text-gray-500">Mark as a Ziva BI internal company (demo, testing). Not a real client.</p>
+              <p className="text-xs text-gray-500">Mark as a {appName} internal company (demo, testing). Not a real client.</p>
             </div>
           </label>
 
@@ -368,6 +370,7 @@ function CreateCompanyModal({
 
 export default function PlatformTenantsPage() {
   const { accessToken } = useAuth();
+  const { appName } = useAppConfig();
   const router = useRouter();
 
   const [tenants, setTenants] = useState<TenantListItem[]>([]);
@@ -428,7 +431,7 @@ export default function PlatformTenantsPage() {
         }
       />
       <p className="text-sm text-gray-500 mb-6">
-        All tenants on the Ziva BI platform. Default view shows live tenants.
+        All tenants on the {appName} platform. Default view shows live tenants.
       </p>
 
       {/* Filters */}
