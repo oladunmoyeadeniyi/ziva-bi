@@ -1,7 +1,7 @@
 """finance_review_steps table
 
 Revision ID: b0c1d2e3f4a5
-Revises: 5d5e730f42ac
+Revises: e6f7a8b9c0d1
 Create Date: 2026-07-05
 
 Adds the finance_review_steps table which replaces the legacy
@@ -11,6 +11,14 @@ fully-flexible, named-person step chain for finance review workflows.
 The legacy columns are kept (not dropped) for backward compat with any
 tenants who haven't migrated yet; they will be formally deprecated in a
 future migration once all tenants have adopted the new step builder.
+
+NOTE: down_revision changed from "5d5e730f42ac" to "e6f7a8b9c0d1" to
+enforce ordering on a fresh database. finance_review_steps has a FK to
+approval_policies (created by e6f7a8b9c0d1_approval_engine). When both
+migrations were children of the same parent (5d5e730f42ac) Alembic's
+topological sort ran them in alphabetical order — b0c1d2e3f4a5 before
+e6f7a8b9c0d1 — causing "relation approval_policies does not exist" on
+first deploy. This explicit dependency fixes that.
 """
 
 from alembic import op
@@ -19,7 +27,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "b0c1d2e3f4a5"
-down_revision = "5d5e730f42ac"
+down_revision = "e6f7a8b9c0d1"
 branch_labels = None
 depends_on = None
 
