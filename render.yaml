@@ -69,22 +69,16 @@ services:
 
   - type: web
     name: ziva-bi-frontend
-    runtime: node
+    runtime: docker
     rootDir: frontend
     region: oregon
-    # next.config.ts uses output:"standalone" — the build must copy static assets
-    # into the standalone directory and the server is started via node, not npm start.
-    buildCommand: >-
-      npm ci && npm run build &&
-      cp -r public .next/standalone/public &&
-      cp -r .next/static .next/standalone/.next/static
-    startCommand: node .next/standalone/server.js
+    # The frontend is built via frontend/Dockerfile (multi-stage: deps → builder → runner).
+    # NEXT_PUBLIC_API_URL is baked into the JS bundle in the builder stage via ENV —
+    # it must be set there, not as a runtime env var, for Next.js to inline it.
     plan: starter
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://ziva-bi-backend.onrender.com
-      - key: NODE_VERSION
-        value: "20.11.0"
 
 databases:
   - name: ziva-bi-db
