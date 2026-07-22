@@ -5,9 +5,15 @@
  *
  * Public page (no auth required). Validates the invite token on load,
  * shows a signup form if valid, then auto-logs-in on success.
+ *
+ * AcceptInviteContent uses useSearchParams() and must be wrapped in
+ * <Suspense> so Next.js can prerender the outer shell without needing
+ * the search params at build time (missing-suspense-with-csr-bailout).
  */
 
-import { useEffect, useState } from "react";
+export const dynamic = "force-dynamic";
+
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { useAppConfig } from "@/contexts/AppConfigContext";
@@ -42,7 +48,8 @@ const ROLE_LABELS: Record<string, string> = {
   tenant_admin: "Tenant Admin",
 };
 
-export default function AcceptInvitePage() {
+/** Inner component — allowed to call useSearchParams() because it is wrapped in <Suspense>. */
+function AcceptInviteContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { appName } = useAppConfig();
@@ -172,5 +179,23 @@ export default function AcceptInvitePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Fallback shown while AcceptInviteContent is loading (also displayed during prerender). */
+function InviteLoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-sm text-gray-500">Loading invitation…</div>
+    </div>
+  );
+}
+
+/** Page shell — wraps the inner component in Suspense so Next.js can prerender this boundary. */
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={<InviteLoadingFallback />}>
+      <AcceptInviteContent />
+    </Suspense>
   );
 }
