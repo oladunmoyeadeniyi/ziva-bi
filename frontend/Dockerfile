@@ -10,6 +10,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* vars are baked into the JS bundle at build time.
+# Must be set here (not in the runner stage) so next build picks them up.
+ENV NEXT_PUBLIC_API_URL=https://ziva-bi-backend.onrender.com
 RUN npm run build
 
 FROM base AS runner
