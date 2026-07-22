@@ -1886,7 +1886,7 @@ function OrganisationPage() {
                   <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
                     <h3 className="text-base font-semibold text-gray-900 mb-2">Remove role?</h3>
                     <p className="text-sm text-gray-500 mb-5">
-                      <strong className="text-gray-800">"{deleteRoleTarget.name}"</strong> will be deleted.
+                      <strong className="text-gray-800">&quot;{deleteRoleTarget.name}&quot;</strong> will be deleted.
                       Any sub-roles will be detached but not deleted.
                     </p>
                     <div className="flex gap-3 justify-end">

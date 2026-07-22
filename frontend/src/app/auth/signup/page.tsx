@@ -551,7 +551,7 @@ export default function SignupPage() {
                 disabled={loading}
                 className="w-full text-xs text-gray-400 hover:text-gray-600 py-1 transition-colors"
               >
-                Skip for now — I'll fill this in later
+                Skip for now — I&apos;ll fill this in later
               </button>
             </div>
           )}

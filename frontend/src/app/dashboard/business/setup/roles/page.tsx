@@ -594,7 +594,7 @@ function RolesContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100">
-              <p className="text-sm font-semibold text-gray-800">Assign "{assignPrompt.name}"</p>
+              <p className="text-sm font-semibold text-gray-800">Assign &quot;{assignPrompt.name}&quot;</p>
               <p className="text-xs text-gray-500 mt-0.5">
                 {assignPrompt.instances.length} variants found. Select which to assign to{" "}
                 <span className="font-medium">{assignPrompt.tier === "power_admin" ? "Tenant Power Admin" : "Functional Admin"}</span>.
