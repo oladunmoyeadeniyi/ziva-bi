@@ -462,7 +462,7 @@ async def assign_roles(
         role_result = await db.execute(
             select(Role).where(Role.name == role_name, Role.tenant_id.is_(None))
         )
-        role = role_result.scalar_one_or_none()
+        role = role_result.scalars().first()
         if role:
             db.add(UserRole(
                 user_tenant_id=ut.id,

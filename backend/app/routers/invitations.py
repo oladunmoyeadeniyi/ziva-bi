@@ -156,7 +156,7 @@ async def accept_invitation(
     role_result = await db.execute(
         select(Role).where(Role.name == inv.role, Role.tenant_id.is_(None))
     )
-    role = role_result.scalar_one_or_none()
+    role = role_result.scalars().first()
     if role:
         db.add(UserRole(user_tenant_id=user_tenant.id, role_id=role.id))
 
