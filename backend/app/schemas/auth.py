@@ -249,3 +249,23 @@ class PromoteResponse(BaseModel):
     promoted: list[str]
     deferred: list[str]
     message: str
+
+
+# ── P2: Password reset ────────────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    """Body for POST /api/auth/forgot-password."""
+
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def normalise_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class ResetPasswordRequest(BaseModel):
+    """Body for POST /api/auth/reset-password."""
+
+    token: str = Field(..., min_length=10)
+    new_password: str = Field(..., min_length=8)

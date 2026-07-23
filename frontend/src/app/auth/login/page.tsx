@@ -112,13 +112,23 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-gray-500">
-            Don&apos;t have an account?{" "}
+          <div className="mt-6 flex flex-col items-center gap-2 text-sm text-gray-500">
             <Link
-              href="/auth/signup"
+              href="/auth/forgot-password"
               className="font-semibold text-blue-600 hover:text-blue-700"
-           >Sign up</Link>
-          </p>
+            >
+              Forgot your password?
+            </Link>
+            <span>
+              Don&apos;t have an account?{" "}
+              <Link
+                href="/auth/signup"
+                className="font-semibold text-blue-600 hover:text-blue-700"
+              >
+                Sign up
+              </Link>
+            </span>
+          </div>
         </div>
       </div>
     </div>

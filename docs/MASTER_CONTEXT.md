@@ -932,6 +932,35 @@ All hardcoded product name strings (`"Ziva BI"` / `"ZivaBI"`) removed from front
 
 ---
 
+### P2 — Resend Email Service (2026-07-23, pending CC commit)
+
+Replaced all SMTP stubs with a production-ready Resend-backed email service. Every email touchpoint in the product is now wired.
+
+**Backend — new files:**
+- `app/services/email.py` — centralised async email service using httpx to call the Resend REST API (`https://api.resend.com/emails`). Six named helpers: `send_email()` (primitive), `send_invitation_email()`, `send_password_reset_email()`, `send_live_promotion_email()`, `send_onboarding_invite_email()`, `send_approval_notification_email()`. All accept a `suppress: bool` parameter — test-tenant emails are never sent. Falls back to console simulation log when `RESEND_API_KEY` is unset.
+- `alembic/versions/w5x6y7z8a9b0_password_reset_tokens.py` — migration creating `password_reset_tokens` table (down_revision: `v4w5x6y7z8a9`).
+
+**Backend — modified files:**
+- `config.py` — removed `smtp_host/smtp_port/smtp_user/smtp_password/smtp_from_email`; added `resend_api_key: str = ""` and `email_from: str = "Ziva BI <onboarding@resend.dev>"`.
+- `render.yaml` — replaced `SMTP_*` env vars with `RESEND_API_KEY` (sync: false) + `EMAIL_FROM`.
+- `models/auth.py` — added `PasswordResetToken` ORM model (SHA-256 token_hash, expires_at, used_at, one-use + 1hr TTL). FK → users CASCADE.
+- `schemas/auth.py` — added `ForgotPasswordRequest` (normalises email lowercase) + `ResetPasswordRequest`.
+- `routers/auth.py` — added `POST /api/auth/forgot-password` (always 200, no enumeration; invalidates old tokens, creates new token, sends reset email) + `POST /api/auth/reset-password` (validates token hash + expiry + used_at, marks used_at before password update, clears must_change_password). Added `from app.config import settings` at module level (was missing — caused NameError on live calls).
+- `routers/approvals.py` — removed `smtplib` / `MIMEText`; all 5 email helpers converted from `def` to `async def`; `_smtp_send()` deleted; `await` added to all 9 call sites.
+- `routers/tenant.py` — removed `smtplib` / `MIMEText`; async wrapper around `send_invitation_email()`; `suppress=tenant.suppress_outbound_email` passed at call site.
+- `routers/platform.py` — wired `send_live_promotion_email()` in the live-promotion path (was a TODO comment).
+- `routers/hr.py` — wired `send_onboarding_invite_email()` at employee creation (was a suppressed debug log).
+- `requirements.txt` — added `resend>=2.0.0`.
+
+**Frontend — new files:**
+- `auth/forgot-password/page.tsx` — email input form; generic success message to prevent enumeration.
+- `auth/reset-password/page.tsx` — new-password form; uses `useSearchParams()` inside `<ResetPasswordContent>` wrapped by `<Suspense>` in the default export (required by Next.js 15 App Router).
+
+**Frontend — modified files:**
+- `auth/login/page.tsx` — "Forgot your password?" link added above "Sign up".
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -1025,7 +1054,6 @@ Architectural invariants that are durable decisions (the WHY):
 | # | What | Blocker |
 |---|---|---|
 | P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | App is not accessible to any customer. Zero revenue until this is done. |
-| P2 | **Email / SMTP** (Resend or SendGrid; replace stdout stub) | Invitations, password resets, and notifications are all broken without real email. |
 | P3 | **Schema drift audit + `go-live.tsx.bak` cleanup** | CC flagged `alembic check` may surface ORM/migration drift. Must verify before live data hits Render. `go-live/page.tsx.bak` was accidentally committed — needs `git rm`. |
 
 ### TIER 1 — Quick Wins (backend already exists; UI only)

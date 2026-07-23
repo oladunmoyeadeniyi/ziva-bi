@@ -556,3 +556,54 @@ class ImpersonationSession(Base):
     ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+# ── P2: Password reset tokens ─────────────────────────────────────────────────
+
+class PasswordResetToken(Base):
+    """
+    Short-lived token used by the forgot-password / reset-password flow.
+
+    The raw token is sent to the user via email (in a URL query param).
+    Only the SHA-256 hash is stored here — the same pattern used for
+    refresh tokens — so a DB breach cannot be used to hijack resets.
+
+    Flow
+    ----
+    1. POST /api/auth/forgot-password (email)
+       → create a PasswordResetToken with token_hash, set used_at=NULL.
+    2. User clicks link → POST /api/auth/reset-password (token, new_password)
+       → look up by token_hash, validate expiry + used_at, update password.
+    3. Mark used_at = now so the token cannot be replayed.
+
+    One active token per user at a time is enforced by invalidating older
+    tokens before inserting a new one (avoid parallel-reset races).
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # SHA-256 hex digest of the raw 32-byte random token sent to the user.
+    token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # Set when the token is consumed; prevents replay.
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship("User")

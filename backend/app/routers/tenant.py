@@ -21,10 +21,8 @@ Existing endpoints:
 """
 
 import secrets
-import smtplib
 import uuid
 from datetime import datetime, timedelta, timezone
-from email.mime.text import MIMEText
 
 import logging
 
@@ -33,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.email import send_invitation_email as _email_invitation
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.auth import AuditLog, Role, Tenant, User, UserRole, UserTenant
@@ -97,40 +96,25 @@ async def _get_tenant_member_or_404(
     return row[0], row[1]
 
 
-def _send_invitation_email(
+async def _send_invitation_email(
     to_email: str,
     tenant_name: str,
     invited_by_name: str,
     role: str,
     accept_url: str,
     app_name: str = "Ziva BI",
+    suppress: bool = False,
 ) -> None:
-    """Send invitation email; console-logs when SMTP is not configured."""
-    subject = f"You've been invited to join {tenant_name} on {app_name}"
-    body = (
-        f"{invited_by_name} has invited you to join {tenant_name} on {app_name} as {role}.\n\n"
-        f"Click the link below to accept your invitation:\n{accept_url}\n\n"
-        f"This link expires in 48 hours."
+    """Send invitation email via Resend; suppressed for test tenants."""
+    await _email_invitation(
+        to_email=to_email,
+        tenant_name=tenant_name,
+        invited_by_name=invited_by_name,
+        role=role,
+        accept_url=accept_url,
+        app_name=app_name,
+        suppress=suppress,
     )
-
-    if not all([settings.smtp_host, settings.smtp_user, settings.smtp_password]):
-        logger.info(
-            "[EMAIL SIMULATION] Invitation\nTo: %s\nSubject: %s\n\n%s",
-            to_email, subject, body,
-        )
-        return
-
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = settings.smtp_from_email or settings.smtp_user
-    msg["To"] = to_email
-    try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
-            smtp.starttls()
-            smtp.login(settings.smtp_user, settings.smtp_password)
-            smtp.send_message(msg)
-    except Exception as exc:
-        logger.warning("Failed to send invitation email to %s: %s", to_email, exc)
 
 
 # ── M9.0 helpers ─────────────────────────────────────────────────────────────
@@ -657,13 +641,14 @@ async def create_invitation(
     accept_url = f"{settings.frontend_url}/invite/accept?token={token}"
     app_name = await get_app_name(db)
 
-    _send_invitation_email(
+    await _send_invitation_email(
         to_email=data.email,
         tenant_name=tenant_name,
         invited_by_name=inviter_name,
         role=data.role,
         accept_url=accept_url,
         app_name=app_name,
+        suppress=getattr(tenant, "suppress_outbound_email", False),
     )
 
     return InvitationResponse(

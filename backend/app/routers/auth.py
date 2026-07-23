@@ -16,7 +16,9 @@ Account locking:
     lockout policy is a future enhancement (tenant_settings table).
 """
 
+import hashlib
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -31,9 +33,11 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
+from app.config import settings
 from app.database import get_db
 from app.models.auth import (
     AuditLog,
+    PasswordResetToken,
     RefreshToken,
     Role,
     Session,
@@ -45,14 +49,18 @@ from app.models.auth import (
 from app.schemas.auth import (
     AuthResponse,
     ChangePasswordRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     LogoutRequest,
     MessageResponse,
     RefreshTokenRequest,
+    ResetPasswordRequest,
     SignupRequest,
     SwitchEnvironmentRequest,
     UserResponse,
 )
+from app.services.email import send_password_reset_email
+from app.services.platform_config import get_app_name
 from app.middleware.auth import CurrentUser, require_auth
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -873,3 +881,123 @@ async def change_password(
     await db.commit()
 
     return MessageResponse(message="Password updated successfully.")
+
+
+# ── P2: Forgot / reset password ───────────────────────────────────────────────
+
+_RESET_TOKEN_EXPIRE_HOURS = 1
+
+
+def _hash_token(raw: str) -> str:
+    """Return SHA-256 hex digest of a raw reset token."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """
+    Initiate the forgot-password flow.
+
+    Always returns 200 so callers cannot enumerate valid email addresses.
+    Sends a reset link to the email if a matching account exists.
+
+    One active token per user — existing unused tokens for that user are
+    invalidated before inserting a new one to prevent parallel-reset races.
+    """
+    # Look up the user — silently succeed if not found (no enumeration)
+    user_res = await db.execute(select(User).where(User.email == data.email))
+    user: User | None = user_res.scalar_one_or_none()
+
+    if user and user.is_active:
+        # Invalidate any outstanding tokens for this user
+        await db.execute(
+            select(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+        )
+        old_tokens_res = await db.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+        )
+        for tok in old_tokens_res.scalars().all():
+            tok.used_at = datetime.now(timezone.utc)  # mark consumed
+
+        # Create new token
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(raw_token)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=_RESET_TOKEN_EXPIRE_HOURS)
+
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        ))
+        await db.commit()
+
+        reset_url = f"{settings.frontend_url}/auth/reset-password?token={raw_token}"
+        app_name = await get_app_name(db)
+        await send_password_reset_email(
+            to_email=user.email,
+            full_name=user.full_name,
+            reset_url=reset_url,
+            app_name=app_name,
+        )
+
+    return MessageResponse(
+        message="If that email address is registered, you will receive a password reset link shortly."
+    )
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    data: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """
+    Complete the forgot-password flow — set a new password using the token.
+
+    The token is valid for 1 hour and can only be used once.
+    Resets the password on ALL UserTenant rows for the user (covers both
+    individual and business accounts; business users reuse the same password
+    across all their tenants).
+    """
+    token_hash = _hash_token(data.token)
+    now = datetime.now(timezone.utc)
+
+    tok_res = await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+        )
+    )
+    reset_token: PasswordResetToken | None = tok_res.scalar_one_or_none()
+
+    if not reset_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset link. Please request a new one.",
+        )
+
+    # Mark token consumed before changing the password (prevents race replay)
+    reset_token.used_at = now
+
+    # Update password on all UserTenant rows for this user
+    uts_res = await db.execute(
+        select(UserTenant).where(UserTenant.user_id == reset_token.user_id)
+    )
+    new_hash = hash_password(data.new_password)
+    for ut in uts_res.scalars().all():
+        ut.password_hash = new_hash
+        ut.must_change_password = False  # clear the flag if it was set
+
+    await db.commit()
+
+    return MessageResponse(message="Password reset successfully. You can now log in with your new password.")

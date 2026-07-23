@@ -50,8 +50,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
+from app.services.email import send_onboarding_invite_email
+from app.services.platform_config import get_app_name
 from app.models.master_data import (
     CostCenterConfig,
     Employee,
@@ -1593,9 +1596,22 @@ async def send_employee_invite(
     db.add(token)
     await db.commit()
 
-    # Log invite link at debug level — sensitive, should not appear in production logs
-    onboarding_link = f"/onboard/{token_value}"
-    logger.debug("[ONBOARDING] Invite created for %s (link suppressed at non-debug level)", data.email)
+    # Send onboarding invite email (suppressed for test tenants via suppress_outbound_email flag)
+    onboarding_link = f"{settings.frontend_url}/onboard/{token_value}"
+    tenant_res = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+    tenant = tenant_res.scalar_one_or_none()
+    suppress = getattr(tenant, "suppress_outbound_email", False)
+    tenant_name = tenant.name if tenant else "your company"
+    app_name = await get_app_name(db)
+    full_name = f"{data.first_name} {data.last_name}".strip()
+    await send_onboarding_invite_email(
+        to_email=data.email,
+        full_name=full_name,
+        tenant_name=tenant_name,
+        onboarding_url=onboarding_link,
+        app_name=app_name,
+        suppress=suppress,
+    )
 
     return {
         "message": "Invite created successfully.",

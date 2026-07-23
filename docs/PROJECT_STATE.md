@@ -26,7 +26,7 @@ ziva-bi/
 │   ├── alembic/versions/         — 58+ migration files (chain head: `g1h2i3j4k5l6`, all committed)
 │   ├── app/
 │   │   ├── main.py               — FastAPI app boot, CORS, system role seeding, router registration
-│   │   ├── config.py             — pydantic-settings: DATABASE_URL, ALLOWED_ORIGINS, SMTP, Supabase keys
+│   │   ├── config.py             — pydantic-settings: DATABASE_URL, ALLOWED_ORIGINS, RESEND_API_KEY + EMAIL_FROM, Supabase keys
 │   │   ├── database.py           — async SQLAlchemy engine + AsyncSession factory
 │   │   ├── core/security.py      — JWT create/verify, bcrypt hash, refresh token generation
 │   │   ├── middleware/auth.py    — require_auth, require_super_admin, block_if_readonly_impersonation
@@ -81,6 +81,7 @@ ziva-bi/
 │   │       ├── periods.py        — period state machine helpers: is_date_postable, grace computation
 │   │       ├── promotion_engine.py — Phase 3a: diff + apply config promotion from test → live
 │   │       ├── account_determination.py — resolve_account(): posting role_key → GL account ID
+│   │       ├── email.py          — async Resend email service (httpx → REST API); helpers: send_invitation/password_reset/live_promotion/onboarding_invite/approval_notification; suppress flag for test tenants
 │   │       └── storage.py        — Supabase Storage upload/delete/signed-URL proxy
 │   ├── scripts/
 │   │   ├── seed_m7_categories.py — one-off seed script for M7 expense categories
@@ -125,6 +126,7 @@ ziva-bi/
 | `refresh_tokens` | `id PK`, `session_id FK→sessions CASCADE`, `token_hash UNIQUE`, `expires_at`, `used_at`, `replaced_by_id`, `is_revoked` | SHA-256 hash only; token rotation + replay detection |
 | `audit_logs` | `id PK`, `event_type`, `user_id FK→users SET NULL`, `tenant_id FK→tenants SET NULL`, `ip_address`, `log_metadata JSONB`, `created_at` | Append-only |
 | `tenant_invitations` | `id PK`, `tenant_id FK→tenants CASCADE`, `invited_by FK→users SET NULL`, `email`, `role`, `token UNIQUE`, `status` ('PENDING'/'ACCEPTED'/'EXPIRED'), `expires_at` | 48-hour invite token |
+| `password_reset_tokens` | `id UUID PK`, `user_id FK→users CASCADE`, `token_hash VARCHAR(64) UNIQUE` (SHA-256 of raw token), `expires_at TIMESTAMPTZ`, `used_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ` | One-use, 1-hour TTL. Old tokens invalidated before a new one is created. Token is stored hashed; raw token sent in email URL. Migration `w5x6y7z8a9b0`. |
 
 ### 2.2 Organisation & Setup Tables
 
@@ -251,6 +253,8 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | POST | /api/auth/refresh-token | Rotate refresh token |
 | POST | /api/auth/logout | Revoke refresh token, end session |
 | POST | /api/auth/change-password | Force-change temp password. Verifies current password; rejects same-as-current; sets `must_change_password=False`. Requires auth. |
+| POST | /api/auth/forgot-password | Request password reset link. Always returns 200 (prevents enumeration). Creates `password_reset_tokens` row; sends reset email via Resend. No auth required. |
+| POST | /api/auth/reset-password | Reset password using token from email URL. Validates token hash + expiry + one-use guard. Updates password_hash on all UserTenant rows for the user; clears `must_change_password`. No auth required. |
 
 ### 4.2 Users (`/api/users`)
 | Method | Path | Purpose |
@@ -313,7 +317,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | PATCH | /api/tenant/users/{user_id}/roles | Replace user roles |
 | PATCH | /api/tenant/users/{user_id}/deactivate | Soft-deactivate user |
 | PATCH | /api/tenant/users/{user_id}/reactivate | Reactivate user |
-| POST | /api/tenant/invitations | Send invitation ⚠️ SMTP stub |
+| POST | /api/tenant/invitations | Send invitation (Resend — wired via `services/email.py`; `suppress_outbound_email` flag respected) |
 | GET | /api/tenant/invitations | List invitations |
 | DELETE | /api/tenant/invitations/{invite_id} | Cancel pending invitation |
 | POST | /api/tenant/create-test-environment | Create/retrieve shadow test tenant (live tenants only — under test-first, a fresh tenant already starts as test) |
@@ -562,7 +566,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | Feature | Status | Notes |
 |---|---|---|
 | Auth (signup/login/JWT/2FA/sessions) | ✅ Working | |
-| Tenant invite & user management | ✅ Working | Email stub — only sends if SMTP vars configured |
+| Tenant invite & user management | ✅ Working | Invitation email sent via Resend (`services/email.py`); suppressed for test tenants |
 | Expense submit → approve → GL posting | ✅ Working (non-split) | ⚠️ Split-line reports cannot be posted — see Issue #001 |
 | Approval matrix (1–3 levels) | ✅ Working | |
 | Refer-back + audit trail + snapshots | ✅ Working | ⚠️ Snapshots missing M9 fields — see Issue #003 |
@@ -672,7 +676,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | Frontend URL (local dev) | `http://localhost:3000` |
 | API docs | `http://localhost:8000/api/docs` |
 | CORS | Always includes localhost:3000, localhost:3001; additional from `ALLOWED_ORIGINS` env var |
-| SMTP | Stubbed — sends only if smtp_host/smtp_user/smtp_password configured; silently logs otherwise |
+| Email | Resend REST API via `services/email.py` (httpx). Production: set `RESEND_API_KEY` env var. Dev: no key → console simulation log (no real sends). Test tenants: `suppress_outbound_email=True` blocks all outbound. |
 | Supabase Storage | Bucket: `documents` (private); config via SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_BUCKET. **Signed URL expiry: 15 minutes** ✅ (was 1 hour — reduced in task #53). |
 | **Storage target (future)** | Cloudflare R2 — migrate when tenants > 5 or storage > 5 GB. Zero egress ($0.015/GB/month vs Supabase $0.021/GB + $0.09/GB egress). S3-compatible drop-in. |
 | **DB infrastructure (target)** | Upgrade Render PostgreSQL to Standard ($50/month) before launch. Supabase Pro consolidates DB + storage (Supavisor pooler + 8 GB). Redis caching for tenant config at 10+ tenants. |

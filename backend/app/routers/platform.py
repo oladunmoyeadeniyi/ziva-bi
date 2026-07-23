@@ -36,7 +36,8 @@ from app.config import settings
 from app.models.auth import AuditLog, ImpersonationSession, Role, Tenant, User, UserRole, UserTenant
 from app.models.gl import JournalEntry
 from app.models.platform_config import PlatformConfig
-from app.services.platform_config import get_platform_config, set_config
+from app.services.email import send_live_promotion_email
+from app.services.platform_config import get_app_name, get_platform_config, set_config
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
     CreateTenantRequest,
@@ -1086,7 +1087,8 @@ async def platform_promotion_apply(
     if born_live:
         # Auto-grant: mirror every UserTenant row from test -> the new live tenant.
         test_uts_res = await db.execute(select(UserTenant).where(UserTenant.tenant_id == test.id))
-        for test_ut in test_uts_res.scalars().all():
+        test_uts = test_uts_res.scalars().all()
+        for test_ut in test_uts:
             db.add(UserTenant(
                 user_id=test_ut.user_id,
                 tenant_id=live.id,
@@ -1094,11 +1096,21 @@ async def platform_promotion_apply(
                 is_active=test_ut.is_active,
                 role_tier=test_ut.role_tier,
             ))
-        # TODO (future milestone — email infrastructure required):
-        # For each mirrored user, send a "Your live account is ready" welcome email
-        # containing their login URL and instructing them to use their existing password
-        # (same credentials as the test environment, since password_hash is mirrored).
-        # Blocked on: email service integration (SendGrid / SES / SMTP) not yet built.
+        # Send "Your live account is ready" welcome email to each mirrored user.
+        # Credentials are unchanged (password_hash is mirrored from the test tenant).
+        app_name = await get_app_name(db)
+        login_url = settings.frontend_url + "/auth/login"
+        for test_ut in test_uts:
+            user_res = await db.execute(select(User).where(User.id == test_ut.user_id))
+            user = user_res.scalar_one_or_none()
+            if user and user.is_active:
+                await send_live_promotion_email(
+                    to_email=user.email,
+                    full_name=user.full_name,
+                    tenant_name=live.name,
+                    login_url=login_url,
+                    app_name=app_name,
+                )
     else:
         # Repeat promotion -- live already existed; keep it live (no-op if already so).
         live.lifecycle_status = "live"

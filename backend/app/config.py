@@ -65,16 +65,17 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ALLOWED_ORIGINS", "allowed_origins_raw"),
     )
 
-    # ── SMTP (email notifications) ────────────────────────────────────────────
-    # If SMTP_HOST / SMTP_USER / SMTP_PASSWORD are not set, rejection emails
-    # are logged to the console instead of sent — safe for local dev.
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from_email: str = ""
+    # ── Email (P2 — Resend) ───────────────────────────────────────────────────
+    # Set RESEND_API_KEY in the Render dashboard (or backend/.env for local dev).
+    # When not set, all email calls fall back to a console simulation log —
+    # safe for local dev without any additional configuration.
+    resend_api_key: str = ""
+    # "From" header used in all outbound emails.
+    # Production: use a verified Resend domain, e.g. "Ziva BI <noreply@mail.zivafinance.com>".
+    # Default works immediately via Resend's shared domain (limits: 100 emails/day).
+    email_from: str = "Ziva BI <onboarding@resend.dev>"
 
-    # ── Frontend URL (used in invitation emails) ──────────────────────────────
+    # ── Frontend URL (used in email links) ────────────────────────────────────
     frontend_url: str = "http://localhost:3000"
 
     # ── App ───────────────────────────────────────────────────────────────────

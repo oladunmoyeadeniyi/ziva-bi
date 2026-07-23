@@ -38,19 +38,16 @@ services:
       - key: SUPABASE_BUCKET
         value: documents
 
-      # ── Email (P2 — fill in when Resend/SendGrid is wired up) ───────────────
+      # ── Email (P2 — Resend) ───────────────────────────────────────────────────
+      # 1. Create a Resend account → https://resend.com
+      # 2. Generate an API key and set it here (sync: false → enter in dashboard)
+      # 3. Verify your sending domain and update EMAIL_FROM once the domain is confirmed
       - key: FRONTEND_URL
         value: https://ziva-bi-frontend.onrender.com
-      - key: SMTP_HOST
+      - key: RESEND_API_KEY
         sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
+      - key: EMAIL_FROM
+        value: "Ziva BI <onboarding@resend.dev>"
 
       # ── Platform owner ───────────────────────────────────────────────────────
       # Set to the UUID of the Ziva BI owner account after first deploy + signup.

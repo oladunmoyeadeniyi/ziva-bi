@@ -35,11 +35,9 @@ Endpoints:
 
 import io
 import logging
-import smtplib
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from email.mime.text import MIMEText
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -48,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.services.email import send_approval_notification_email
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
 from app.models.approvals import (
@@ -282,25 +281,25 @@ async def _write_snapshot(
     return version
 
 
-def _send_rejection_email(
+async def _send_rejection_email(
     to_email: str,
     report_number: str,
     report_date: str,
     total_amount: Decimal,
     rejection_comment: str,
 ) -> None:
-    """Send rejection notification; falls back to console log if SMTP not configured."""
+    """Send rejection notification via Resend."""
     subject = f"Expense Report {report_number} Rejected"
     body = (
         f"Your expense report {report_number} dated {report_date} "
         f"for ₦{total_amount:,.2f} has been rejected.\n\n"
         f"Reason: {rejection_comment}\n\n"
-        f"Please log in to Ziva BI to review and resubmit."
+        f"Please log in to review and resubmit."
     )
-    _smtp_send(to_email, subject, body)
+    await send_approval_notification_email(to_email, subject, body, body)
 
 
-def _send_approver_notification_email(
+async def _send_approver_notification_email(
     to_email: str,
     report_number: str,
     report_date: str,
@@ -313,13 +312,12 @@ def _send_approver_notification_email(
     body = (
         f"{employee_name} has submitted expense report {report_number} "
         f"dated {report_date} for ₦{total_amount:,.2f} requiring your "
-        f"approval as {role_label}.\n\n"
-        f"Please log in to Ziva BI to review and action."
+        f"approval as {role_label}."
     )
-    _smtp_send(to_email, subject, body)
+    await send_approval_notification_email(to_email, subject, body, body)
 
 
-def _send_approval_complete_email(
+async def _send_approval_complete_email(
     to_email: str,
     report_number: str,
     report_date: str,
@@ -329,13 +327,12 @@ def _send_approval_complete_email(
     subject = f"Approved: Expense Report {report_number}"
     body = (
         f"Your expense report {report_number} dated {report_date} "
-        f"for ₦{total_amount:,.2f} has been fully approved.\n\n"
-        f"Please log in to Ziva BI to view the approved report."
+        f"for ₦{total_amount:,.2f} has been fully approved."
     )
-    _smtp_send(to_email, subject, body)
+    await send_approval_notification_email(to_email, subject, body, body)
 
 
-def _send_refer_back_email(
+async def _send_refer_back_email(
     to_email: str,
     report_number: str,
     comment: str,
@@ -345,13 +342,12 @@ def _send_refer_back_email(
     subject = f"Query on Expense Report {report_number}"
     body = (
         f"There is a query on your expense report {report_number}.\n\n"
-        f"Query: {comment}\n\n"
-        f"Please log in to Ziva BI to view the details."
+        f"Query: {comment}"
     )
-    _smtp_send(to_email, subject, body)
+    await send_approval_notification_email(to_email, subject, body, body)
 
 
-def _send_referred_approver_email(
+async def _send_referred_approver_email(
     to_email: str,
     report_number: str,
     referring_approver_name: str,
@@ -363,31 +359,9 @@ def _send_referred_approver_email(
     body = (
         f"Expense report {report_number} has been referred to you by "
         f"{referring_approver_name} (Level {referring_level}) for review.\n\n"
-        f"Query: {comment}\n\n"
-        f"Please log in to Ziva BI to respond."
+        f"Query: {comment}"
     )
-    _smtp_send(to_email, subject, body)
-
-
-def _smtp_send(to_email: str, subject: str, body: str) -> None:
-    """Shared SMTP send; logs to console when SMTP credentials are not configured."""
-    if not all([settings.smtp_host, settings.smtp_user, settings.smtp_password]):
-        logger.info(
-            "[EMAIL SIMULATION]\nTo: %s\nSubject: %s\n\n%s",
-            to_email, subject, body,
-        )
-        return
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = settings.smtp_from_email or settings.smtp_user
-    msg["To"] = to_email
-    try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
-            smtp.starttls()
-            smtp.login(settings.smtp_user, settings.smtp_password)
-            smtp.send_message(msg)
-    except Exception as exc:
-        logger.warning("Failed to send email to %s: %s", to_email, exc)
+    await send_approval_notification_email(to_email, subject, body, body)
 
 
 # ── Approval Roles ────────────────────────────────────────────────────────────
@@ -1735,7 +1709,7 @@ async def submit_with_approvers(
             employee = employee_result.scalar_one_or_none()
             if approver and employee:
                 role_label = first_rec.role_label or "Approver"
-                _send_approver_notification_email(
+                await _send_approver_notification_email(
                     to_email=approver.email,
                     report_number=report.report_number,
                     report_date=str(report.report_date),
@@ -1815,7 +1789,7 @@ async def submit_with_approvers(
         employee = employee_result.scalar_one_or_none()
         if approver and employee:
             role_label_l1 = (l1.role_label + " (Advisory)") if l1.is_advisory else l1.role_label
-            _send_approver_notification_email(
+            await _send_approver_notification_email(
                 to_email=approver.email,
                 report_number=report.report_number,
                 report_date=str(report.report_date),
@@ -1914,7 +1888,7 @@ async def submit_with_approvers(
     employee_result = await db.execute(select(User).where(User.id == report.employee_id))
     employee = employee_result.scalar_one_or_none()
     if approver and employee:
-        _send_approver_notification_email(
+        await _send_approver_notification_email(
             to_email=approver.email,
             report_number=report.report_number,
             report_date=str(report.report_date),
@@ -2276,7 +2250,7 @@ async def approve(
                 referring_approver_result = await db.execute(select(User).where(User.id == approval.approver_id))
                 referring_approver = referring_approver_result.scalar_one_or_none()
                 if next_approver and referring_approver:
-                    _send_referred_approver_email(
+                    await _send_referred_approver_email(
                         to_email=next_approver.email,
                         report_number=report.report_number,
                         referring_approver_name=referring_approver.full_name,
@@ -2337,7 +2311,7 @@ async def approve(
             adv_approver_result = await db.execute(select(User).where(User.id == adv.approver_id))
             adv_approver = adv_approver_result.scalar_one_or_none()
             if adv_approver and employee:
-                _send_approver_notification_email(
+                await _send_approver_notification_email(
                     to_email=adv_approver.email,
                     report_number=report.report_number,
                     report_date=str(report.report_date),
@@ -2353,7 +2327,7 @@ async def approve(
             next_approver = next_approver_result.scalar_one_or_none()
             if next_approver and employee:
                 role_label = next_blocking.role_label or f"Level {next_blocking.level}"
-                _send_approver_notification_email(
+                await _send_approver_notification_email(
                     to_email=next_approver.email,
                     report_number=report.report_number,
                     report_date=str(report.report_date),
@@ -2406,7 +2380,7 @@ async def approve(
             employee_result = await db.execute(select(User).where(User.id == report.employee_id))
             employee = employee_result.scalar_one_or_none()
             if employee:
-                _send_approval_complete_email(
+                await _send_approval_complete_email(
                     to_email=employee.email,
                     report_number=report.report_number,
                     report_date=str(report.report_date),
@@ -2484,7 +2458,7 @@ async def reject(
     employee_result = await db.execute(select(User).where(User.id == report.employee_id))
     employee = employee_result.scalar_one_or_none()
     if employee:
-        _send_rejection_email(
+        await _send_rejection_email(
             to_email=employee.email,
             report_number=report.report_number,
             report_date=str(report.report_date),
@@ -2558,7 +2532,7 @@ async def refer_back(
             employee_result = await db.execute(select(User).where(User.id == report.employee_id))
             employee = employee_result.scalar_one_or_none()
             if employee:
-                _send_refer_back_email(
+                await _send_refer_back_email(
                     to_email=employee.email,
                     report_number=report.report_number,
                     comment=data.comment,
@@ -2625,7 +2599,7 @@ async def refer_back(
         first_approver_result = await db.execute(select(User).where(User.id == first_target.approver_id))
         first_approver = first_approver_result.scalar_one_or_none()
         if first_approver and referring_approver:
-            _send_referred_approver_email(
+            await _send_referred_approver_email(
                 to_email=first_approver.email,
                 report_number=report.report_number,
                 referring_approver_name=referring_approver.full_name,
