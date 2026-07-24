@@ -421,6 +421,10 @@ export default function BusinessLayout({
                   <SectionLabel label="Accounting" />
                   <NavLink href="/dashboard/business/accounting/journal-entries" label="Journal entries" icon="notebook" />
                   <NavLink href="/dashboard/business/accounting/trial-balance" label="Trial balance" icon="table-column" />
+                  {/* Financial Statements: Full ERP only */}
+                  {postingMode === 'full_erp' && (
+                    <NavLink href="/dashboard/business/accounting/financial-statements" label="Financial statements" icon="report-analytics" />
+                  )}
                 </div>
               )}
 

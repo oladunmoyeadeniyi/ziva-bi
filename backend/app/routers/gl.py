@@ -29,6 +29,17 @@ Endpoints:
         Connected mode: allowed (pre-export adjustments).
         Full ERP mode: primary use case.
 
+    GET  /api/gl/financial-statements/pl                  (Q1a)
+        ?date_from=YYYY-MM-DD  &date_to=YYYY-MM-DD
+        Profit & Loss statement grouped by fs_head → fs_note.
+        amount = total_credit − total_debit per account.
+        Returns PLResponse: sections, net_income, has_unmapped.
+
+    GET  /api/gl/financial-statements/bs                  (Q1a)
+        ?as_at_date=YYYY-MM-DD
+        Balance Sheet grouped by fs_head → fs_note (cumulative up to date).
+        Returns BSResponse: sections, has_unmapped.
+
 Guard:
     require_auth + must-have-tenant check (_require_gl_user).
     Fine-grained "finance roles only" RBAC is future. For now any authenticated
@@ -52,15 +63,17 @@ from app.models.master_data import ChartOfAccount
 from app.models.setup import TenantOrgConfig
 from app.schemas.gl import (
     AccountLedgerResponse,
+    BSResponse,
     JournalEntryListItem,
     JournalEntryOut,
     JournalLineInput,
     JournalLineOut,
     ManualJournalCreate,
+    PLResponse,
     TrialBalanceResponse,
 )
 from app.services.gl_posting import PostingError, post_journal
-from app.services.gl_reporting import account_ledger, trial_balance
+from app.services.gl_reporting import account_ledger, balance_sheet, profit_and_loss, trial_balance
 
 router = APIRouter(prefix="/api/gl", tags=["gl"])
 
@@ -174,6 +187,67 @@ async def get_account_ledger(
             detail=f"GL account {gl_account_id} not found or does not belong to this tenant.",
         )
     return result
+
+
+# ── Financial Statements (Q1a) ────────────────────────────────────────────────
+
+@router.get("/financial-statements/pl", response_model=PLResponse)
+async def get_profit_and_loss(
+    date_from: Optional[date] = Query(None, description="Inclusive period start (YYYY-MM-DD)."),
+    date_to: Optional[date] = Query(None, description="Inclusive period end (YYYY-MM-DD)."),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> PLResponse:
+    """
+    Profit & Loss statement for the tenant.
+
+    Groups all POSTED PL-account journal lines by fs_head → fs_note → gl_number.
+    Sections are ordered by their lowest GL account number (Revenue before Expenses
+    in any standard CoA numbering scheme).
+
+    Sign convention — amount = total_credit − total_debit:
+        Revenue / income groups: amount is positive (credit normal balance).
+        Cost / expense groups: amount is negative (debit normal balance).
+        net_income = Σ(all section totals) — positive = profit, negative = loss.
+
+    Full ERP mode is the primary use case. Available in Connected mode for
+    adjustments and accruals posted there. Lite mode has no in-app GL, so the
+    caller should check posting_mode before calling this endpoint.
+
+    Access: any authenticated tenant user.
+    """
+    tenant_id = _require_gl_user(current_user)
+    return await profit_and_loss(db, tenant_id, date_from=date_from, date_to=date_to)
+
+
+@router.get("/financial-statements/bs", response_model=BSResponse)
+async def get_balance_sheet(
+    as_at_date: Optional[date] = Query(
+        None,
+        description="Cumulative balance as at this date (YYYY-MM-DD). Omit for all-time.",
+    ),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> BSResponse:
+    """
+    Balance Sheet (Statement of Financial Position) for the tenant.
+
+    Groups all POSTED BS-account journal lines (cumulative up to as_at_date) by
+    fs_head → fs_note → gl_number.  Sections are ordered by their lowest GL number.
+
+    Sign convention — amount = total_credit − total_debit:
+        Asset sections: amount is negative (debit normal balance).
+        Liability / Equity sections: amount is positive (credit normal balance).
+        Frontend should display abs(amount) for asset lines, keep positive for L+E.
+
+    Note: the BS will not foot to zero during the year unless a closing entry has
+    been posted to transfer net income into retained earnings. This is expected
+    accounting behaviour and is documented in the BSResponse schema.
+
+    Access: any authenticated tenant user.
+    """
+    tenant_id = _require_gl_user(current_user)
+    return await balance_sheet(db, tenant_id, as_at_date=as_at_date)
 
 
 # ── Manual journal entries (Q2) ───────────────────────────────────────────────

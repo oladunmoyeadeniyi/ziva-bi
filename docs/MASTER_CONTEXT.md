@@ -1102,6 +1102,7 @@ Architectural invariants that are durable decisions (the WHY):
 |---|---|---|
 | SA-B-lite | **SA Portal — manual paid/plan flag** (`plan` + `paid_since` on tenant; editable from SA tenant detail page) | SA portal only — mode-agnostic | ✅ Done (2026-07-24) |
 | Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected |
+| Q1a | **Financial Statements UI — P&L + Balance Sheet** (`profit_and_loss()` + `balance_sheet()` in `gl_reporting.py`; `GET /api/gl/financial-statements/pl` + `/bs`; two-tab frontend page; Full ERP only in sidebar) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected | ✅ Done (2026-07-24) |
 | Q2 | **Manual Journal Entry UI** (list + new entry form; `POST /api/gl/journal-entries` wraps `post_journal()`; Lite blocked; sidebar Accounting section added) | **Full ERP primary; Connected optional; Lite blocked** | ✅ Done (2026-07-24) |
 | Q3 | **Snapshot M9 field fix** (add gl_id, dimension_values, split_lines to snapshot_data) | All modes |
 | Q4 | **Split-line GL posting fix** (split-parent containers correctly skipped; frontend validation now validates split children for GL + required dimensions) | Connected + Full ERP | ✅ Done (2026-07-24) |

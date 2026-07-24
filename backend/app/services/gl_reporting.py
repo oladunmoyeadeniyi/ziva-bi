@@ -1,6 +1,19 @@
 """
 ZivaBI — GL reporting service (GL Engine #2).
 
+Financial Statements (Q1a):
+    profit_and_loss(db, tenant_id, *, date_from, date_to)
+        → PLResponse
+        Groups PL accounts by fs_head → fs_note, ordered by gl_number.
+        net = total_credit − total_debit (positive = income, negative = expense).
+
+    balance_sheet(db, tenant_id, *, as_at_date)
+        → BSResponse
+        Cumulative BS account balances up to as_at_date.
+        Same sign convention: net = total_credit − total_debit.
+
+
+
 Pure read / compute functions. POSTED entries only (DRAFT and REVERSED excluded).
 All money values are Decimal(18,2) — never float.
 
@@ -28,6 +41,7 @@ dimension_filter (account_ledger):
 """
 
 import json
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -41,7 +55,12 @@ from app.models.gl import JournalEntry, JournalLine
 from app.models.master_data import ChartOfAccount
 from app.schemas.gl import (
     AccountLedgerResponse,
+    BSResponse,
+    FSGroup,
+    FSLineItem,
+    FSSection,
     LedgerLine,
+    PLResponse,
     TrialBalanceResponse,
     TrialBalanceRow,
 )
@@ -302,4 +321,208 @@ async def account_ledger(
         closing_balance=closing_balance,
         date_from=date_from,
         date_to=date_to,
+    )
+
+
+# ── Financial statements helpers ──────────────────────────────────────────────
+
+def _build_fs_response(rows: list, *, has_unmapped_check: bool = True) -> tuple[list[FSSection], bool]:
+    """
+    Build a list of FSSection objects from a flat list of DB rows.
+
+    Each row must have: fs_head, fs_note, gl_number, gl_name, total_debit, total_credit.
+    Rows must already be ordered by gl_number (ascending) — the first gl_number seen
+    in each fs_head determines section order; the first within each (fs_head, fs_note)
+    pair determines group order within the section.
+
+    Returns (sections, has_unmapped) where has_unmapped is True if any row has
+    fs_head IS NULL.
+    """
+    # Track insertion order via first-seen gl_number
+    section_first: dict[str, str] = {}           # fs_head → first gl_number
+    group_first: dict[tuple[str, str], str] = {} # (fs_head, fs_note) → first gl_number
+    group_items: dict[tuple[str, str], list[FSLineItem]] = defaultdict(list)
+    has_unmapped = False
+
+    for row in rows:
+        head = row.fs_head if row.fs_head else "Unclassified"
+        note = row.fs_note if row.fs_note else "Unclassified"
+        if row.fs_head is None:
+            has_unmapped = True
+
+        if head not in section_first:
+            section_first[head] = row.gl_number
+        gk = (head, note)
+        if gk not in group_first:
+            group_first[gk] = row.gl_number
+
+        dr = _d(row.total_debit)
+        cr = _d(row.total_credit)
+        group_items[gk].append(FSLineItem(
+            gl_number=row.gl_number,
+            gl_name=row.gl_name,
+            total_debit=dr,
+            total_credit=cr,
+            amount=cr - dr,
+        ))
+
+    # Sort sections and groups by first gl_number seen
+    sorted_heads = sorted(section_first, key=lambda h: section_first[h])
+    sections: list[FSSection] = []
+    for head in sorted_heads:
+        # All groups under this head, sorted by first gl_number
+        head_groups = sorted(
+            ((gk, gv) for gk, gv in group_first.items() if gk[0] == head),
+            key=lambda kv: kv[1],
+        )
+        groups: list[FSGroup] = []
+        for (_, note), _ in head_groups:
+            items = group_items[(head, note)]
+            subtotal = sum((i.amount for i in items), _ZERO)
+            groups.append(FSGroup(label=note, items=items, subtotal=subtotal))
+
+        section_total = sum((g.subtotal for g in groups), _ZERO)
+        sections.append(FSSection(label=head, groups=groups, total=section_total))
+
+    return sections, has_unmapped
+
+
+# ── Profit & Loss ─────────────────────────────────────────────────────────────
+
+async def profit_and_loss(
+    db: AsyncSession,
+    tenant_id: UUID,
+    *,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> PLResponse:
+    """
+    Compute the Profit & Loss statement from POSTED journal lines.
+
+    Parameters:
+        db         — async session (read-only).
+        tenant_id  — tenant scope.
+        date_from  — inclusive lower bound on entry_date (None = beginning of time).
+        date_to    — inclusive upper bound on entry_date (None = end of time).
+
+    Returns:
+        PLResponse with P&L sections ordered by first GL number in each section.
+        net_income = sum of all section totals (positive = profit, negative = loss).
+        has_unmapped = True if any PL account with activity has fs_head IS NULL.
+
+    Sign convention:
+        amount = total_credit − total_debit.
+        Revenue / income accounts: credit normal → amount is positive.
+        Expense / cost accounts: debit normal → amount is negative.
+        Net income = Σ(revenue amounts) + Σ(expense amounts) = revenue − expenses.
+    """
+    q = (
+        select(
+            ChartOfAccount.fs_head,
+            ChartOfAccount.fs_note,
+            ChartOfAccount.gl_number,
+            ChartOfAccount.gl_name,
+            func.sum(JournalLine.debit).label("total_debit"),
+            func.sum(JournalLine.credit).label("total_credit"),
+        )
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
+        .join(ChartOfAccount, JournalLine.gl_account_id == ChartOfAccount.id)
+        .where(
+            JournalLine.tenant_id == tenant_id,
+            JournalEntry.status == "POSTED",
+            ChartOfAccount.account_type == "PL",
+        )
+        .group_by(
+            ChartOfAccount.fs_head,
+            ChartOfAccount.fs_note,
+            ChartOfAccount.gl_number,
+            ChartOfAccount.gl_name,
+        )
+        .order_by(ChartOfAccount.gl_number)
+    )
+    if date_from is not None:
+        q = q.where(JournalEntry.entry_date >= date_from)
+    if date_to is not None:
+        q = q.where(JournalEntry.entry_date <= date_to)
+
+    rows = (await db.execute(q)).all()
+    sections, has_unmapped = _build_fs_response(rows)
+    net_income = sum((s.total for s in sections), _ZERO)
+
+    return PLResponse(
+        sections=sections,
+        net_income=net_income,
+        has_unmapped=has_unmapped,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+
+# ── Balance Sheet ─────────────────────────────────────────────────────────────
+
+async def balance_sheet(
+    db: AsyncSession,
+    tenant_id: UUID,
+    *,
+    as_at_date: Optional[date] = None,
+) -> BSResponse:
+    """
+    Compute the Balance Sheet from POSTED journal lines (cumulative).
+
+    Parameters:
+        db          — async session (read-only).
+        tenant_id   — tenant scope.
+        as_at_date  — upper bound on entry_date (None = all posted history).
+
+    Returns:
+        BSResponse with BS sections ordered by first GL number in each section.
+        has_unmapped = True if any BS account with posted activity has fs_head IS NULL.
+
+    Sign convention:
+        amount = total_credit − total_debit.
+        Asset accounts: debit normal → amount is negative (e.g. cash: −500,000).
+        Liability / Equity accounts: credit normal → amount is positive (e.g. payables: +200,000).
+        The frontend flips asset amounts for display (show absolute value as a positive asset figure).
+
+    Note on balance check:
+        Sum of all BS amounts ≈ 0 only after the year-end closing entry transfers
+        net profit into retained earnings. During the year the BS will appear out of
+        balance by the current-year P&L net income. This is expected accounting behaviour.
+    """
+    q = (
+        select(
+            ChartOfAccount.fs_head,
+            ChartOfAccount.fs_note,
+            ChartOfAccount.gl_number,
+            ChartOfAccount.gl_name,
+            func.sum(JournalLine.debit).label("total_debit"),
+            func.sum(JournalLine.credit).label("total_credit"),
+        )
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
+        .join(ChartOfAccount, JournalLine.gl_account_id == ChartOfAccount.id)
+        .where(
+            JournalLine.tenant_id == tenant_id,
+            JournalEntry.status == "POSTED",
+            ChartOfAccount.account_type == "BS",
+        )
+        .group_by(
+            ChartOfAccount.fs_head,
+            ChartOfAccount.fs_note,
+            ChartOfAccount.gl_number,
+            ChartOfAccount.gl_name,
+        )
+        .order_by(ChartOfAccount.gl_number)
+    )
+    if as_at_date is not None:
+        q = q.where(JournalEntry.entry_date <= as_at_date)
+
+    rows = (await db.execute(q)).all()
+    sections, has_unmapped = _build_fs_response(rows)
+
+    return BSResponse(
+        sections=sections,
+        has_unmapped=has_unmapped,
+        as_at_date=as_at_date,
     )

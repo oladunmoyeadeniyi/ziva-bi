@@ -137,6 +137,89 @@ class JournalEntryListItem(BaseModel):
     created_at: datetime
 
 
+# ── Financial Statements schemas (Q1a) ───────────────────────────────────────
+
+class FSLineItem(BaseModel):
+    """
+    A single GL account line in a financial statement.
+
+    amount = total_credit − total_debit (positive = net income / liability / equity;
+    negative = net expense / asset).  Callers flip sign for display where needed.
+    """
+
+    gl_number: str
+    gl_name: str
+    total_debit: Decimal
+    total_credit: Decimal
+    amount: Decimal  # total_credit − total_debit
+
+
+class FSGroup(BaseModel):
+    """
+    A fs_note sub-section within a financial statement section.
+
+    label     — fs_note value (or "Unclassified" when fs_note IS NULL on the CoA row).
+    items     — GL accounts belonging to this sub-section, ordered by gl_number.
+    subtotal  — sum of item amounts (same sign convention as FSLineItem.amount).
+    """
+
+    label: str
+    items: list[FSLineItem]
+    subtotal: Decimal
+
+
+class FSSection(BaseModel):
+    """
+    A fs_head top-level section in a financial statement.
+
+    label  — fs_head value (or "Unclassified" when fs_head IS NULL).
+    groups — fs_note sub-sections within this section, ordered by first gl_number.
+    total  — sum of group subtotals.
+    """
+
+    label: str
+    groups: list[FSGroup]
+    total: Decimal
+
+
+class PLResponse(BaseModel):
+    """
+    Profit & Loss (Income Statement) response.
+
+    sections   — P&L sections ordered by first GL number (Revenue first, Tax last
+                 when using the standard CoA numbering scheme).
+    net_income — sum of all section totals. Positive = profit; negative = loss.
+    has_unmapped — True if any active PL accounts have fs_head IS NULL (unmapped).
+    date_from / date_to — the period boundaries passed in the request.
+    """
+
+    sections: list[FSSection]
+    net_income: Decimal
+    has_unmapped: bool
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+
+
+class BSResponse(BaseModel):
+    """
+    Balance Sheet (Statement of Financial Position) response.
+
+    sections   — BS sections ordered by first GL number (assets first, equity last
+                 when using the standard CoA numbering scheme).
+    has_unmapped — True if any BS accounts with posted transactions have fs_head IS NULL.
+    as_at_date — upper date bound for the cumulative balance query (None = all time).
+
+    Note on balance check:
+        Retained earnings do not include current-year profit until a closing entry is
+        posted. During the year, total BS debits ≠ total BS credits unless a closing
+        entry exists. The raw totals are supplied; the caller may compute a check.
+    """
+
+    sections: list[FSSection]
+    has_unmapped: bool
+    as_at_date: Optional[date] = None
+
+
 # ── GL read / reporting schemas (Brief 2) ────────────────────────────────────
 
 class TrialBalanceRow(BaseModel):
