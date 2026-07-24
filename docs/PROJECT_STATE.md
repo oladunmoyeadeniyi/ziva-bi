@@ -281,6 +281,8 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | PATCH | /api/expenses/reports/{report_id}/lines/{line_id} | Update line (auto-save) |
 | PATCH | /api/expenses/reports/{report_id} | Update DRAFT header |
 | POST | /api/expenses/reports/{report_id}/submit | Submit (legacy path) |
+| GET | /api/expenses/export.csv | **Lite mode only** — download approved reports + lines as CSV (tenant_admin). Query params: `from_date`, `to_date` (default: current month). Formula-injection safe (_csv_safe). |
+| GET | /api/expenses/export.xlsx | **Lite mode only** — download approved reports + lines as Excel workbook (tenant_admin). Bold headers, date/money formats, freeze pane. Same query params as CSV. |
 
 ### 4.4 Approvals (`/api/approvals`)
 | Method | Path | Purpose |
@@ -620,7 +622,8 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | Employee template (latest) | ✅ Working | Org Role first + mandatory, Resumption Date mandatory, capacity enforcement, role/CC validation |
 | Cost center display format | ✅ Working | `CODE - Name` (hyphen) everywhere — dropdowns, templates, all pages |
 | Role dropdown display | ✅ Working | `Role Name - CC Name [Area > Sub-area]` in all dropdowns and templates |
-| role_tier enforcement | ⚠️ Partial | Column + JWT exist; full gate enforcement incomplete |
+| role_tier enforcement | ✅ Audited (2026-07-24) | `_sa()` in `platform.py` → `require_super_admin()` correctly blocks `power_admin` from all SA-only endpoints. `_require_tenant_admin` intentionally passes for power_admin (tenant-scoped op). No code changes needed. |
+| Lite-mode expense export (CSV + Excel) | ✅ Done (2026-07-24) | `GET /api/expenses/export.csv` and `GET /api/expenses/export.xlsx`. Tenant admin only, Lite mode only (400 for Connected/Full ERP). Date range params; default: current month. Joins reports→users→lines→categories; excludes split-parent rows. CSV: OWASP formula-injection safe (`_csv_safe()`). Excel: `openpyxl`, bold blue header, date/money formats, freeze pane. Frontend: blue export bar on Expenses page with date inputs + Download CSV + Download Excel buttons. |
 | Approval matrix — selective_tree routing mode | ✅ Working | New `routing_mode` value. DB: `approval_policies.selected_designations` JSONB. Engine (`approval_routing.py`) walks org tree and filters to designation levels in `selected_designations`; raises error if list is empty. Phase 2: designations with `role="review"` produce advisory (non-blocking) steps; `role="approve"` produce blocking steps. All-advisory guard raises `ApprovalRoutingError` at submit time if no blocking approver exists in the chain. |
 | Approval matrix — open/configurable step types | ✅ Working | `finance_review_steps.step_type` is now a free-form string (max 50 chars). `VALID_STEP_TYPES` validator removed. Five built-in behaviors (capture, validate, internal_audit, review, approve) offered as datalist suggestions. `label` is fully decoupled from `step_type` — changing tag no longer overwrites name. |
 | Approval matrix — function_code per step | ✅ Working | `finance_review_steps.function_code VARCHAR(50)` nullable. When set, assignee picker in approval-matrix UI filters to employees mapped to that function via `GET /api/setup/functions`. |

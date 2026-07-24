@@ -14,22 +14,27 @@ Endpoints:
     PATCH  /api/expenses/reports/{report_id}/lines/{line_id} Update individual line fields (auto-save)
     PATCH  /api/expenses/reports/{report_id}                Update DRAFT header
     POST   /api/expenses/reports/{report_id}/submit         Submit DRAFT → SUBMITTED
+    GET    /api/expenses/export.csv                         CSV export of approved reports (Lite mode only)
 """
 
+import csv
+import io
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth, block_if_readonly_impersonation
-from app.models.auth import Role, UserRole, UserTenant
-from app.models.expenses import ExpenseLine, ExpenseReport
+from app.models.auth import Role, User, UserRole, UserTenant
+from app.models.expenses import ExpenseCategory, ExpenseLine, ExpenseReport
+from app.models.setup import TenantOrgConfig
 from app.schemas.expenses import (
     ExpenseLineCreate,
     ExpenseLineResponse,
@@ -573,3 +578,327 @@ async def get_expense_suggestions(
             )
 
     return SuggestionResponse(description=description, dimensions=dimensions)
+
+
+# ── P4: Lite-mode export (CSV + Excel) ────────────────────────────────────────
+
+_EXPORT_HEADERS = [
+    "Report Number",
+    "Employee Name",
+    "Employee Code",
+    "Report Date",
+    "Currency",
+    "Report Total",
+    "Line No.",
+    "Description",
+    "Category",
+    "Subcategory",
+    "Invoice Date",
+    "Invoice Number",
+    "Line Amount",
+]
+
+_FORMULA_TRIGGERS = frozenset(("=", "+", "-", "@"))
+
+
+def _csv_safe(value: str | None) -> str:
+    """
+    Sanitise a string cell against CSV formula injection (OWASP).
+
+    If the value starts with =, +, -, or @ Excel/Sheets would interpret it as
+    a formula. Prefixing with a single quote forces spreadsheet apps to treat
+    the cell as plain text.  The quote is invisible to the end user.
+
+    Parameters:
+        value: raw cell string (or None).
+
+    Returns:
+        Safe string ready to write via csv.writer.
+    """
+    if not value:
+        return ""
+    s = str(value)
+    return f"'{s}" if s[0] in _FORMULA_TRIGGERS else s
+
+
+async def _require_lite_export_access(
+    current_user: CurrentUser,
+    db: AsyncSession,
+) -> tuple[uuid.UUID, date_type, date_type]:
+    """
+    Shared guard for both export endpoints.
+
+    Raises 403 if caller is not tenant_admin/super_admin.
+    Raises 400 if tenant posting_mode is not 'lite'.
+
+    Returns:
+        (tenant_id, default_from_date, default_to_date)
+    """
+    if not current_user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Expense retirement is a business-tier feature.",
+        )
+    tenant_id = current_user.tenant_id
+
+    if not current_user.is_tenant_admin and not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant admin access is required to export expense data.",
+        )
+
+    mode_result = await db.execute(
+        select(TenantOrgConfig.posting_mode).where(
+            TenantOrgConfig.tenant_id == tenant_id
+        )
+    )
+    posting_mode: str = mode_result.scalar_one_or_none() or "full_erp"
+    if posting_mode != "lite":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Expense export is only available in Lite mode. "
+                "For Connected or Full ERP tenants, use the GL reports or posting-batch exports."
+            ),
+        )
+
+    today = date_type.today()
+    return tenant_id, today.replace(day=1), today
+
+
+async def _fetch_export_rows(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    resolved_from: date_type,
+    resolved_to: date_type,
+) -> list:
+    """
+    Fetch approved expense line rows for export (shared by CSV and Excel endpoints).
+
+    Joins expense_reports → users → expense_lines → expense_categories (×2).
+    Excludes split-parent container lines (is_split_parent = False only).
+
+    Returns a list of SQLAlchemy Row objects with named attributes matching
+    _EXPORT_HEADERS layout.
+    """
+    CategoryAlias: type[ExpenseCategory] = aliased(ExpenseCategory)  # type: ignore[type-arg]
+    SubcategoryAlias: type[ExpenseCategory] = aliased(ExpenseCategory)  # type: ignore[type-arg]
+
+    q = (
+        select(
+            ExpenseReport.report_number,
+            ExpenseReport.employee_code,
+            ExpenseReport.report_date,
+            ExpenseReport.currency,
+            ExpenseReport.total_amount,
+            User.full_name.label("employee_name"),
+            ExpenseLine.line_number,
+            ExpenseLine.description.label("line_description"),
+            ExpenseLine.invoice_date,
+            ExpenseLine.invoice_number,
+            ExpenseLine.amount.label("line_amount"),
+            CategoryAlias.name.label("category_name"),
+            SubcategoryAlias.name.label("subcategory_name"),
+        )
+        .join(User, User.id == ExpenseReport.employee_id)
+        .join(ExpenseLine, ExpenseLine.report_id == ExpenseReport.id)
+        .outerjoin(CategoryAlias, CategoryAlias.id == ExpenseLine.category_id)
+        .outerjoin(SubcategoryAlias, SubcategoryAlias.id == ExpenseLine.subcategory_id)
+        .where(
+            ExpenseReport.tenant_id == tenant_id,
+            ExpenseReport.status == "APPROVED",
+            ExpenseReport.report_date >= resolved_from,
+            ExpenseReport.report_date <= resolved_to,
+            ExpenseLine.is_split_parent.is_(False),
+        )
+        .order_by(
+            ExpenseReport.report_date,
+            ExpenseReport.report_number,
+            ExpenseLine.line_number,
+        )
+    )
+    return list((await db.execute(q)).all())
+
+
+@router.get("/export.csv", response_class=StreamingResponse)
+async def export_approved_csv(
+    from_date: date_type | None = Query(
+        None,
+        description="Start date inclusive (YYYY-MM-DD). Defaults to first day of current month.",
+    ),
+    to_date: date_type | None = Query(
+        None,
+        description="End date inclusive (YYYY-MM-DD). Defaults to today.",
+    ),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Export approved expense reports and their lines as a downloadable CSV file.
+
+    Lite-mode only — returns HTTP 400 for Connected or Full ERP tenants.
+    Requires tenant_admin or super_admin.
+
+    String cells containing formula triggers (=, +, -, @) are prefixed with a
+    single quote to prevent CSV formula injection (OWASP) when opened in Excel
+    or Google Sheets.
+    """
+    tenant_id, default_from, default_to = await _require_lite_export_access(current_user, db)
+
+    resolved_from = from_date or default_from
+    resolved_to = to_date or default_to
+    if resolved_from > resolved_to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="from_date must not be later than to_date.")
+
+    rows = await _fetch_export_rows(db, tenant_id, resolved_from, resolved_to)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(_EXPORT_HEADERS)
+
+    for row in rows:
+        writer.writerow([
+            _csv_safe(row.report_number),
+            _csv_safe(row.employee_name),
+            _csv_safe(row.employee_code),
+            row.report_date.isoformat(),
+            row.currency,
+            str(row.total_amount),
+            row.line_number,
+            _csv_safe(row.line_description),
+            _csv_safe(row.category_name),
+            _csv_safe(row.subcategory_name),
+            row.invoice_date.isoformat() if row.invoice_date else "",
+            _csv_safe(row.invoice_number),
+            str(row.line_amount),
+        ])
+
+    filename = f"expenses_{resolved_from}_{resolved_to}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export.xlsx", response_class=StreamingResponse)
+async def export_approved_xlsx(
+    from_date: date_type | None = Query(
+        None,
+        description="Start date inclusive (YYYY-MM-DD). Defaults to first day of current month.",
+    ),
+    to_date: date_type | None = Query(
+        None,
+        description="End date inclusive (YYYY-MM-DD). Defaults to today.",
+    ),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Export approved expense reports and their lines as an Excel workbook (.xlsx).
+
+    Lite-mode only — returns HTTP 400 for Connected or Full ERP tenants.
+    Requires tenant_admin or super_admin.
+
+    The workbook includes:
+      - Bold header row with light blue fill
+      - Date columns formatted as YYYY-MM-DD
+      - Amount columns formatted as number with 2 decimal places
+      - Auto-fitted column widths (capped at 50)
+      - Freeze on row 1 so the header stays visible while scrolling
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    tenant_id, default_from, default_to = await _require_lite_export_access(current_user, db)
+
+    resolved_from = from_date or default_from
+    resolved_to = to_date or default_to
+    if resolved_from > resolved_to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="from_date must not be later than to_date.")
+
+    rows = await _fetch_export_rows(db, tenant_id, resolved_from, resolved_to)
+
+    # ── Build workbook ─────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Approved Expenses"  # type: ignore[union-attr]
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(fill_type="solid", fgColor="1D4ED8")  # Tailwind blue-700
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=False)
+
+    date_fmt = "YYYY-MM-DD"
+    money_fmt = '#,##0.00'
+
+    # Column config: (header, width_hint, format)
+    COL_CFG = [
+        ("Report Number",  18, None),
+        ("Employee Name",  24, None),
+        ("Employee Code",  16, None),
+        ("Report Date",    13, date_fmt),
+        ("Currency",        9, None),
+        ("Report Total",   15, money_fmt),
+        ("Line No.",        9, None),
+        ("Description",    40, None),
+        ("Category",       20, None),
+        ("Subcategory",    20, None),
+        ("Invoice Date",   13, date_fmt),
+        ("Invoice Number", 18, None),
+        ("Line Amount",    15, money_fmt),
+    ]
+
+    # Write header row
+    for col_idx, (header, width, _) in enumerate(COL_CFG, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)  # type: ignore[union-attr]
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        ws.column_dimensions[get_column_letter(col_idx)].width = width  # type: ignore[union-attr]
+
+    ws.freeze_panes = "A2"  # type: ignore[union-attr]
+    ws.row_dimensions[1].height = 22  # type: ignore[union-attr]
+
+    # Write data rows — amounts and dates as native types so Excel formats them
+    for row in rows:
+        data = [
+            row.report_number,
+            row.employee_name or "",
+            row.employee_code or "",
+            row.report_date,          # date object → Excel serial date
+            row.currency,
+            float(row.total_amount),  # Decimal → float for openpyxl
+            row.line_number,
+            row.line_description or "",
+            row.category_name or "",
+            row.subcategory_name or "",
+            row.invoice_date if row.invoice_date else None,
+            row.invoice_number or "",
+            float(row.line_amount),
+        ]
+        ws.append(data)  # type: ignore[union-attr]
+
+    # Apply number/date formats to data columns
+    last_data_row = 1 + len(rows)
+    for col_idx, (_, _, fmt) in enumerate(COL_CFG, start=1):
+        if fmt is None:
+            continue
+        col_letter = get_column_letter(col_idx)
+        for row_idx in range(2, last_data_row + 1):
+            ws[f"{col_letter}{row_idx}"].number_format = fmt  # type: ignore[union-attr]
+
+    # Serialise to bytes
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"expenses_{resolved_from}_{resolved_to}.xlsx"
+    media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

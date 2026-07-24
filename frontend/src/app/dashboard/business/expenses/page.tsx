@@ -6,6 +6,7 @@
  * M4: Status badges extended to cover PENDING_APPROVAL / APPROVED / REJECTED.
  *     Tab filters updated to reflect all possible statuses.
  *     REJECTED reports show both View and Edit actions.
+ * P4: CSV export bar visible to tenant admins in Lite mode (Approved tab).
  */
 
 import { useEffect, useState, Suspense } from "react";
@@ -18,6 +19,8 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/Banner";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface ExpenseReport {
   id: string;
@@ -77,6 +80,14 @@ function ExpensesListContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabFilter>((searchParams.get("tab") as TabFilter) || "ALL");
+  const [postingMode, setPostingMode] = useState<string | null>(null);
+
+  // Export state (shared by CSV + Excel)
+  const thisMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const [exportFrom, setExportFrom] = useState(`${thisMonth}-01`);
+  const [exportTo, setExportTo] = useState(new Date().toISOString().slice(0, 10));
+  const [isExporting, setIsExporting] = useState<"csv" | "xlsx" | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const updateUrl = (tab: string) => {
     router.replace(`?tab=${tab}`, { scroll: false });
@@ -105,6 +116,43 @@ function ExpensesListContent() {
     };
     fetchReports();
   }, [accessToken]);
+
+  // Fetch posting mode once (for Lite-mode export bar)
+  useEffect(() => {
+    if (!accessToken || !user?.is_tenant_admin) return;
+    apiFetch<{ posting_mode?: string }>("/api/setup/org", { token: accessToken })
+      .then((d) => setPostingMode(d.posting_mode ?? null))
+      .catch(() => { /* non-critical */ });
+  }, [accessToken, user?.is_tenant_admin]);
+
+  const handleExport = async (format: "csv" | "xlsx") => {
+    if (!accessToken) return;
+    setIsExporting(format);
+    setExportError(null);
+    try {
+      const params = new URLSearchParams();
+      if (exportFrom) params.set("from_date", exportFrom);
+      if (exportTo) params.set("to_date", exportTo);
+      const res = await fetch(`${API_BASE}/api/expenses/export.${format}?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: "Export failed." }));
+        throw new Error(typeof body.detail === "string" ? body.detail : "Export failed.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `expenses_${exportFrom}_${exportTo}.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setIsExporting(null);
+    }
+  };
 
   const tabCounts: Record<TabFilter, number> = {
     ALL:       reports.length,
@@ -182,6 +230,50 @@ function ExpensesListContent() {
           </Link>
         )}
       </div>
+
+      {/* Lite-mode export bar — visible to tenant admins only */}
+      {user?.is_tenant_admin && postingMode === "lite" && !error && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
+          <span className="text-sm font-medium text-blue-800 shrink-0">Export Approved:</span>
+          <label className="flex items-center gap-1.5 text-sm text-gray-700">
+            From
+            <input
+              type="date"
+              value={exportFrom}
+              onChange={(e) => setExportFrom(e.target.value)}
+              className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-sm text-gray-700">
+            To
+            <input
+              type="date"
+              value={exportTo}
+              onChange={(e) => setExportTo(e.target.value)}
+              className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </label>
+          <Button
+            variant="secondary"
+            onClick={() => handleExport("csv")}
+            disabled={isExporting !== null}
+            loading={isExporting === "csv"}
+          >
+            {isExporting === "csv" ? "Exporting…" : "Download CSV"}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => handleExport("xlsx")}
+            disabled={isExporting !== null}
+            loading={isExporting === "xlsx"}
+          >
+            {isExporting === "xlsx" ? "Exporting…" : "Download Excel"}
+          </Button>
+          {exportError && (
+            <span className="text-xs text-red-600 ml-1">{exportError}</span>
+          )}
+        </div>
+      )}
 
       {/* Filter tabs */}
       {!error && (

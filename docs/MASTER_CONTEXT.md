@@ -961,6 +961,25 @@ Replaced all SMTP stubs with a production-ready Resend-backed email service. Eve
 
 ---
 
+### P4 — Lite-mode CSV + Excel Export (2026-07-24)
+
+Fulfilled the core Lite-mode commercial promise: approved expense reports are now downloadable as CSV or Excel from the Expenses page. This closes the final unbuilt feature that was blocking Lite mode from being commercially viable.
+
+**Backend — `backend/app/routers/expenses.py`:**
+- `_EXPORT_HEADERS` — shared column list used by both endpoints (13 columns).
+- `_csv_safe(value)` — OWASP formula-injection mitigation; prefixes `=`, `+`, `-`, `@` cell values with `'` so Excel/Sheets treats them as text, not formulas.
+- `_require_lite_export_access(current_user, db)` — shared guard: raises 403 for non-admins, 400 for non-Lite tenants. Returns `(tenant_id, default_from, default_to)`.
+- `_fetch_export_rows(db, tenant_id, from, to)` — shared query: joins `expense_reports → users → expense_lines → expense_categories (×2 aliased)`. Filters `status=APPROVED`, date range, `is_split_parent=False`.
+- `GET /api/expenses/export.csv` — applies `_csv_safe()` to all free-text columns; returns `text/csv StreamingResponse`.
+- `GET /api/expenses/export.xlsx` — uses `openpyxl` (already in requirements.txt); bold blue header row, date/money column formats, freeze pane on row 1, auto-fitted column widths; returns `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet StreamingResponse`.
+
+**Frontend — `frontend/src/app/dashboard/business/expenses/page.tsx`:**
+- Fetches `posting_mode` from `/api/setup/org` once on load (for admin users only).
+- Shows a blue export bar when `user.is_tenant_admin && postingMode === 'lite'`: date range inputs (from/to, default: current month) + "Download CSV" + "Download Excel" buttons.
+- `handleExport(format: 'csv' | 'xlsx')` — unified raw-fetch → Blob URL download; `isExporting` state typed as `'csv' | 'xlsx' | null` so each button shows its own spinner independently.
+
+---
+
 ### What changed in this reconciliation (2026-06-29)
 
 This section was significantly out of date relative to shipped code. Fixed:
@@ -1051,10 +1070,14 @@ Architectural invariants that are durable decisions (the WHY):
 
 ### TIER 0 — Production Gates (immediate — nothing else matters until these are done)
 
-| # | What | Blocker |
-|---|---|---|
-| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | App is not accessible to any customer. Zero revenue until this is done. |
-| P3 | **Schema drift audit + `go-live.tsx.bak` cleanup** | CC flagged `alembic check` may surface ORM/migration drift. Must verify before live data hits Render. `go-live/page.tsx.bak` was accidentally committed — needs `git rm`. |
+| # | What | Status | Blocker |
+|---|---|---|---|
+| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | ⏳ In progress | App is not accessible to any customer. Zero revenue until this is done. |
+| P2 | **Email / SMTP** (Resend integration; replace stdout stub) | ✅ Done `a5172a0` | — |
+| P3 | **Schema drift audit + `go-live.tsx.bak` cleanup** | ✅ Done `b3e70e3` | — |
+| P4 | **Lite-mode CSV + Excel export of approved transactions** | ✅ Done | — |
+| P5 | **Production DB backup policy** | ✅ Done — Render 3-day PITR confirmed active | — |
+| P6 | **`role_tier` enforcement sweep** (power_admin cannot call SA-only endpoints) | ✅ Done — audit confirmed, no code changes needed | — |
 
 ### TIER 1 — Quick Wins (backend already exists; UI only)
 
