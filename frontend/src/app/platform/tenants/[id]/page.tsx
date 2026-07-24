@@ -56,6 +56,10 @@ interface TenantDetail {
   test_environment: TestEnvSummary | null;
   /** M9.0.1 — populated when this tenant is itself a test tenant with a born-from-promotion live counterpart. */
   live_environment: TestEnvSummary | null;
+  /** SA-B-lite: billing plan tier (free | starter | growth | enterprise). NULL = free. */
+  plan: string | null;
+  /** SA-B-lite: date of first payment; null = not yet paying. */
+  paid_since: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -161,6 +165,12 @@ export default function TenantDetailPage() {
   const [nukeLiveConfirm, setNukeLiveConfirm] = useState(false);
   const [nuking, setNuking]                 = useState(false);
 
+  // SA-B-lite: billing
+  const [billingPlan, setBillingPlan]       = useState<string>("free");
+  const [billingPaidSince, setBillingPaidSince] = useState<string>("");
+  const [billingSaving, setBillingSaving]   = useState(false);
+  const [billingMsg, setBillingMsg]         = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
   const load = useCallback(async () => {
     if (!accessToken || !id) return;
     setLoading(true);
@@ -176,6 +186,9 @@ export default function TenantDetailPage() {
           ? (data.pre_suspension_status ?? "in_implementation")
           : data.lifecycle_status
       );
+      // Seed billing fields
+      setBillingPlan(data.plan ?? "free");
+      setBillingPaidSince(data.paid_since ?? "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load tenant");
     } finally {
@@ -371,6 +384,28 @@ export default function TenantDetailPage() {
       </PageContainer>
     );
   }
+
+  const saveBilling = async () => {
+    if (!accessToken || !tenant) return;
+    setBillingSaving(true);
+    setBillingMsg(null);
+    try {
+      await apiFetch(`/api/platform/tenants/${id}/billing`, {
+        method: "PATCH",
+        token: accessToken,
+        body: {
+          plan: billingPlan === "free" ? null : billingPlan,
+          paid_since: billingPaidSince || null,
+        },
+      });
+      setBillingMsg({ type: "ok", text: "Billing updated." });
+      await load();
+    } catch (e) {
+      setBillingMsg({ type: "err", text: e instanceof Error ? e.message : "Save failed" });
+    } finally {
+      setBillingSaving(false);
+    }
+  };
 
   const isSuspended = tenant.lifecycle_status === "suspended";
   const isConfigurable = ["trial", "in_implementation"].includes(tenant.lifecycle_status);
@@ -675,6 +710,63 @@ export default function TenantDetailPage() {
           ))}
         </dl>
       </section>
+
+      {/* ── SA-B-lite: Billing & plan ───────────────────────────────────────── */}
+      {user?.is_super_admin && (
+        <section className="border border-gray-200 rounded-xl bg-white p-5 space-y-4">
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Billing &amp; plan</h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Plan tier */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                Plan tier
+              </label>
+              <select
+                value={billingPlan}
+                onChange={e => setBillingPlan(e.target.value)}
+                className={inputCls + " w-full"}
+                disabled={billingSaving}
+              >
+                <option value="free">Free</option>
+                <option value="starter">Starter</option>
+                <option value="growth">Growth</option>
+                <option value="enterprise">Enterprise</option>
+              </select>
+            </div>
+
+            {/* Paid since */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                Paid since
+              </label>
+              <input
+                type="date"
+                defaultValue={billingPaidSince}
+                onBlur={e => setBillingPaidSince(e.target.value)}
+                className={inputCls + " w-full"}
+                disabled={billingSaving}
+              />
+              <p className="text-[11px] text-gray-400">Leave blank if not yet a paying customer.</p>
+            </div>
+          </div>
+
+          {billingMsg && (
+            <p className={`text-xs ${billingMsg.type === "ok" ? "text-green-600" : "text-red-600"}`}>
+              {billingMsg.text}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={saveBilling}
+            disabled={billingSaving}
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-800 text-white hover:bg-gray-900 disabled:opacity-50 transition-colors"
+          >
+            {billingSaving ? "Saving…" : "Save billing"}
+          </button>
+        </section>
+      )}
 
       {/* ── Test/live environment & promotion (Super Admin only, M9.0.1) ───────
            Every tenant starts test-only (no live counterpart) until its first

@@ -990,6 +990,23 @@ This section was significantly out of date relative to shipped code. Fixed:
 
 ---
 
+### SA-B-lite — Manual Billing Plan + Paid Since (2026-07-24)
+
+Enables the Super Admin to manually record a tenant's billing plan tier and first-payment date from the SA tenant detail page. No payment-provider integration — this is a manual flag to track the first paying customer while full billing automation (SA-B) is built in TIER 2.
+
+**Backend:**
+- Migration `x6y7z8a9b0c1`: adds `plan` (String 30, nullable) and `paid_since` (Date, nullable) to `tenants` table. `NULL plan` = free tier by convention.
+- `app/models/auth.py`: `Tenant.plan` + `Tenant.paid_since` fields.
+- `app/schemas/platform.py`: `TenantDetail` now carries `plan`/`paid_since`; new `BillingUpdate` + `BillingResponse` schemas.
+- `app/routers/platform.py`: `get_tenant()` returns `plan`/`paid_since`; new `PATCH /api/platform/tenants/{id}/billing` (SA-only, audit-logged). Uses `model_fields_set` for both fields so sending `plan=null` correctly clears back to free.
+
+**Frontend (`frontend/src/app/platform/tenants/[id]/page.tsx`):**
+- `TenantDetail` interface extended with `plan: string | null` and `paid_since: string | null`.
+- "Billing & plan" section added (SA-only, between "Tenant details" and "Test/live environment"): plan tier dropdown (free/starter/growth/enterprise) + paid-since date input + Save button.
+- State seeded from the loaded tenant on every load; `saveBilling()` calls `PATCH .../billing`.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
@@ -1083,6 +1100,7 @@ Architectural invariants that are durable decisions (the WHY):
 
 | # | What | Mode scope |
 |---|---|---|
+| SA-B-lite | **SA Portal — manual paid/plan flag** (`plan` + `paid_since` on tenant; editable from SA tenant detail page) | SA portal only — mode-agnostic | ✅ Done (2026-07-24) |
 | Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected |
 | Q2 | **Manual Journal Entry UI** (adjustments, accruals, corrections) | **Full ERP only** — optional in Connected |
 | Q3 | **Snapshot M9 field fix** (add gl_id, dimension_values, split_lines to snapshot_data) | All modes |

@@ -19,10 +19,11 @@ Business accounts:    tenant_id references a tenants row
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -133,6 +134,14 @@ class Tenant(Base):
     is_internal: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # SA-B-lite: manual billing plan tier, set by a Super Admin.
+    # Values: free | starter | growth | enterprise. NULL = free (not yet assigned a plan).
+    # No payment-provider integration at this tier — the SA records first paying customers
+    # manually while full SA-B billing automation is built in TIER 2.
+    plan: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # The date on which the tenant first paid (or the start of their current paid period).
+    # NULL means not yet a paying customer.
+    paid_since: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

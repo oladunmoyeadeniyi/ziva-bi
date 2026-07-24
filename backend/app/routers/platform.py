@@ -40,6 +40,8 @@ from app.services.email import send_live_promotion_email
 from app.services.platform_config import get_app_name, get_platform_config, set_config
 from app.schemas.auth import PromoteRequest, PromoteResponse, TestTenantResponse
 from app.schemas.platform import (
+    BillingResponse,
+    BillingUpdate,
     CreateTenantRequest,
     CreateTenantResponse,
     NukeTenantRequest,
@@ -568,6 +570,8 @@ async def get_tenant(
         users=users,
         live_environment=live_env,
         test_environment=test_env,
+        plan=tenant.plan,
+        paid_since=tenant.paid_since,
         created_at=tenant.created_at,
         updated_at=tenant.updated_at,
     )
@@ -1753,6 +1757,58 @@ async def create_tenant(
         admin_user_id=str(admin_user.id),
         admin_email=admin_user.email,
         temp_password=temp_password,
+    )
+
+
+# ── SA-B-lite: billing plan + paid_since ─────────────────────────────────────
+
+@router.patch("/tenants/{tenant_id}/billing", response_model=BillingResponse)
+async def update_billing(
+    tenant_id: uuid.UUID,
+    data: BillingUpdate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> BillingResponse:
+    """
+    Manually set a tenant's billing plan and/or paid_since date.
+
+    SA-B-lite: no payment-provider integration. The Super Admin records the
+    plan tier and first-payment date manually to track the first paying customer
+    while full billing automation (SA-B) is built in TIER 2.
+
+    - plan: free | starter | growth | enterprise. Send None / omit to leave unchanged.
+    - paid_since: ISO date string (YYYY-MM-DD). Send null to clear (tenant no longer paying).
+
+    Guard: super admin only.
+    """
+    _sa(current_user)
+    tenant = await _get_tenant_or_404(tenant_id, db)
+
+    changed: dict = {}
+    if "plan" in data.model_fields_set:
+        # Use model_fields_set (not `is not None`) so sending plan=null correctly
+        # clears the column back to NULL (= free tier). Same pattern as paid_since below.
+        tenant.plan = data.plan
+        changed["plan"] = data.plan
+    if "paid_since" in data.model_fields_set:
+        # Allow explicit null to clear paid_since
+        tenant.paid_since = data.paid_since
+        changed["paid_since"] = str(data.paid_since) if data.paid_since else None
+
+    await _log(
+        "platform.tenant.billing_updated",
+        current_user.user_id,
+        tenant_id,
+        changed,
+        db,
+    )
+    await db.flush()
+
+    return BillingResponse(
+        id=str(tenant.id),
+        plan=tenant.plan,
+        paid_since=tenant.paid_since,
+        message="Billing updated.",
     )
 
 
