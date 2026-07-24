@@ -415,6 +415,15 @@ export default function BusinessLayout({
                 )}
               </div>
 
+              {/* ACCOUNTING — hidden in Lite mode (no in-app GL) */}
+              {postingMode !== 'lite' && (
+                <div className="px-2">
+                  <SectionLabel label="Accounting" />
+                  <NavLink href="/dashboard/business/accounting/journal-entries" label="Journal entries" icon="notebook" />
+                  <NavLink href="/dashboard/business/accounting/trial-balance" label="Trial balance" icon="table-column" />
+                </div>
+              )}
+
               {/* PEOPLE */}
               <div className="px-2">
                 <SectionLabel label="People" />

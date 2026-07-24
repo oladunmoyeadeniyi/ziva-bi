@@ -1,20 +1,33 @@
 """
-ZivaBI — GL read endpoints (GL Engine #2).
+ZivaBI — GL endpoints (GL Engine #2).
 
 Prefix:  /api/gl
 Tags:    gl
 
 Endpoints:
-    GET /api/gl/trial-balance
+    GET  /api/gl/trial-balance
         ?date_from=YYYY-MM-DD  &date_to=YYYY-MM-DD  &include_zero=false
         Returns per-account debit/credit/balance totals for POSTED entries,
         plus grand totals and an is_balanced integrity flag.
 
-    GET /api/gl/accounts/{gl_account_id}/ledger
+    GET  /api/gl/accounts/{gl_account_id}/ledger
         ?date_from=YYYY-MM-DD  &date_to=YYYY-MM-DD
         &dimension_id=UUID  &dimension_value_id=UUID
         Returns opening balance, ordered ledger lines with running balance,
         and closing balance. Supports optional JSONB dimension filter.
+
+    GET  /api/gl/journal-entries                           (Q2)
+        ?date_from=YYYY-MM-DD  &date_to=YYYY-MM-DD  &status=POSTED|DRAFT
+        Lists journal entries for the tenant, most recent first, up to 200 rows.
+        Any authenticated tenant user may read.
+
+    POST /api/gl/journal-entries                           (Q2)
+        Body: ManualJournalCreate — entry_date, description, lines, status.
+        Creates a manual journal entry by wrapping post_journal().
+        Tenant admin / power admin only.
+        Lite mode: blocked (400) — manual journals require a GL.
+        Connected mode: allowed (pre-export adjustments).
+        Full ERP mode: primary use case.
 
 Guard:
     require_auth + must-have-tenant check (_require_gl_user).
@@ -25,14 +38,28 @@ Guard:
 
 import uuid
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
-from app.schemas.gl import AccountLedgerResponse, TrialBalanceResponse
+from app.models.gl import JournalEntry, JournalLine
+from app.models.master_data import ChartOfAccount
+from app.models.setup import TenantOrgConfig
+from app.schemas.gl import (
+    AccountLedgerResponse,
+    JournalEntryListItem,
+    JournalEntryOut,
+    JournalLineInput,
+    JournalLineOut,
+    ManualJournalCreate,
+    TrialBalanceResponse,
+)
+from app.services.gl_posting import PostingError, post_journal
 from app.services.gl_reporting import account_ledger, trial_balance
 
 router = APIRouter(prefix="/api/gl", tags=["gl"])
@@ -147,3 +174,236 @@ async def get_account_ledger(
             detail=f"GL account {gl_account_id} not found or does not belong to this tenant.",
         )
     return result
+
+
+# ── Manual journal entries (Q2) ───────────────────────────────────────────────
+
+async def _get_posting_mode(tenant_id: uuid.UUID, db: AsyncSession) -> str:
+    """Return the tenant's posting_mode, defaulting to 'full_erp' if not set."""
+    result = await db.execute(
+        select(TenantOrgConfig.posting_mode).where(TenantOrgConfig.tenant_id == tenant_id)
+    )
+    return result.scalar_one_or_none() or "full_erp"
+
+
+async def _build_entry_out(entry: JournalEntry, db: AsyncSession) -> JournalEntryOut:
+    """
+    Construct a JournalEntryOut from a flushed JournalEntry ORM object.
+
+    Fetches GL account details (gl_number, gl_name) for each line so the API
+    response is self-contained and the frontend does not need a second fetch.
+    """
+    gl_ids = [ln.gl_account_id for ln in entry.lines]
+    gl_result = await db.execute(
+        select(ChartOfAccount.id, ChartOfAccount.gl_number, ChartOfAccount.gl_name)
+        .where(ChartOfAccount.id.in_(gl_ids))
+    )
+    gl_lookup: dict[uuid.UUID, tuple[str, str]] = {
+        row.id: (row.gl_number, row.gl_name) for row in gl_result.all()
+    }
+
+    total_debit = Decimal("0")
+    lines_out: list[JournalLineOut] = []
+    for ln in sorted(entry.lines, key=lambda l: l.line_number):
+        gl_number, gl_name = gl_lookup.get(ln.gl_account_id, ("UNKNOWN", "Unknown"))
+        total_debit += ln.debit
+        lines_out.append(JournalLineOut(
+            line_number=ln.line_number,
+            gl_account_id=ln.gl_account_id,
+            gl_number=gl_number,
+            gl_name=gl_name,
+            debit=ln.debit,
+            credit=ln.credit,
+            description=ln.description,
+            dimensions=ln.dimensions,
+        ))
+
+    return JournalEntryOut(
+        id=entry.id,
+        reference_number=entry.reference_number,
+        entry_date=entry.entry_date,
+        description=entry.description,
+        source=entry.source,
+        status=entry.status,
+        created_at=entry.created_at,
+        total_debit=total_debit,
+        lines=lines_out,
+    )
+
+
+@router.get("/journal-entries", response_model=list[JournalEntryListItem])
+async def list_journal_entries(
+    date_from: Optional[date] = Query(None, description="Inclusive start date (YYYY-MM-DD)."),
+    date_to: Optional[date] = Query(None, description="Inclusive end date (YYYY-MM-DD)."),
+    entry_status: Optional[str] = Query(None, alias="status", description="Filter by status: DRAFT, POSTED, or REVERSED."),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> list[JournalEntryListItem]:
+    """
+    List journal entries for the tenant.
+
+    Returns up to 200 entries, most recent first.
+    Any authenticated tenant user may read GL journal data.
+    Filter by date range and/or status.
+    """
+    tenant_id = _require_gl_user(current_user)
+
+    q = (
+        select(JournalEntry)
+        .where(JournalEntry.tenant_id == tenant_id)
+        .order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc())
+        .limit(200)
+    )
+    if date_from:
+        q = q.where(JournalEntry.entry_date >= date_from)
+    if date_to:
+        q = q.where(JournalEntry.entry_date <= date_to)
+    if entry_status:
+        q = q.where(JournalEntry.status == entry_status.upper())
+
+    result = await db.execute(q)
+    entries = result.scalars().all()
+
+    # For each entry, compute total_debit from journal_lines
+    if not entries:
+        return []
+
+    entry_ids = [e.id for e in entries]
+    lines_result = await db.execute(
+        select(JournalLine.journal_entry_id, JournalLine.debit)
+        .where(JournalLine.journal_entry_id.in_(entry_ids))
+    )
+    debit_totals: dict[uuid.UUID, Decimal] = {}
+    for row in lines_result.all():
+        debit_totals[row.journal_entry_id] = (
+            debit_totals.get(row.journal_entry_id, Decimal("0")) + row.debit
+        )
+
+    return [
+        JournalEntryListItem(
+            id=e.id,
+            reference_number=e.reference_number,
+            entry_date=e.entry_date,
+            description=e.description,
+            source=e.source,
+            status=e.status,
+            total_debit=debit_totals.get(e.id, Decimal("0")),
+            created_at=e.created_at,
+        )
+        for e in entries
+    ]
+
+
+@router.get("/journal-entries/{entry_id}", response_model=JournalEntryOut)
+async def get_journal_entry(
+    entry_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JournalEntryOut:
+    """
+    Fetch a single journal entry by ID (with full line detail).
+
+    Returns 404 if the entry does not exist or belongs to a different tenant.
+    """
+    tenant_id = _require_gl_user(current_user)
+
+    result = await db.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == entry_id,
+            JournalEntry.tenant_id == tenant_id,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Journal entry {entry_id} not found.",
+        )
+
+    # Eagerly load lines
+    lines_result = await db.execute(
+        select(JournalLine)
+        .where(JournalLine.journal_entry_id == entry_id)
+        .order_by(JournalLine.line_number)
+    )
+    entry.lines = list(lines_result.scalars().all())  # type: ignore[assignment]
+
+    return await _build_entry_out(entry, db)
+
+
+@router.post("/journal-entries", response_model=JournalEntryOut, status_code=status.HTTP_201_CREATED)
+async def create_journal_entry(
+    data: ManualJournalCreate,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JournalEntryOut:
+    """
+    Create a manual journal entry.
+
+    Wraps post_journal() — all validation (balance, GL accounts, dimensions,
+    period postability) is enforced there. Returns the created entry with
+    GL account details on each line.
+
+    Access: tenant admin or power admin only.
+    Mode: blocked in Lite mode (no GL engine available).
+    """
+    tenant_id = _require_gl_user(current_user)
+
+    if not current_user.is_tenant_admin and not current_user.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only tenant administrators may create manual journal entries.",
+        )
+
+    posting_mode = await _get_posting_mode(tenant_id, db)
+    if posting_mode == "lite":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Manual journal entries are not available in Lite mode. "
+                "Lite mode has no in-app GL — switch to Connected or Full ERP mode to use this feature."
+            ),
+        )
+
+    lines_input = [
+        JournalLineInput(
+            gl_account_id=ln.gl_account_id,
+            debit=ln.debit,
+            credit=ln.credit,
+            description=ln.description,
+            dimensions=ln.dimensions,
+        )
+        for ln in data.lines
+    ]
+
+    try:
+        entry = await post_journal(
+            db,
+            tenant_id,
+            entry_date=data.entry_date,
+            description=data.description,
+            source="manual",
+            lines=lines_input,
+            created_by=current_user.user_id,
+            module="manual",
+            status=data.status,
+        )
+    except PostingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.message,
+        ) from exc
+
+    # post_journal() adds JournalLine rows via db.add() with the FK set directly,
+    # never through the ORM relationship on `entry`. After db.flush() the in-memory
+    # `entry.lines` collection is still an empty list. Re-fetch the lines explicitly
+    # (same pattern used by get_journal_entry) so _build_entry_out returns a correct
+    # response body instead of lines:[] / total_debit:0.
+    lines_result = await db.execute(
+        select(JournalLine)
+        .where(JournalLine.journal_entry_id == entry.id)
+        .order_by(JournalLine.line_number)
+    )
+    entry.lines = list(lines_result.scalars().all())  # type: ignore[assignment]
+
+    return await _build_entry_out(entry, db)

@@ -4,6 +4,13 @@ ZivaBI — GL engine Pydantic schemas.
 Posting (Brief 1):
     JournalLineInput   — input for each line passed to post_journal().
 
+Manual journal entry API (Q2):
+    ManualJournalLineCreate — request line for POST /api/gl/journal-entries.
+    ManualJournalCreate     — request body for POST /api/gl/journal-entries.
+    JournalLineOut          — response line (includes gl_number/gl_name from JOIN).
+    JournalEntryOut         — full entry response with lines.
+    JournalEntryListItem    — lightweight entry for list views.
+
 Read / reporting (Brief 2):
     TrialBalanceRow    — one account row in the trial balance.
     TrialBalanceResponse — full TB response with grand totals + integrity flag.
@@ -11,9 +18,9 @@ Read / reporting (Brief 2):
     AccountLedgerResponse — full ledger: opening balance, lines, closing balance.
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, field_validator
@@ -47,6 +54,87 @@ class JournalLineInput(BaseModel):
     def coerce_decimal(cls, v: object) -> Decimal:
         """Accept int/float inputs and coerce to Decimal."""
         return Decimal(str(v))
+
+
+# ── Manual journal entry schemas (Q2) ────────────────────────────────────────
+
+class ManualJournalLineCreate(BaseModel):
+    """
+    One line of a manually-created journal entry.
+
+    Exactly one of debit / credit must be > 0 (enforced by post_journal()).
+    dimensions: {str(TenantDimension.id): str(DimensionValue.id)}.
+    """
+
+    gl_account_id: UUID
+    debit: Decimal = Decimal("0")
+    credit: Decimal = Decimal("0")
+    description: Optional[str] = None
+    dimensions: Optional[dict[str, str]] = None
+
+    @field_validator("debit", "credit", mode="before")
+    @classmethod
+    def coerce_decimal(cls, v: object) -> Decimal:
+        """Accept int/float inputs and coerce to Decimal."""
+        return Decimal(str(v))
+
+
+class ManualJournalCreate(BaseModel):
+    """
+    Request body for POST /api/gl/journal-entries.
+
+    status defaults to POSTED. Pass 'DRAFT' to save without period-date validation.
+    Minimum 2 lines; must balance (Σ debit == Σ credit) — enforced by post_journal().
+    """
+
+    entry_date: date
+    description: str
+    lines: list[ManualJournalLineCreate]
+    status: Literal["DRAFT", "POSTED"] = "POSTED"
+
+
+class JournalLineOut(BaseModel):
+    """One line in a journal entry response, enriched with GL account details."""
+
+    line_number: int
+    gl_account_id: UUID
+    gl_number: str
+    gl_name: str
+    debit: Decimal
+    credit: Decimal
+    description: Optional[str] = None
+    dimensions: Optional[dict[str, str]] = None
+
+
+class JournalEntryOut(BaseModel):
+    """
+    Full journal entry response (header + lines).
+
+    total_debit is the sum of all debit lines — equals total_credit when balanced.
+    """
+
+    id: UUID
+    reference_number: str
+    entry_date: date
+    description: str
+    source: str
+    status: str
+    created_at: datetime
+    total_debit: Decimal
+    lines: list[JournalLineOut]
+
+
+class JournalEntryListItem(BaseModel):
+    """Lightweight journal entry for list/table views (no line detail)."""
+
+    id: UUID
+    reference_number: str
+    entry_date: date
+    description: str
+    source: str
+    status: str
+    total_debit: Decimal
+    created_at: datetime
 
 
 # ── GL read / reporting schemas (Brief 2) ────────────────────────────────────

@@ -466,6 +466,9 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 |---|---|---|
 | GET | /api/gl/trial-balance | Trial balance (?date_from, ?date_to, ?include_zero) |
 | GET | /api/gl/accounts/{gl_account_id}/ledger | Account ledger (?date_from, ?date_to, ?dimension filters) |
+| GET | /api/gl/journal-entries | List journal entries — up to 200, most recent first. Any tenant user. Filters: ?date_from, ?date_to, ?status |
+| GET | /api/gl/journal-entries/{entry_id} | Single entry with full line detail (gl_number, gl_name enriched). Returns 404 if not found or different tenant. |
+| POST | /api/gl/journal-entries | Create manual journal entry. Wraps `post_journal()`. Admin-only. Lite mode: 400. Body: `ManualJournalCreate`. Returns `JournalEntryOut`. |
 
 ### 4.15 Platform / Owner Portal (`/api/platform`) — Super Admin Only
 | Method | Path | Purpose |
@@ -636,7 +639,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | Designation-based approval policy | ✅ Working | Migration `s1t2u3v4w5x6`. `approval_policies.ceiling_designation` + `finance_l[1-3]_designation`; `approval_role_thresholds.designation` replaces `approval_role_id`. Routing service reads designation strings for ceiling + threshold checks. |
 | Finance chain reads FinanceReviewStep | ✅ Fixed | `approval_routing.py` `compute_chain()` now queries `FinanceReviewStep` records (ordered by level). Previously used dead `finance_l[1-3]_role_id` fields, silently ignoring all step-builder output. |
 | Number formatting — shared utils | ✅ Done | `formatMoney`, `fmtCommaInput`, `stripCommas`, `formatNumber` in `utils.ts`. All local duplicates removed from 9 expense/approval pages + SplitLinePanel. |
-| Manual journal entry UI | ⚠️ Not started | Backend tables exist; no router endpoint or frontend |
+| Manual journal entry UI | ✅ Done (2026-07-24) | Backend: `GET /api/gl/journal-entries` (list, up to 200, date/status filter), `GET /api/gl/journal-entries/{id}` (line detail), `POST /api/gl/journal-entries` (wraps `post_journal()`; admin-only; Lite blocked with 400). Schemas: `ManualJournalCreate`, `ManualJournalLineCreate`, `JournalEntryOut`, `JournalEntryListItem` in `schemas/gl.py`. Frontend: list page at `/dashboard/business/accounting/journal-entries` (mode-gate, filter bar, inline row-expand); new entry form at `.../new` (GL picker, DR/CR inputs, balance indicator, Save as Draft / Post). Sidebar: "ACCOUNTING" section in `layout.tsx` (Journal Entries + Trial Balance links; hidden in Lite mode). |
 | Three-Mode Architecture — Phase 1 backend | ✅ Committed `f24c2fe` | `posting_mode` on `tenant_org_config` (migration `h1i2j3k4l5m6`), `posting_batches` table (migration `i2j3k4l5m6n7`), `PostingResult` routing in `expense_posting.py`, `posting_batches` CRUD router, trial signup (`lifecycle_status='trial'`). Migrations committed; **pending `alembic upgrade head` locally**. |
 | Three-Mode Architecture — Phase 2 SA Portal | ✅ Committed `803618e` | `GET/PATCH /api/platform/tenants/{id}/system-config`, frontend consultant config panel on `platform/tenants/[id]/page.tsx`. |
 | Three-Mode Architecture — Phase 3 setup sequence | ✅ Committed `eac2584` (#51) | Mode-aware setup portal: `GET /api/setup/progress` returns sections list driven by `posting_mode`. Lite shows org+modules+employees+tax+roles+workflows+go-live. Connected adds CoA+AccountMapping. Full ERP adds Dimensions+Periods+BankAccounts. GL Group hierarchy tab in ExpenseItemPicker: committed `55028cc`. |
