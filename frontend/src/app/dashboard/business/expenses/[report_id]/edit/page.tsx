@@ -209,15 +209,21 @@ function isComplete(l: LineState, cfg: FormConfig): boolean {
   if (!l.invoice_date) return false;
   if (!l.invoice_number.trim()) return false;
   if (!l.description.trim()) return false;
+  if (l.split_lines.length > 0) {
+    // Split parent: validate children sum, GL coding, and required dimensions per child
+    const tot = l.split_lines.reduce((s, sl) => s + (parseFloat(sl.amount) || 0), 0);
+    if (Math.abs(parseFloat(l.amount) - tot) >= 0.005) return false;
+    if (cfg.coding_level >= 2 && l.split_lines.some((sl) => !sl.gl_id)) return false;
+    if (cfg.coding_level >= 2 && l.split_lines.some((sl) =>
+      sl.dimension_requirements.some((r) => r.requirement === "required" && !sl.dimension_values[r.dimension_id])
+    )) return false;
+    return true;
+  }
   if (cfg.coding_level === 1 && !l.subcategory_id) return false;
   if (cfg.coding_level >= 2 && !l.gl_id) return false;
   if (cfg.show_location && cfg.require_location && !l.location.trim()) return false;
   for (const r of l.dimension_requirements) {
     if (r.requirement === "required" && !l.dimension_values[r.dimension_id]) return false;
-  }
-  if (l.split_lines.length > 0) {
-    const tot = l.split_lines.reduce((s, sl) => s + (parseFloat(sl.amount) || 0), 0);
-    if (Math.abs(parseFloat(l.amount) - tot) >= 0.005) return false;
   }
   return true;
 }
@@ -689,12 +695,18 @@ export default function EditExpensePage() {
       if (!l.amount || parseFloat(l.amount) <= 0) return `Line ${i + 1}: Amount must be greater than zero.`;
       if (!l.invoice_date) return `Line ${i + 1}: Invoice date is required.`;
       if (!l.invoice_number.trim()) return `Line ${i + 1}: Invoice number is required.`;
-      if (formConfig.coding_level === 1 && !l.subcategory_id) return `Line ${i + 1}: Category and subcategory are required.`;
-      if (formConfig.coding_level >= 2 && !l.gl_id) return `Line ${i + 1}: GL account is required.`;
-      if (formConfig.show_location && formConfig.require_location && !l.location.trim()) return `Line ${i + 1}: Location is required.`;
       if (l.split_lines.length > 0) {
+        // Split parent: check amounts sum, GL coding, and required dimensions per child
         const tot = l.split_lines.reduce((s, sl) => s + (parseFloat(sl.amount) || 0), 0);
         if (Math.abs(parseFloat(l.amount) - tot) >= 0.005) return `Line ${i + 1}: Split amounts must equal the line total.`;
+        if (formConfig.coding_level >= 2 && l.split_lines.some((sl) => !sl.gl_id)) return `Line ${i + 1}: All split lines must have a GL account.`;
+        if (formConfig.coding_level >= 2 && l.split_lines.some((sl) =>
+          sl.dimension_requirements.some((r) => r.requirement === "required" && !sl.dimension_values[r.dimension_id])
+        )) return `Line ${i + 1}: All split lines must have required dimension values.`;
+      } else {
+        if (formConfig.coding_level === 1 && !l.subcategory_id) return `Line ${i + 1}: Category and subcategory are required.`;
+        if (formConfig.coding_level >= 2 && !l.gl_id) return `Line ${i + 1}: GL account is required.`;
+        if (formConfig.show_location && formConfig.require_location && !l.location.trim()) return `Line ${i + 1}: Location is required.`;
       }
     }
     return null;

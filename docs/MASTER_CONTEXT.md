@@ -1104,7 +1104,7 @@ Architectural invariants that are durable decisions (the WHY):
 | Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected |
 | Q2 | **Manual Journal Entry UI** (adjustments, accruals, corrections) | **Full ERP only** — optional in Connected |
 | Q3 | **Snapshot M9 field fix** (add gl_id, dimension_values, split_lines to snapshot_data) | All modes |
-| Q4 | **Split-line GL posting fix** (split-parent containers currently skipped) | Connected + Full ERP |
+| Q4 | **Split-line GL posting fix** (split-parent containers correctly skipped; frontend validation now validates split children for GL + required dimensions) | Connected + Full ERP | ✅ Done (2026-07-24) |
 
 ### TIER 2 — Module Expansion (~2–3 months)
 

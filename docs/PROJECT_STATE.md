@@ -233,7 +233,7 @@ ziva-bi/
 | **Currency source of truth** | `tenant_org_config.functional_currency`, `.reporting_currency`, `.enabled_currencies JSONB` are the single authority. `tenant_fx_config` holds ONLY `fx_rates` and `revaluation_rules`. GET /api/setup/currencies reads both. |
 | **Standing date floor** | No transaction date may precede `tenant_org_config.date_of_registration`. |
 | **lifecycle_status gates** | CoA Replace All only when `lifecycle_status='in_implementation'`. CoA Remap only when `lifecycle_status='live'`. |
-| **Expense→GL posting** | Synchronous, same DB transaction as final approval. Uncoded leaf lines (`gl_id=NULL`) block posting. Split parent containers (`is_split_parent=True`) are skipped. |
+| **Expense→GL posting** | Synchronous, same DB transaction as final approval. Uncoded leaf lines (`gl_id=NULL`) block posting. Split parent containers (`is_split_parent=True`) are excluded from `leaf_lines` — their split children carry the GL codes and dimension values that post to GL. Frontend validation (Q4 fix, 2026-07-24) ensures split children are fully coded before submission. |
 | **GL entries immutable** | Once `status='POSTED'`, journal_entry rows may not be modified. Corrections require reversing entries. |
 | **CoA retired accounts** | `is_retired=True` set on remap. These rows remain in DB for historical integrity and cannot be deleted. |
 | **Segregation of duties** | Period checklist: `approved_by ≠ prepared_by` enforced in router. |
@@ -570,7 +570,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 |---|---|---|
 | Auth (signup/login/JWT/2FA/sessions) | ✅ Working | |
 | Tenant invite & user management | ✅ Working | Invitation email sent via Resend (`services/email.py`); suppressed for test tenants |
-| Expense submit → approve → GL posting | ✅ Working (non-split) | ⚠️ Split-line reports cannot be posted — see Issue #001 |
+| Expense submit → approve → GL posting | ✅ Working (all modes, including split lines) | Split-line fix (Q4, 2026-07-24): `isComplete()` + `validate()` in both expense forms now skip the parent `gl_id` check and instead validate each split child for GL + required dimensions. Backend `expense_posting.py` was already correct (leaf_lines excludes split parents). |
 | Approval matrix (1–3 levels) | ✅ Working | |
 | Refer-back + audit trail + snapshots | ✅ Working | ⚠️ Snapshots missing M9 fields — see Issue #003 |
 | Supporting documents (Supabase) | ✅ Working | |
