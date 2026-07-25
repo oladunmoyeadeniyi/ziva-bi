@@ -35,11 +35,20 @@ CC will read `docs/PENDING_COMMIT.md`, read every changed file, run `py_compile`
 and `tsc --noEmit`, verify the code matches the stated intent, then commit and push
 — or report what is wrong without committing.
 
+**After every successful commit, CC must also run:**
+```bash
+cd backend && alembic upgrade head
+```
+This applies migration changes to the local database. CC should run this unconditionally
+after every commit — even if no migration files were changed (it is idempotent). Log the
+output (including "Already up to date" confirmation) in `docs/CC_RESULT.md`.
+
 ### Rules
 - **Cowork never commits directly** — it only writes code and PENDING_COMMIT.md
 - **CC never writes feature code** — it only reviews, checks, and commits
 - If CC flags a problem, Cowork fixes it; CC re-reviews on the next `/review-commit`
 - `docs/PENDING_COMMIT.md` is deleted by CC after a successful commit (it is stale once pushed)
+- **After every successful commit:** run `alembic upgrade head` and log the result
 
 ### CC Autonomy Rule — CRITICAL
 **CC must never pause mid-task to ask the user yes/no questions or confirmation prompts.**
