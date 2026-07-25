@@ -41,6 +41,15 @@ and `tsc --noEmit`, verify the code matches the stated intent, then commit and p
 - If CC flags a problem, Cowork fixes it; CC re-reviews on the next `/review-commit`
 - `docs/PENDING_COMMIT.md` is deleted by CC after a successful commit (it is stale once pushed)
 
+### CC Autonomy Rule — CRITICAL
+**CC must never pause mid-task to ask the user yes/no questions or confirmation prompts.**
+The user cannot stay at the keyboard during a review. CC must:
+- Make all judgment calls itself
+- Use `--yes` / `-y` on any tool that prompts for confirmation
+- If a genuine blocker is encountered (e.g. compile error CC cannot fix itself), log it clearly in `docs/CC_RESULT.md` and stop — do NOT wait for input
+- Write a complete `docs/CC_RESULT.md` at the end of every run whether the commit passed or failed
+- The user's only interaction is typing `/review-commit` and reading CC_RESULT.md when done
+
 
 ## Repository Structure
 
@@ -131,9 +140,9 @@ ruff check app/
 
 ## Milestone Status
 
-> **Authoritative as of 2026-07-20.** Reconciled against live codebase, git log (265 commits), and `docs/ZIVA_BI_EVALUATION_2026_07_20.md`. Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
+> **Authoritative as of 2026-07-24.** Reconciled against live codebase and git log (270+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: ~40% of full product vision. ~85% of MVP-for-first-customer.**
+> **Overall completion: ~45% of full product vision. ~98% of MVP-for-first-customer (all TIER 0 + TIER 1 done; product is live on Render).**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -187,6 +196,17 @@ ruff check app/
 | — | Branding / CSS variable injection (--ziva-primary, sidebar vars; Button uses them) | `c27adcd` |
 | — | Force-change-password on first login (must_change_password flag; un-skippable page) | `7989709` |
 | — | Mode-aware implementation portal (sidebar, pages, expense config fully respond to posting_mode) | `63f61fe` |
+| — | Snapshot M9 field fix (gl_id, dimension_values, split_lines already in `_write_snapshot()`; verified by CC 2026-07-21) | `cc881f4` |
+| P3 | Schema drift audit + cleanup (`alembic check` drift fixed; `go-live.tsx.bak` git rm; migration t2u3v4w5x6y7) | `b3e70e3` |
+| P2 | Email / SMTP — Resend integration; invitations, approvals, password-reset, onboarding, live-promotion | `a5172a0` |
+| P6 | `role_tier` enforcement sweep — power_admin cannot call SA-only endpoints (audit; no code changes needed) | `a5172a0` |
+| P4 | Lite-mode CSV + Excel export of approved expense reports | `ccfa149` |
+| P5 | Production DB backup policy — Render 3-day PITR confirmed active | (config, no commit) |
+| SA-B-lite | SA Portal — manual paid/plan flag (`plan` + `paid_since` on tenant; editable from SA tenant detail) | `2eabb2a` |
+| Q4 | Split-line GL posting fix (split-parent containers correctly skipped; frontend validates split children) | `20aa73e` |
+| Q2 | Manual Journal Entry — list + new entry form; `POST /api/gl/journal-entries`; sidebar Accounting section | `c5ca38c` |
+| Q1a | Financial Statements UI — P&L + Balance Sheet (fs_head/fs_note grouping; Full ERP only) | `467b254` |
+| P1 | Production Deployment on Render — frontend Docker fix (`libc6-compat` on Alpine; live 2026-07-24) | `775e873` |
 
 ---
 
@@ -196,39 +216,23 @@ ruff check app/
 >
 > Mode abbreviations used below: **L** = Lite (workflow only, no GL), **C** = Connected (GL coding → posting_batches → external ERP), **E** = Full ERP (GL coding → journal_entries → in-app statements).
 
-#### TIER 0 — Production Gates (must complete before first customer)
-
-| # | Milestone | Notes |
-|---|---|---|
-| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | #1 priority. Nothing is sellable while the product lives on localhost |
-| P2 | **Email / SMTP** (Resend or SendGrid integration; replace stdout stub) | Invitations, password resets, notifications — all broken without this |
-| P3 | **Schema drift audit + cleanup** (`alembic check` unconfirmed drift; `go-live.tsx.bak` git rm) | Must verify before live data hits Render |
-
-#### TIER 1 — Quick Wins (backend exists; UI only)
-
-| # | Milestone | Mode scope | Notes |
-|---|---|---|---|
-| Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow output pages) | **E only** — show `ModeNotAvailable` for L/C | GL engine posts the data; just need formatted output. Every finance team needs this |
-| Q2 | **Manual Journal Entry UI** (post adjustments, accruals, corrections) | **E only** — show `ModeNotAvailable` for L; optional in C | Tables + GL engine exist; just need endpoints + frontend |
-| Q3 | **Snapshot M9 field fix** (include gl_id, dimension_values, split_lines in snapshot_data) | All modes | Existing snapshots are incomplete; new ones should be full |
-| Q4 | **Split-line GL posting fix** (split-parent containers currently skipped at posting) | **C + E** | Needed before Full ERP mode is fully reliable |
-
 #### TIER 2 — Module Expansion (~2–3 months)
 
 | # | Milestone | Mode scope | Notes |
 |---|---|---|---|
-| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | **All modes** — mode-agnostic | Extracts amounts/dates from receipts; works same regardless of posting mode |
-| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | **L**: vendor bill workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AP ledger | Most critical missing module; daily pain for every finance team |
-| M11b | **Bank Reconciliation** | **L**: statement import + manual match. **C**: match to posting batches + export recon entries. **E**: match to GL bank account + clearing journal | Flows directly from AP; cannot operate AP cleanly without bank recon |
+| Q1b | **Cash Flow Statement** (indirect method: opening/closing BS comparison + non-cash adjustment logic) | **E only** | Separate design problem from P&L/BS — needs indirect-method or direct-method logic not currently in codebase. Moved from TIER 1 after CC verified no supporting query logic exists yet |
+| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | **L**: vendor bill workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AP ledger | Most critical missing module; daily pain for every finance team. Higher deal-closing priority than OCR |
+| M11b | **Bank Reconciliation** | **L**: statement import + manual match. **C**: match to posting batches + export recon entries. **E**: match to GL bank account + clearing journal | Depends on GL engine + Bank Accounts (both already built) — not on AP. Has standalone value for Full ERP tenants posting expense journals today |
+| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | **All modes** — mode-agnostic | Enhances already-shipped Expense module; high UX value but not a new-module unlock |
 | M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | **L**: invoice workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AR ledger | Revenue-side; needed for companies that issue invoices |
-| SA-B | **SA Portal — Billing & Subscription backend** (pricing plans, subscription tracking, payment integration) | SA portal only — mode-agnostic | Needed to charge customers |
+| SA-B | **SA Portal — Billing & Subscription backend** (pricing plans, subscription tracking, payment provider integration) | SA portal only — mode-agnostic | Full billing integration (webhooks, payment provider onboarding). Manual paid flag (SA-B-lite) ships in TIER 1 to unblock first invoice |
 
 #### TIER 3 — Strategic Expansion (~3–6 months)
 
 | # | Milestone | Mode scope | Notes |
 |---|---|---|---|
 | M16 | **Budget & Planning** (budget entry, budget vs. actuals reporting, variance alerts) | **L**: budget vs CSV exports. **C**: budget vs posting batch values. **E**: budget vs GL actuals | High retention driver; CFOs need this |
-| M19 | **Tax Engine — transaction level** (VAT on AP invoices, WHT on vendor payments, PAYE payroll tax) | **L**: tax calcs on invoices, CSV output. **C**: + VAT/WHT in posting_batches. **E**: + auto-post tax journals (VAT payable, WHT payable, PAYE payable) | Nigerian compliance requirement for most customers |
+| M19 | **Tax Engine — transaction level** (VAT on AP invoices, WHT on vendor payments, PAYE payroll tax) | **L**: tax calcs on invoices, CSV output. **C**: + VAT/WHT in posting_batches. **E**: + auto-post tax journals (VAT payable, WHT payable, PAYE payable) | Nigerian compliance requirement. Distinct from already-built M8.4 Tax & Statutory *config* (JSONB rates) — this is transaction-level computation |
 | M15 | **Payroll & HR** (salary, deductions, payslips, leave management) | **L**: payroll run + manual pay. **C**: payroll run + posting_batches. **E**: payroll run + salary journal entry | Complex; major competitive moat; builds on People module foundation |
 | ICE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD exists: `docs/ICE_PRD.md` |
 

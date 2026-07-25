@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-13 (Mode-Aware Implementation Portal — sidebar + 5 pages + expense config lock; also SA portal hardening batch — see §5)
+> Last updated: 2026-07-24 (P1 production deployment live; TIER 1 complete — Q1a, Q2, Q4, SA-B-lite all shipped; stale Q1 row removed from TIER 1 table)
 
 ---
 
@@ -1089,7 +1089,7 @@ Architectural invariants that are durable decisions (the WHY):
 
 | # | What | Status | Blocker |
 |---|---|---|---|
-| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | ⏳ In progress | App is not accessible to any customer. Zero revenue until this is done. |
+| P1 | **Production Deployment on Render** (backend + frontend + env vars + domain) | ✅ Done `775e873` — root cause: missing `libc6-compat` in Alpine Docker image; fixed + live 2026-07-24 | — |
 | P2 | **Email / SMTP** (Resend integration; replace stdout stub) | ✅ Done `a5172a0` | — |
 | P3 | **Schema drift audit + `go-live.tsx.bak` cleanup** | ✅ Done `b3e70e3` | — |
 | P4 | **Lite-mode CSV + Excel export of approved transactions** | ✅ Done | — |
@@ -1101,7 +1101,6 @@ Architectural invariants that are durable decisions (the WHY):
 | # | What | Mode scope |
 |---|---|---|
 | SA-B-lite | **SA Portal — manual paid/plan flag** (`plan` + `paid_since` on tenant; editable from SA tenant detail page) | SA portal only — mode-agnostic | ✅ Done (2026-07-24) |
-| Q1 | **Financial Statements UI** (P&L, Balance Sheet, Cash Flow) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected |
 | Q1a | **Financial Statements UI — P&L + Balance Sheet** (`profit_and_loss()` + `balance_sheet()` in `gl_reporting.py`; `GET /api/gl/financial-statements/pl` + `/bs`; two-tab frontend page; Full ERP only in sidebar) | **Full ERP only** — `ModeNotAvailable` for Lite/Connected | ✅ Done (2026-07-24) |
 | Q2 | **Manual Journal Entry UI** (list + new entry form; `POST /api/gl/journal-entries` wraps `post_journal()`; Lite blocked; sidebar Accounting section added) | **Full ERP primary; Connected optional; Lite blocked** | ✅ Done (2026-07-24) |
 | Q3 | **Snapshot M9 field fix** (add gl_id, dimension_values, split_lines to snapshot_data) | All modes |
