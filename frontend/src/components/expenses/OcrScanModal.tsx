@@ -246,7 +246,7 @@ export default function OcrScanModal({ isOpen, onClose, onApply, accessToken, cu
             </span>
             <div>
               <h2 className="font-semibold text-gray-900 text-sm">Scan Receipt</h2>
-              <p className="text-xs text-gray-500">AI-powered data extraction</p>
+              <p className="text-xs text-gray-500">Automatic data extraction — scan and auto-fill expense fields</p>
             </div>
           </div>
           <button onClick={handleClose} className="text-gray-400 hover:text-gray-600 transition-colors">
