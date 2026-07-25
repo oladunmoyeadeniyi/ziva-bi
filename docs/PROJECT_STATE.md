@@ -254,6 +254,23 @@ ziva-bi/
 - GRN confirmed: DR `<po_line.gl_account_id>` per line / CR `grni` (total) — posted by `po_posting.post_grni_accrual()`
 - Invoice match + approval: DR `grni` / CR `accounts_payable` — posted by `po_posting.post_grni_clearance()` (called from `ap_posting.post_ap_approval()` when matched)
 
+### 2.15 Bank Reconciliation Tables (migration `a9b0c1d2e3f4`, 2026-07-25)
+
+| Table | Key columns | Notes |
+|---|---|---|
+| `bank_statements` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `bank_account_id FK→bank_accounts RESTRICT`, `statement_ref VARCHAR(30)` (`STMT-{YYYY}-{NNN}`), `statement_date DATE`, `period_start DATE nullable`, `opening_balance NUMERIC(18,2)`, `closing_balance NUMERIC(18,2)`, `currency CHAR(3)`, `status VARCHAR(20)` (`DRAFT\|IN_PROGRESS\|RECONCILED`), `notes TEXT nullable`, `uploaded_by FK→users SET NULL`, `created_at/updated_at`. UQ: `(tenant_id, statement_ref)`. | Statement header. Status advances: DRAFT (no lines) → IN_PROGRESS (lines uploaded) → RECONCILED (all lines MATCHED or EXCLUDED). `bank_account_id` uses RESTRICT — prevents accidental account deletion when statements exist. |
+| `bank_statement_lines` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `statement_id FK→bank_statements CASCADE`, `line_number INT`, `transaction_date DATE`, `value_date DATE nullable`, `description VARCHAR(500)`, `reference VARCHAR(255) nullable`, `debit NUMERIC(18,2) DEFAULT 0`, `credit NUMERIC(18,2) DEFAULT 0`, `running_balance NUMERIC(18,2) nullable`, `match_status VARCHAR(20)` (`UNMATCHED\|MATCHED\|PARTIAL\|EXCLUDED`). | Bank-perspective: credit = inflow, debit = outflow. `match_status` is a denormalised cache updated by `recompute_line_status()` after every match create/delete. EXCLUDED is set explicitly by user and not overwritten by the engine. Indexed on `(statement_id, match_status)`. |
+| `bank_recon_matches` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `statement_line_id FK→bank_statement_lines CASCADE`, `match_type VARCHAR(20)` (`journal_line\|posting_batch\|manual`), `matched_journal_line_id FK→journal_lines SET NULL nullable`, `matched_posting_batch_id FK→posting_batches SET NULL nullable`, `matched_amount NUMERIC(18,2)`, `notes VARCHAR(500) nullable`, `matched_by FK→users SET NULL`, `matched_at DATETIME`. | One statement line may have multiple match records (partial matching — sum of `matched_amount` = line amount when fully matched). `match_type` discriminator: exactly one of the two FKs is non-null, or both null for manual/notes-only. `posting_batches` FK is SET NULL so batches may be deleted without breaking recon history. |
+
+**Three-mode summary:**
+- Lite: `match_type='manual'`. No FK to GL or batches. `auto_match_statement()` returns 0 matches immediately.
+- Connected: `match_type='posting_batch'`. Auto-match searches `posting_batches` (status: pending/exported) by amount ± tolerance and date ± window.
+- Full ERP: `match_type='journal_line'`. Auto-match searches `journal_lines` with `bank_account_id = statement.bank_account_id`, POSTED entries only, within date window, correct side (bank credit ↔ GL debit; bank debit ↔ GL credit).
+
+**Reconciliation equation (Full ERP):**
+`adjusted_gl_balance = gl_book_balance + Σ outstanding_deposits − Σ outstanding_payments`
+`is_balanced = abs(adjusted_gl_balance − statement.closing_balance) ≤ 0.01`
+
 ---
 
 ## 3. Architectural Invariants
@@ -402,6 +419,36 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 - Invoice match approved: `DR grni / CR accounts_payable` via `po_posting.post_grni_clearance()`
 
 **Connected mode:** `po_posting.create_grni_posting_batch()` creates a `PostingBatch` with `module="po"` on GRN confirmation.
+
+### 4.4d Bank Reconciliation (`/api/bank-recon`)
+
+**Migration:** `a9b0c1d2e3f4` (3 tables)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /api/bank-recon/statements | List statements (filter: bank_account_id, status) |
+| POST | /api/bank-recon/statements | Create statement header |
+| GET | /api/bank-recon/statements/{id} | Detail with lines + matches |
+| DELETE | /api/bank-recon/statements/{id} | Delete DRAFT only |
+| POST | /api/bank-recon/statements/{id}/upload | Parse CSV/XLSX and bulk-insert lines (replaces existing) |
+| POST | /api/bank-recon/statements/{id}/close | Mark RECONCILED (guard: no UNMATCHED/PARTIAL lines) |
+| GET | /api/bank-recon/statements/{id}/report | Reconciliation report (Full ERP: GL balance + outstanding items) |
+| GET | /api/bank-recon/statements/{id}/candidates/gl | Unmatched GL journal lines for this bank account (Full ERP) |
+| GET | /api/bank-recon/statements/{id}/candidates/batches | Unmatched posting batches (Connected) |
+| POST | /api/bank-recon/matches | Create match (match_type: journal_line / posting_batch / manual) |
+| DELETE | /api/bank-recon/matches/{match_id} | Remove match (recomputes line status) |
+| POST | /api/bank-recon/statements/{id}/auto-match | Auto-match all UNMATCHED lines (query param: date_tolerance_days=5) |
+| PUT | /api/bank-recon/lines/{line_id}/exclude | Mark line EXCLUDED |
+| PUT | /api/bank-recon/lines/{line_id}/unexclude | Revert EXCLUDED → recomputed status |
+
+**Three-mode behaviour:**
+- Lite: CSV import + manual matches only. Auto-match returns 0 matches. No GL/batch candidates.
+- Connected: Auto-match against `posting_batches` (amount ± tolerance, date ± window). Candidates/batches endpoint active.
+- Full ERP: Auto-match against `journal_lines` tagged with `bank_account_id`. GL candidates endpoint active. Report includes `gl_book_balance`, `outstanding_deposits`, `outstanding_payments`, `adjusted_gl_balance`, `is_balanced`.
+
+**Reconciliation equation (Full ERP):**
+`GL book balance + Σ outstanding deposits − Σ outstanding payments = bank closing balance`
+`is_balanced = abs(adjusted_gl_balance − closing_balance) ≤ 0.01`
 
 ### 4.5 Tenant Management (`/api/tenant`)
 | Method | Path | Purpose |

@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-25 (M11b Purchase Orders & 3-Way Match shipped; TIER 2 in progress)
+> Last updated: 2026-07-25 (M11c Bank Reconciliation shipped; TIER 2 in progress)
 
 ---
 
@@ -1076,6 +1076,34 @@ Sidebar: Purchase Orders + Match Report links added to Accounts Payable section 
 
 ---
 
+### M11c — Bank Reconciliation (2026-07-25, migration `a9b0c1d2e3f4`)
+
+Three-mode bank reconciliation: import bank statement CSV/XLSX, match lines against GL journal lines (Full ERP), posting batches (Connected), or manual notes (Lite). Closes the loop on AP — once invoices are paid, their journal entries can be reconciled against the bank statement.
+
+**New tables (3):** `bank_statements` (header per statement, DRAFT→IN_PROGRESS→RECONCILED), `bank_statement_lines` (individual transaction rows, UNMATCHED→MATCHED/PARTIAL/EXCLUDED), `bank_recon_matches` (junction linking statement lines to journal_lines or posting_batches; `match_type` discriminator).
+
+**New services (2):**
+- `bank_recon_parser.py` — pure-Python CSV/XLSX parser; auto-detects delimiter, column aliases (handles Nigerian/UK date formats dayfirst=True, DR/CR suffixes, currency symbols, thousands separators); returns `ParseResult` with `ParsedLine` list + `warnings`.
+- `bank_recon_match.py` — match engine: `auto_match_statement()` (mode-aware; Full ERP matches journal_lines by bank_account_id + amount proximity + ±5-day window; Connected matches posting_batches by approximate total + date; Lite returns 0 matches); `recompute_line_status()` (idempotent UNMATCHED/PARTIAL/MATCHED recomputation); `build_recon_report()` (Full ERP: GL book balance + outstanding deposits/payments + is_balanced flag; Lite/Connected: line counts only).
+
+**New router (1):** `bank_recon.py` — 15 endpoints under `/api/bank-recon/`:
+- Statement CRUD: list, create, get-detail, delete-DRAFT, upload CSV/XLSX, close (guard: no UNMATCHED lines)
+- Candidates: GL journal lines unmatched to this bank account (Full ERP), posting batches unmatched (Connected)
+- Match CRUD: create (journal_line / posting_batch / manual), delete (recomputes line status)
+- Auto-match: POST `/statements/{id}/auto-match?date_tolerance_days=5`
+- Line exclusion: PUT `/lines/{id}/exclude` + `/lines/{id}/unexclude`
+- Report: GET `/statements/{id}/report` (full reconciliation statement)
+
+**Frontend (4 pages):**
+- Statement list with match-progress bar and quick stats
+- New statement wizard: Step 1 header form → Step 2 file upload → redirect to workspace
+- Reconciliation workspace: split-pane (statement lines left, GL/batch candidates right); click-to-match; auto-match button; exclude toggle; close button when all lines resolved
+- Reconciliation report: formal bank recon statement (GL book balance → adjusted GL → bank closing balance → difference; balanced check)
+
+Sidebar: Bank Reconciliation link added to Accounts Payable section.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
@@ -1091,7 +1119,7 @@ Sidebar: Purchase Orders + Match Report links added to Accounts Payable section 
 | 7 | POSM Management | `posm` | ⏳ Future | ✅ |
 | 8 | Vendor Portal | `vendor_portal` | ⏳ Future | ✅ |
 | 9 | Customer Portal | `customer_portal` | ⏳ Future | ✅ |
-| 10 | Bank Reconciliation | `bank_recon` | ⏳ M13 | ✅ |
+| 10 | Bank Reconciliation | `bank_recon` | ✅ Built (M11c, 2026-07-25) | ✅ |
 | 11 | Budget & Planning | `budget` | ⏳ M16 | ✅ |
 | 12 | Tax Engine | `tax_engine` | ⏳ M19 | ✅ |
 | 13 | Reporting & Analytics | `reporting` | ⏳ M20 | ✅ |
@@ -1184,7 +1212,7 @@ Architectural invariants that are durable decisions (the WHY):
 | M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | Mode-agnostic; biggest differentiator for expense management |
 | M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | ✅ Done (2026-07-25) — see §5 |
 | M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | ✅ Done (2026-07-25) — see §5 |
-| M11c | **Bank Reconciliation** | Flows directly from AP; cannot run AP cleanly without bank recon |
+| M11c | **Bank Reconciliation** | ✅ Done (2026-07-25) — see §5 |
 | M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | Revenue-side; needed for companies that invoice clients |
 | SA-B | **SA Portal — Billing & Subscription backend** | Needed to charge customers |
 

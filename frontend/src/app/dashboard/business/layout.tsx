@@ -437,6 +437,7 @@ export default function BusinessLayout({
                   <NavLink href="/dashboard/business/ap/aging" label="AP Aging" icon="chart-bar" />
                   <NavLink href="/dashboard/business/po" label="Purchase Orders" icon="shopping-cart" />
                   <NavLink href="/dashboard/business/po/match-report" label="Match Report" icon="git-compare" />
+                  <NavLink href="/dashboard/business/bank-recon" label="Bank Reconciliation" icon="building-bank" />
                 </div>
               )}
 
