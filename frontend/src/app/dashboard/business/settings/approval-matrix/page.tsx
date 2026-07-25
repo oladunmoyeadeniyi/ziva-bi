@@ -120,6 +120,7 @@ const DEFAULT_STEPS: Omit<FinanceStep, "_key">[] = [
 const MODULE_POLICIES = [
   { key: "expense",    label: "Expense Management",  icon: "ti-receipt",       active: true  },
   { key: "payable",    label: "Accounts Payable",    icon: "ti-building-bank", active: false },
+  { key: "po",         label: "Purchase Orders",      icon: "ti-shopping-cart", active: true  },
   { key: "receivable", label: "Accounts Receivable", icon: "ti-cash",          active: false },
   { key: "payroll",    label: "Payroll",              icon: "ti-users",         active: false },
   { key: "budget",     label: "Budget",               icon: "ti-chart-bar",    active: false },
@@ -569,7 +570,7 @@ export default function ApprovalWorkflowsPage() {
                     <i className={`ti ti-chevron-${isExpanded ? "up" : "down"} text-gray-400`} style={{ fontSize: 13 }} />
                   </button>
 
-                  {isExpanded && isActive && mod.key === "expense" && (
+                  {isExpanded && isActive && (mod.key === "expense" || mod.key === "po") && (
                     <div className="px-5 py-4 space-y-5 border-t border-gray-200">
 
                       {/* ── Routing mode ──────────────────────────────────── */}
