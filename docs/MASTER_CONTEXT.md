@@ -1007,6 +1007,42 @@ Enables the Super Admin to manually record a tenant's billing plan tier and firs
 
 ---
 
+### M11 — Accounts Payable (2026-07-25, migration `y7z8a9b0c1d2`)
+
+Full P2P invoice lifecycle: vendor master, AP invoice with multi-line GL coding, approval workflow, payment recording, AP aging report. Three-mode aware from first commit.
+
+**Migration `y7z8a9b0c1d2`:**
+- `vendors`: per-tenant supplier master. Code auto-generated `V-{NNNN}`.
+- `ap_invoices`: invoice header. Status lifecycle `DRAFT → SUBMITTED → APPROVED → REJECTED → CANCELLED → PAID`. Reference `AP-{YYYY}-{NNNN}`. Duplicate-flag detection by `(tenant_id, vendor_id, invoice_number)`.
+- `ap_invoice_lines`: line items with VAT/WHT/net-payable computation; `gl_account_id FK → chart_of_accounts`.
+- `ap_approvals`: step-ordered approval trail (mirrors `expense_approvals`; `is_advisory` flag).
+- `ap_invoice_snapshots`: immutable JSONB snapshot written at submission.
+
+**Backend:**
+- `app/models/ap.py` — ORM models for all 5 tables.
+- `app/schemas/ap.py` — Pydantic schemas (create/update/response/detail for vendors and invoices; aging schemas).
+- `app/routers/ap.py` — router prefix `/api/ap`:
+  - Vendor: `GET/POST /vendors`, `GET/PATCH /vendors/{id}`
+  - Invoices: `GET/POST /invoices`, `GET/PUT/DELETE /invoices/{id}`, plus lifecycle endpoints `/submit`, `/approve`, `/reject`, `/cancel`, `/pay`
+  - Reports: `GET /aging` (5-bucket AP aging), `GET /invoices/export` (CSV + Excel)
+  - Approval routing: calls `get_policy("payable", …)` + `compute_chain(module="payable")` — uses the same policy configured in the approval-matrix UI's "Accounts Payable" entry. Falls back to manual `selected_approver_id` if no policy set.
+- `app/services/ap_posting.py` — three-mode GL logic:
+  - `post_ap_approval()`: Full ERP — DR expense lines / CR accounts_payable control account
+  - `post_ap_payment()`: Full ERP — DR accounts_payable / CR bank GL
+  - `create_ap_posting_batch()`: Connected — creates `PostingBatch` with balanced `transactions` JSONB list
+
+**Frontend (5 new pages, all under `/dashboard/business/ap/`):**
+- `invoices/page.tsx` — Invoice list with status filter tabs, DUP badge, CSV/Excel export.
+- `invoices/new/page.tsx` — New invoice form: vendor selector, multi-line table, live VAT/WHT/net computation, GL picker via `GET /api/config/coa`.
+- `invoices/[id]/page.tsx` — Invoice detail with approval trail and action buttons (Submit / Approve / Reject / Pay / Cancel).
+- `vendors/page.tsx` — Vendor list with search, create modal, inline active/inactive toggle.
+- `aging/page.tsx` — AP Aging report: as-at-date filter, per-vendor buckets (Current / 1–30 / 31–60 / 61–90 / 90+).
+- `layout.tsx` sidebar: "Accounts Payable" section (Invoices / Vendors / AP Aging) gated on `ap` module activation; `MODULE_ROUTES['ap']` updated to point to the invoice list.
+
+**Out of scope (see M11b PRD):** Purchase Orders, GRN, 3-way match engine.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
@@ -1014,7 +1050,7 @@ Enables the Super Admin to manually record a tenant's billing plan tier and firs
 | # | Display Name | Internal Code | Status | All Modes |
 |---|---|---|---|---|
 | 1 | Expense Management | `expense` | ✅ Built (M3–M9 + #52) | ✅ |
-| 2 | Accounts Payable (P2P) | `ap` | ⏳ M11 | ✅ |
+| 2 | Accounts Payable (P2P) | `ap` | ✅ Built (M11, 2026-07-25) | ✅ |
 | 3 | Accounts Receivable (O2C) | `ar` | ⏳ M14 | ✅ |
 | 4 | Payroll & HR | `payroll` | ⏳ M15 | ✅ |
 | 5 | Inventory Management | `inventory` | ⏳ M17 | ✅ |
@@ -1113,8 +1149,9 @@ Architectural invariants that are durable decisions (the WHY):
 | # | What | Priority rationale |
 |---|---|---|
 | M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | Mode-agnostic; biggest differentiator for expense management |
-| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | Most critical missing module; highest daily-pain for any finance team |
-| M11b | **Bank Reconciliation** | Flows directly from AP; cannot run AP cleanly without bank recon |
+| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | ✅ Done (2026-07-25) — see §5 |
+| M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | PRD: `docs/M11b_PO_PRD.md` — build after M11 is live |
+| M11c | **Bank Reconciliation** | Flows directly from AP; cannot run AP cleanly without bank recon |
 | M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | Revenue-side; needed for companies that invoice clients |
 | SA-B | **SA Portal — Billing & Subscription backend** | Needed to charge customers |
 

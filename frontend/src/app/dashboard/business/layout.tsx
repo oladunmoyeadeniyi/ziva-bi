@@ -69,7 +69,7 @@ const MODULE_ICONS: Record<string, string> = {
 // Map module_key to sidebar route
 const MODULE_ROUTES: Record<string, string> = {
   expense:          "/dashboard/business/settings/expense-config",
-  ap:               "/dashboard/business/setup/modules/ap",
+  ap:               "/dashboard/business/ap/invoices",
   ar:               "/dashboard/business/setup/modules/ar",
   payroll:          "/dashboard/business/setup/modules/payroll",
   inventory:        "/dashboard/business/setup/modules/inventory",
@@ -425,6 +425,16 @@ export default function BusinessLayout({
                   {postingMode === 'full_erp' && (
                     <NavLink href="/dashboard/business/accounting/financial-statements" label="Financial statements" icon="report-analytics" />
                   )}
+                </div>
+              )}
+
+              {/* ACCOUNTS PAYABLE — shown only when ap module is active */}
+              {activeModules?.some(m => m.module_key === 'ap') && (
+                <div className="px-2">
+                  <SectionLabel label="Accounts Payable" />
+                  <NavLink href="/dashboard/business/ap/invoices" label="Invoices" icon="invoice" />
+                  <NavLink href="/dashboard/business/ap/vendors" label="Vendors" icon="truck" />
+                  <NavLink href="/dashboard/business/ap/aging" label="AP Aging" icon="chart-bar" />
                 </div>
               )}
 
