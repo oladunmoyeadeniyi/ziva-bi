@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-24 (P1 production deployment live; TIER 1 complete — Q1a, Q2, Q4, SA-B-lite all shipped; stale Q1 row removed from TIER 1 table)
+> Last updated: 2026-07-25 (M11b Purchase Orders & 3-Way Match shipped; TIER 2 in progress)
 
 ---
 
@@ -1043,6 +1043,39 @@ Full P2P invoice lifecycle: vendor master, AP invoice with multi-line GL coding,
 
 ---
 
+### M11b — Purchase Orders & 3-Way Match (2026-07-25)
+
+**Migration:** `z8a9b0c1d2e3_m11b_purchase_orders.py` — 8 tables: `purchase_orders`, `purchase_order_lines`, `po_approvals`, `po_snapshots`, `goods_receipt_notes`, `grn_lines`, `ap_invoice_po_matches`, `po_tolerance_config`. Seeds `po_commitment` posting role. Does NOT re-seed `grni` (already in `c9d0e1f2g3h4`). All FKs correctly point to `chart_of_accounts`, not `gl_accounts`.
+
+**Backend models:** `backend/app/models/po.py` — 8 ORM model classes with full Mapped[] type hints. `models/__init__.py` updated with `import app.models.po` registration.
+
+**Schemas:** `backend/app/schemas/po.py` — full request/response schema coverage: PO create/update/detail/list, GRN create/detail, match create/response/report, tolerance config.
+
+**Services:**
+- `services/po_match_engine.py` — pure functions: `compute_match_status()` (price_variance, qty_variance, match_status), `invoice_payment_blocked()`. No DB access; deterministic; tested by callers.
+- `services/po_posting.py` — `post_grni_accrual()` (Full ERP GRN confirm: DR expense GL / CR grni), `post_grni_clearance()` (GRNI clearance: DR grni / CR AP, called on invoice approval after match), `create_grni_posting_batch()` (Connected mode).
+
+**Router:** `backend/app/routers/po.py` — 20 endpoints under `/api/po/`:
+- PO lifecycle: list, create, get, update, delete, submit, approve, reject, send, close, cancel
+- GRN lifecycle: list (per PO), create, get, confirm (+ GRNI posting trigger)
+- 3-Way Match: create matches, get by invoice, override, match report
+- Tolerance: get, update
+Registered in `main.py` as `po_router`.
+
+**Approval module key:** `"po"` (matches approval-matrix UI convention, consistent with `"payable"` for AP).
+
+**Frontend — 7 pages:**
+- `po/page.tsx` — PO list with status filter and quick stats
+- `po/new/page.tsx` — Multi-line PO creation form with GL picker, VAT/WHT, live totals
+- `po/[id]/page.tsx` — PO detail with approval trail, GRN list, all lifecycle action buttons
+- `po/[id]/grns/new/page.tsx` — GRN creation with over-receipt guard (caps at remaining balance)
+- `po/grns/[grn_id]/page.tsx` — GRN detail with Confirm button + GRNI status
+- `po/match/[invoice_id]/page.tsx` — 3-Way Match recording form (invoice line ↔ GRN line)
+- `po/match-report/page.tsx` — Match status report across all invoices (variance counts, payment-blocked flag)
+Sidebar: Purchase Orders + Match Report links added to Accounts Payable section in `layout.tsx`.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
@@ -1150,7 +1183,7 @@ Architectural invariants that are durable decisions (the WHY):
 |---|---|---|
 | M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | Mode-agnostic; biggest differentiator for expense management |
 | M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | ✅ Done (2026-07-25) — see §5 |
-| M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | PRD: `docs/M11b_PO_PRD.md` — build after M11 is live |
+| M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | ✅ Done (2026-07-25) — see §5 |
 | M11c | **Bank Reconciliation** | Flows directly from AP; cannot run AP cleanly without bank recon |
 | M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | Revenue-side; needed for companies that invoice clients |
 | SA-B | **SA Portal — Billing & Subscription backend** | Needed to charge customers |

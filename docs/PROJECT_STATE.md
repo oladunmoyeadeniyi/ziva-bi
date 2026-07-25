@@ -233,6 +233,27 @@ ziva-bi/
 | `ap_approvals` | `id UUID PK`, `invoice_id FK→ap_invoices CASCADE`, `tenant_id FK→tenants CASCADE`, `step_order INT`, `approver_id FK→users SET NULL`, `role_id FK→approval_roles SET NULL`, `status VARCHAR(20)` (`PENDING\|APPROVED\|REJECTED\|REFERRED_BACK\|SKIPPED`), `is_advisory BOOL DEFAULT FALSE`, `action_at`, `comment`. | Step-ordered approval trail. Mirrors `expense_approvals`. |
 | `ap_invoice_snapshots` | `id UUID PK`, `invoice_id FK→ap_invoices CASCADE`, `snapshot_data JSONB`, `created_at`. | Immutable JSONB snapshot written at submission. |
 
+### 2.14 Purchase Order & 3-Way Match Tables (migration `z8a9b0c1d2e3`, 2026-07-25)
+
+| Table | Key columns | Notes |
+|---|---|---|
+| `purchase_orders` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `vendor_id FK→vendors`, `po_number VARCHAR(50)` (`PO-{YYYY}-{NNNN}`), `requester_id FK→users SET NULL`, `department_id FK→org_structure SET NULL`, `title VARCHAR(255)`, `delivery_date DATE`, `delivery_address TEXT`, `currency CHAR(3)`, `exchange_rate NUMERIC(18,6)`, `total_amount_foreign`, `total_amount_base`, `amount_received NUMERIC(18,2)`, `amount_invoiced NUMERIC(18,2)`, `status VARCHAR(20)` (`DRAFT\|SUBMITTED\|APPROVED\|REJECTED\|SENT\|PARTIALLY_RECEIVED\|FULLY_RECEIVED\|CLOSED\|CANCELLED`), `posting_mode VARCHAR(20)` (snapshotted at approval), `notes`, `submitted_at/by`, `approved_at/by`, `rejected_at/by/reason`, `sent_at/by`, `closed_at/by`, `cancelled_at/by`, `journal_entry_id FK→journal_entries SET NULL`, `posting_batch_id FK→posting_batches SET NULL`, `created_at/by`, `updated_at`. UQ: `(tenant_id, po_number)`. | PO header. `amount_received` incremented by GRN confirm; `amount_invoiced` incremented by match creation. |
+| `purchase_order_lines` | `id UUID PK`, `po_id FK→purchase_orders CASCADE`, `line_number INT`, `description TEXT`, `unit_of_measure VARCHAR(30)`, `quantity_ordered NUMERIC(18,4)`, `unit_price NUMERIC(18,2)`, `amount_foreign`, `amount_base`, `quantity_received NUMERIC(18,4)`, `quantity_invoiced NUMERIC(18,4)`, `gl_account_id FK→chart_of_accounts SET NULL`, `dimension_values JSONB`, `vat_applicable BOOL`, `vat_rate NUMERIC(6,4)`, `wht_applicable BOOL`, `wht_rate NUMERIC(6,4)`, `category_hint VARCHAR(100)`. | `amount_foreign = quantity_ordered × unit_price`; `amount_base = amount_foreign × exchange_rate`. `quantity_received` incremented by GRN confirmation. `quantity_invoiced` incremented by match creation. |
+| `po_approvals` | `id UUID PK`, `po_id FK→purchase_orders CASCADE`, `tenant_id FK→tenants CASCADE`, `step_order INT`, `approver_id FK→users SET NULL`, `role_id FK→approval_roles SET NULL`, `status VARCHAR(20)` (`PENDING\|APPROVED\|REJECTED\|REFERRED_BACK\|SKIPPED`), `is_advisory BOOL DEFAULT FALSE`, `action_at`, `comment`. | Per-step approval audit trail. Mirrors `ap_approvals`. Approval module key: `"po"`. |
+| `po_snapshots` | `id UUID PK`, `po_id FK→purchase_orders CASCADE`, `snapshot_data JSONB`, `created_at`. | Immutable JSONB snapshot written at submission. Same pattern as `ap_invoice_snapshots`. |
+| `goods_receipt_notes` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `po_id FK→purchase_orders`, `grn_number VARCHAR(50)` (`GRN-{YYYY}-{NNNN}`), `received_by FK→users SET NULL`, `receipt_date DATE`, `delivery_note_number VARCHAR(100)`, `notes TEXT`, `status VARCHAR(20)` (`DRAFT\|CONFIRMED`), `confirmed_at`, `confirmed_by FK→users SET NULL`, `grni_journal_entry_id FK→journal_entries SET NULL`, `grni_posting_batch_id FK→posting_batches SET NULL`, `created_at/by`. UQ: `(tenant_id, grn_number)`. | GRN is immutable once CONFIRMED. Confirmation triggers GRNI accrual. |
+| `grn_lines` | `id UUID PK`, `grn_id FK→goods_receipt_notes CASCADE`, `po_line_id FK→purchase_order_lines`, `line_number INT`, `description TEXT`, `quantity_received NUMERIC(18,4)`, `unit_price_on_po NUMERIC(18,2)` (locked at GRN creation), `amount_base NUMERIC(18,2)`, `condition_notes TEXT`. | Over-receipt guard enforced in router: `quantity_received ≤ po_line.quantity_ordered − po_line.quantity_received`. `amount_base = quantity_received × unit_price_on_po × exchange_rate`. |
+| `ap_invoice_po_matches` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `invoice_id FK→ap_invoices CASCADE`, `invoice_line_id FK→ap_invoice_lines CASCADE`, `grn_id FK→goods_receipt_notes`, `grn_line_id FK→grn_lines`, `po_id FK→purchase_orders`, `po_line_id FK→purchase_order_lines`, `matched_quantity NUMERIC(18,4)`, `matched_amount_base NUMERIC(18,2)`, `price_variance NUMERIC(18,2)`, `price_variance_pct NUMERIC(6,4)`, `qty_variance NUMERIC(18,4)`, `match_status VARCHAR(30)` (`MATCHED\|PRICE_VARIANCE\|QTY_VARIANCE\|OVER_INVOICED\|UNDER_INVOICED\|MANUAL_OVERRIDE`), `override_comment TEXT`, `created_at/by`. | N:M junction: one invoice line ↔ many GRN lines (split deliveries). Variance frozen at creation. Status computed by `po_match_engine.compute_match_status()`. |
+| `po_tolerance_config` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `price_tolerance_pct NUMERIC(6,4) DEFAULT 0.02` (2%), `qty_tolerance_pct NUMERIC(6,4) DEFAULT 0.05` (5%), `auto_approve_within_tolerance BOOL DEFAULT FALSE`, `block_payment_on_variance BOOL DEFAULT TRUE`, `updated_at`, `updated_by FK→users SET NULL`. UQ: `(tenant_id)`. | Auto-created with defaults on first match operation if not present. |
+
+**Posting roles added by this migration:**
+- `po_commitment` (`role_key='po_commitment'`, statement='BS', group='memo') — off-balance-sheet memo role. Only used when commitment accounting is enabled (not yet implemented). Seeded with `ON CONFLICT DO NOTHING`.
+- `grni` (`role_key='grni'`) — already seeded in `c9d0e1f2g3h4_catalogue_redesign`. NOT re-seeded.
+
+**GL journal flows (Full ERP):**
+- GRN confirmed: DR `<po_line.gl_account_id>` per line / CR `grni` (total) — posted by `po_posting.post_grni_accrual()`
+- Invoice match + approval: DR `grni` / CR `accounts_payable` — posted by `po_posting.post_grni_clearance()` (called from `ap_posting.post_ap_approval()` when matched)
+
 ---
 
 ## 3. Architectural Invariants
@@ -348,6 +369,39 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 - On payment: `DR accounts_payable / CR bank GL` (via `ap_posting.post_ap_payment()`)
 
 **Connected mode:** `create_ap_posting_batch()` creates a `PostingBatch` with balanced `transactions` JSONB list (DR expense / CR AP control).
+
+### 4.4c Purchase Orders & 3-Way Match (`/api/po`)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /api/po/ | List POs (filter: status, vendor_id; paginated limit/offset) |
+| POST | /api/po/ | Create DRAFT PO. Number auto-generated `PO-{YYYY}-{NNNN}`. |
+| GET | /api/po/{id} | PO detail (lines + approvals) |
+| PUT | /api/po/{id} | Update DRAFT PO (replace lines) |
+| DELETE | /api/po/{id} | Delete DRAFT PO |
+| POST | /api/po/{id}/submit | Submit for approval. `get_policy("po")` → `compute_chain(module="po")`. Writes snapshot. Raises 422 if no PO policy configured. |
+| POST | /api/po/{id}/approve | Approve (finds pending step for current user). Sets PO to APPROVED when all mandatory steps done. |
+| POST | /api/po/{id}/reject | Reject with `rejection_reason`. Returns to REJECTED. |
+| POST | /api/po/{id}/send | Mark APPROVED PO as SENT to vendor. |
+| POST | /api/po/{id}/close | Close (SENT / PARTIALLY_RECEIVED / FULLY_RECEIVED → CLOSED). |
+| POST | /api/po/{id}/cancel | Cancel (DRAFT → CANCELLED; blocked once PARTIALLY_RECEIVED or later). |
+| GET | /api/po/{po_id}/grns | List GRNs for a PO |
+| POST | /api/po/{po_id}/grns | Create DRAFT GRN. Over-receipt guard enforced per line. Number `GRN-{YYYY}-{NNNN}`. |
+| GET | /api/po/grns/{grn_id} | GRN detail (with lines) |
+| POST | /api/po/grns/{grn_id}/confirm | Confirm GRN (immutable). Increments `po_line.quantity_received`. Posts GRNI accrual (Full ERP) or posting_batch (Connected). |
+| POST | /api/po/matches | Record 3-way match records (invoice_id + list of `{invoice_line_id, grn_line_id, matched_quantity}`). Match engine computes variance + status. |
+| GET | /api/po/matches/{invoice_id} | Get all match records for an AP invoice |
+| PATCH | /api/po/matches/{match_id}/override | Set match_status = MANUAL_OVERRIDE with comment |
+| GET | /api/po/match-report | Match status summary across all invoices with match records |
+| GET | /api/po/tolerance | Get this tenant's tolerance config (auto-created with defaults on first access) |
+| PUT | /api/po/tolerance | Update tolerance settings (PATCH semantics, all fields optional) |
+
+**Approval routing note:** PO module key is `"po"`. Router calls `get_policy("po", …)` and `compute_chain(module="po", submitter_user_id=..., total_amount=..., db=...)`. `ChainStep` fields used: `.level` (→ `step_order`), `.approver_user_id` (→ `approver_id`), `.is_advisory`.
+
+**GL journals (Full ERP):**
+- GRN confirmed: `DR <po_line.gl_account_id> per line / CR grni (control)` via `po_posting.post_grni_accrual()`
+- Invoice match approved: `DR grni / CR accounts_payable` via `po_posting.post_grni_clearance()`
+
+**Connected mode:** `po_posting.create_grni_posting_batch()` creates a `PostingBatch` with `module="po"` on GRN confirmation.
 
 ### 4.5 Tenant Management (`/api/tenant`)
 | Method | Path | Purpose |

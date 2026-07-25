@@ -435,6 +435,8 @@ export default function BusinessLayout({
                   <NavLink href="/dashboard/business/ap/invoices" label="Invoices" icon="invoice" />
                   <NavLink href="/dashboard/business/ap/vendors" label="Vendors" icon="truck" />
                   <NavLink href="/dashboard/business/ap/aging" label="AP Aging" icon="chart-bar" />
+                  <NavLink href="/dashboard/business/po" label="Purchase Orders" icon="shopping-cart" />
+                  <NavLink href="/dashboard/business/po/match-report" label="Match Report" icon="git-compare" />
                 </div>
               )}
 
