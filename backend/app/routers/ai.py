@@ -169,13 +169,12 @@ async def ocr_receipt(
     except OCRNotConfiguredError:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="OCR service is not configured. "
-                   "Ask your administrator to set the ANTHROPIC_API_KEY environment variable.",
+            detail="Receipt scanning is not available. Please contact support.",
         )
     except OCRServiceError as exc:
         raise HTTPException(
             status_code=exc.http_status,
-            detail=f"OCR service error: {exc}",
+            detail="Receipt scanning is temporarily unavailable. Please try again later.",
         )
 
     # ── Persist ai_predictions audit row ──────────────────────────────────────
