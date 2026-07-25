@@ -201,7 +201,7 @@ function PLTab({
           {data.has_unmapped && (
             <Banner variant="warning" className="mb-4">
               Some P&amp;L accounts have no <strong>FS Head</strong> assigned — they appear under
-              "Unclassified". Map them on the Chart of Accounts page for proper grouping.
+              Unclassified. Map them on the Chart of Accounts page for proper grouping.
             </Banner>
           )}
 
@@ -319,7 +319,7 @@ function BSTab({
           {data.has_unmapped && (
             <Banner variant="warning" className="mb-4">
               Some balance sheet accounts have no <strong>FS Head</strong> assigned — they appear
-              under "Unclassified". Map them on the Chart of Accounts page.
+              under Unclassified. Map them on the Chart of Accounts page.
             </Banner>
           )}
 
