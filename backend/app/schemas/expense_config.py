@@ -56,6 +56,8 @@ class TenantExpenseConfigUpdate(BaseModel):
     allow_free_text_description: bool | None = None
     show_location: bool | None = None
     require_location: bool | None = None
+    # M10: AI-powered receipt scanning toggle
+    ocr_enabled: bool | None = None
 
     @field_validator("coding_level")
     @classmethod
@@ -78,6 +80,8 @@ class TenantExpenseConfigResponse(BaseModel):
     allow_free_text_description: bool
     show_location: bool
     require_location: bool
+    # M10: AI receipt scanning toggle
+    ocr_enabled: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -279,6 +283,7 @@ class FormConfigResponse(BaseModel):
     allow_free_text_description: bool
     show_location: bool
     require_location: bool
+    ocr_enabled: bool = True  # M10: AI receipt scanning toggle
     categories: list[CategoryForForm]  # M9: enhanced with GL mappings + dim requirements
     dimensions: list[DimensionForForm]  # M9: tenant dimensions with active values
 

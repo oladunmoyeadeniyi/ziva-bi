@@ -69,6 +69,7 @@ _DEFAULTS = TenantExpenseConfigResponse(
     allow_free_text_description=True,
     show_location=True,
     require_location=False,
+    ocr_enabled=True,   # M10: OCR on by default
 )
 
 
@@ -196,6 +197,9 @@ async def _upsert_config(
             config.require_location = False
     if data.require_location is not None:
         config.require_location = data.require_location
+    # M10: OCR toggle
+    if data.ocr_enabled is not None:
+        config.ocr_enabled = data.ocr_enabled
 
     await db.flush()
     await db.refresh(config)
@@ -394,7 +398,9 @@ async def get_form_config(
     # ── 1. Config row ──────────────────────────────────────────────────────────
     config = await _get_config(tenant_id, db)
     if config is None:
-        lvl, req_cat, req_sub, allow_free, show_loc, req_loc = 0, False, False, True, True, False
+        lvl, req_cat, req_sub, allow_free, show_loc, req_loc, ocr_on = (
+            0, False, False, True, True, False, True
+        )
     else:
         lvl = config.coding_level
         req_cat = config.require_category
@@ -402,6 +408,7 @@ async def get_form_config(
         allow_free = config.allow_free_text_description
         show_loc = config.show_location
         req_loc = config.require_location
+        ocr_on = config.ocr_enabled
 
     # ── 2. Dimensions with values ──────────────────────────────────────────────
     from datetime import date as _date_today
@@ -515,6 +522,7 @@ async def get_form_config(
         allow_free_text_description=allow_free,
         show_location=show_loc,
         require_location=req_loc,
+        ocr_enabled=ocr_on,  # M10
         categories=categories,
         dimensions=dimensions,
     )

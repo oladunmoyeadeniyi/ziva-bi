@@ -164,6 +164,7 @@ from app.routers import ap as ap_router
 from app.routers import po as po_router
 from app.routers import bank_recon as bank_recon_router
 from app.routers import app_config as app_config_router
+from app.routers import ai as ai_router
 
 app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
@@ -185,6 +186,7 @@ app.include_router(posting_batches_router.router)
 app.include_router(ap_router.router)
 app.include_router(po_router.router)
 app.include_router(bank_recon_router.router)
+app.include_router(ai_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

@@ -25,6 +25,7 @@ interface ExpenseConfig {
   allow_free_text_description: boolean;
   show_location: boolean;
   require_location: boolean;
+  ocr_enabled: boolean;
 }
 
 const CODING_LEVELS = [
@@ -99,6 +100,7 @@ export default function ExpenseConfigPage() {
   const [requireSubcategory, setRequireSubcategory] = useState(false);
   const [showLocation, setShowLocation] = useState(true);
   const [requireLocation, setRequireLocation] = useState(false);
+  const [ocrEnabled, setOcrEnabled] = useState(true); // M10
 
   useEffect(() => {
     if (!user) return;
@@ -120,6 +122,7 @@ export default function ExpenseConfigPage() {
         setRequireSubcategory(cfg.require_subcategory);
         setShowLocation(cfg.show_location ?? true);
         setRequireLocation(cfg.require_location ?? false);
+        setOcrEnabled(cfg.ocr_enabled ?? true);  // M10
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
@@ -140,6 +143,7 @@ export default function ExpenseConfigPage() {
           require_subcategory: requireCategory ? requireSubcategory : false,
           show_location: showLocation,
           require_location: showLocation ? requireLocation : false,
+          ocr_enabled: ocrEnabled,  // M10
         }),
       });
       setSaveSuccess(true);
@@ -282,6 +286,30 @@ export default function ExpenseConfigPage() {
             </div>
             <Toggle checked={requireLocation} onChange={() => setRequireLocation((v) => !v)} />
           </div>
+        )}
+      </div>
+
+      {/* ── Section 4: AI & OCR (M10) ─────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-4">
+          AI &amp; Receipt Scanning
+        </h2>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-800">Enable OCR receipt scanning</p>
+            <p className="text-xs text-gray-500 mt-0.5 max-w-sm">
+              When enabled, employees can photograph or upload a receipt from the expense form.
+              Anthropic AI extracts vendor, date, amount, and line items automatically.
+            </p>
+          </div>
+          <Toggle checked={ocrEnabled} onChange={() => setOcrEnabled((v) => !v)} />
+        </div>
+
+        {!ocrEnabled && (
+          <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            OCR is disabled. Employees will not see the Scan button on expense lines.
+          </p>
         )}
       </div>
 

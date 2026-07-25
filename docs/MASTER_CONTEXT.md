@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-25 (M11c Bank Reconciliation shipped; TIER 2 in progress)
+> Last updated: 2026-07-25 (M10 OCR/AI Engine shipped; M11–M11c also shipped; TIER 2 in progress)
 
 ---
 
@@ -1104,6 +1104,32 @@ Sidebar: Bank Reconciliation link added to Accounts Payable section.
 
 ---
 
+### M10 — OCR & Receipt Scanning (2026-07-25, migration `b0c1d2e3f4g5`)
+
+AI-powered receipt scanning using Anthropic Claude (claude-haiku-4-5-20251001). Mode-agnostic — works identically in Lite, Connected, and Full ERP; OCR only pre-fills form fields before submission and has no effect on GL posting or mode routing.
+
+**New tables (2):**
+- `ai_predictions` — mandatory audit record per AI call: model version, input hash, prediction JSON, confidence score (Numeric 5,4), accepted flag, processing_ms. Required by AI Engine PRD §12.
+- `ai_learning_overrides` — stub for M20 learning loop; populated via `POST /api/ai/override` when the user edits any extracted field before applying. Captures field name, original value, override value.
+
+**Schema change:** `ocr_enabled BOOL NOT NULL DEFAULT TRUE` added to `tenant_expense_config`. Tenant admins can toggle OCR off per-tenant.
+
+**New service:** `backend/app/services/ocr.py` — `extract_receipt(file_bytes, mime_type, tenant_currency_hint)` calls Anthropic Vision API synchronously (run via `asyncio.run_in_executor` to avoid blocking FastAPI's event loop). Handles JPEG/PNG/WEBP as `image` content blocks and PDF as `document` content blocks. Returns extracted vendor, date, amount, tax, line items, confidence scores per field. Gracefully degrades: `ANTHROPIC_API_KEY=""` → HTTP 501 so the system runs without a key.
+
+**New router:** `backend/app/routers/ai.py` at `/api/ai/` (central hub for all future AI features per AI Engine PRD).
+- `POST /api/ai/ocr` — uploads file, calls OCR service, writes `ai_predictions` row, returns `OcrResponse` with per-field confidence scores.
+- `POST /api/ai/override` — records a field correction into `ai_learning_overrides`; sets `prediction.accepted = False`.
+
+**Frontend:** `OcrScanModal.tsx` — four-state modal (upload → scanning → results → error). Drag-and-drop zone accepts JPEG/PNG/WEBP/PDF. Results panel shows editable amount/date/description, read-only vendor/tax, line items table. Confidence badges: ≥0.90 green "High", 0.70–0.89 amber "Medium", <0.70 red "Low — verify". "Apply to line" copies fields into the expense line; "Add as N split lines" creates child split lines from line_items. Overrides recorded before apply via `POST /api/ai/override`.
+
+**Expense form integration:** "Scan" button added to each expense line card (conditional on `formConfig.ocr_enabled`). Wired into both new-report and edit-report pages. `handleOcrApply()` patches amount/description/date or builds split lines.
+
+**Settings:** Section 4 "AI & Receipt Scanning" toggle added to `/dashboard/business/settings/expense-config`.
+
+**Env var:** `ANTHROPIC_API_KEY` added to `backend/.env.example`, `backend/app/config.py`, and `render.yaml`.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
@@ -1209,7 +1235,7 @@ Architectural invariants that are durable decisions (the WHY):
 
 | # | What | Priority rationale |
 |---|---|---|
-| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | Mode-agnostic; biggest differentiator for expense management |
+| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | ✅ Done (2026-07-25) — see §5 |
 | M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | ✅ Done (2026-07-25) — see §5 |
 | M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | ✅ Done (2026-07-25) — see §5 |
 | M11c | **Bank Reconciliation** | ✅ Done (2026-07-25) — see §5 |

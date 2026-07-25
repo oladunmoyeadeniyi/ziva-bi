@@ -39,6 +39,7 @@ import SplitLinePanel, {
 } from "@/components/expenses/SplitLinePanel";
 import { Banner } from "@/components/Banner";
 import { fmtCommaInput, stripCommas, formatMoney } from "@/lib/utils";
+import OcrScanModal, { type OcrApplyData } from "@/components/expenses/OcrScanModal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ interface FormConfig {
   allow_free_text_description: boolean;
   show_location: boolean;
   require_location: boolean;
+  ocr_enabled: boolean;
   categories: CategoryForForm[];
   dimensions: DimensionForForm[];
 }
@@ -237,6 +239,7 @@ const DEFAULT_CFG: FormConfig = {
   coding_level: 0, gl_coding_mode: "finance",
   require_category: false, require_subcategory: false,
   allow_free_text_description: true, show_location: true, require_location: false,
+  ocr_enabled: true,
   categories: [], dimensions: [],
 };
 
@@ -271,6 +274,9 @@ export default function NewExpensePage() {
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOverFor, setDragOverFor] = useState<string | null>(null);
+
+  // OCR modal (M10)
+  const [ocrForLineId, setOcrForLineId] = useState<string | null>(null);
 
   // Approver modal
   const [createdReportId, setCreatedReportId] = useState<string | null>(null);
@@ -507,6 +513,30 @@ export default function NewExpensePage() {
 
   const addLine = () => {
     setLines((prev) => [...prev, makeLine()]);
+    scheduleAutoSave();
+  };
+
+  // M10: apply OCR extraction result to a specific line
+  const handleOcrApply = (lineLocalId: string, data: OcrApplyData) => {
+    setLines((prev) => prev.map((l) => {
+      if (l.localId !== lineLocalId) return l;
+      const patch: Partial<LineState> = {};
+      if (data.amount !== undefined) patch.amount = String(data.amount);
+      if (data.description) patch.description = data.description;
+      if (data.invoice_date) patch.invoice_date = data.invoice_date;
+      // If line_items provided, add as split lines
+      if (data.line_items && data.line_items.length > 1) {
+        patch.split_lines = data.line_items.map((li) => ({
+          localId: Math.random().toString(36).slice(2),
+          backendId: null,
+          gl_id: null, gl_number: "", gl_name: "",
+          amount: String(li.amount),
+          dimension_values: {}, dimension_requirements: [],
+          description: li.description,
+        }));
+      }
+      return { ...l, ...patch };
+    }));
     scheduleAutoSave();
   };
 
@@ -928,6 +958,20 @@ export default function NewExpensePage() {
 
   return (
     <PageContainer maxWidth="5xl">
+
+      {/* OCR Scan Modal (M10) */}
+      {ocrForLineId && (
+        <OcrScanModal
+          isOpen={!!ocrForLineId}
+          onClose={() => setOcrForLineId(null)}
+          onApply={(data) => {
+            if (ocrForLineId) handleOcrApply(ocrForLineId, data);
+            setOcrForLineId(null);
+          }}
+          accessToken={accessToken}
+          currencyHint={undefined}
+        />
+      )}
 
       {/* GL Picker */}
       {pickerFor && cfg.coding_level > 0 && (
@@ -1440,8 +1484,19 @@ export default function NewExpensePage() {
                           </div>
                         </div>
 
-                        {/* Split + Remove buttons */}
+                        {/* Split + Scan + Remove buttons */}
                         <div className="flex flex-col items-end gap-1.5 shrink-0 pt-0.5">
+                          {formConfig.ocr_enabled && (
+                            <button
+                              type="button"
+                              title="Scan receipt"
+                              onClick={() => setOcrForLineId(line.localId)}
+                              className="text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 whitespace-nowrap flex items-center gap-1 transition-colors"
+                            >
+                              <i className="ti ti-scan" style={{ fontSize: 11 }} />
+                              Scan
+                            </button>
+                          )}
                           {!hasSplits && chipSelected && (parseFloat(line.amount) || 0) > 0 && (
                             <button type="button" onClick={() => addSplitLine(line.localId)}
                               className="text-xs font-medium text-gray-500 hover:text-blue-600 border border-gray-200 hover:border-blue-300 rounded px-1.5 py-0.5 whitespace-nowrap">

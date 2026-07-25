@@ -54,6 +54,12 @@ services:
       - key: OWNER_USER_ID
         sync: false
 
+      # ── Anthropic AI (M10 — OCR & AI Engine) ────────────────────────────────
+      # Obtain your key at https://console.anthropic.com/
+      # If not set, OCR returns HTTP 501 — system works without it.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
       # ── Cloudflare R2 (reserved — not yet used in production) ───────────────
       - key: R2_ACCOUNT_ID
         sync: false

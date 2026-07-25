@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     # Default works immediately via Resend's shared domain (limits: 100 emails/day).
     email_from: str = "Ziva BI <onboarding@resend.dev>"
 
+    # ── Anthropic AI (M10 — OCR & AI Engine) ─────────────────────────────────
+    # Set ANTHROPIC_API_KEY in Render dashboard or backend/.env.
+    # If blank, the OCR endpoint returns HTTP 501 (not configured) instead of crashing.
+    anthropic_api_key: str = ""
+
     # ── Frontend URL (used in email links) ────────────────────────────────────
     frontend_url: str = "http://localhost:3000"
 
