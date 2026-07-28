@@ -1130,6 +1130,28 @@ AI-powered receipt scanning using Anthropic Claude (claude-haiku-4-5-20251001). 
 
 ---
 
+### Q1b — Cash Flow Statement — Indirect Method (2026-07-27, migration `c1d2e3f4g5h6`)
+
+Third financial statement added alongside the already-shipped P&L and Balance Sheet (Q1a). Uses the indirect method (IAS 7): starts with net profit/loss, adjusts for non-cash items and working capital movements, adds investing and financing cash flows, reconciles to opening and closing cash balances derived from the GL. Full ERP mode only.
+
+**Schema change (no new tables):** Two nullable columns on `chart_of_accounts`:
+- `cf_category VARCHAR(20)` — `'cash'`, `'operating'`, `'investing'`, `'financing'`, or NULL.
+- `cf_sub_category VARCHAR(100)` — free-text sub-group label within the section (e.g., "Non-cash adjustments", "Working capital changes").
+
+**New service function:** `cash_flow(db, tenant_id, *, date_from, date_to)` in `backend/app/services/gl_reporting.py`. Algorithm: (1) fetches net income from `profit_and_loss()`; (2) queries tagged GL accounts; (3) computes CF amounts — PL accounts: `−period_amount`; BS accounts: `closing_balance − opening_balance`; (4) accumulates cash balance from `cf_category='cash'` accounts (negated, as cash accounts are debit-normal); (5) detects untagged BS accounts with posted activity (sets `has_untagged_bs` flag). Helper functions `_bs_balance_at()` and `_pl_period_amount()` do the per-account DB queries.
+
+**New endpoint:** `GET /api/gl/financial-statements/cf?date_from=&date_to=` — 403 for Lite/Connected mode.
+
+**New schemas** in `backend/app/schemas/gl.py`: `CFLineItem`, `CFGroup`, `CFSection`, `CFResponse` (includes `opening_cash`, `closing_cash`, `gl_closing_cash` for reconciliation check).
+
+**CoA schema updates** (`schemas/config.py`): `cf_category` and `cf_sub_category` added to `CoACreate`, `CoAUpdate`, `CoAResponse`, `CoAListItem`. Router PATCH handler already uses generic `setattr` — no router changes needed.
+
+**Frontend Financial Statements page:** Third "Cash Flow" tab added. New `CFSectionBlock` component renders each section with sub-groups and a colour-coded total footer (green = inflow, red = outflow). `cfDisplay()` helper renders negative amounts in parentheses (accounting convention). Opening/closing cash reconciliation footer shown below the three sections. `has_untagged_bs` and `doesNotReconcile` flags drive warning banners.
+
+**CoA edit modal:** "Cash Flow Mapping" section added with `cf_category` dropdown (Not mapped / Cash & Equivalents / Operating / Investing / Financing) and `cf_sub_category` text input. Saved via existing PATCH endpoint.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
@@ -1239,6 +1261,7 @@ Architectural invariants that are durable decisions (the WHY):
 | M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | ✅ Done (2026-07-25) — see §5 |
 | M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | ✅ Done (2026-07-25) — see §5 |
 | M11c | **Bank Reconciliation** | ✅ Done (2026-07-25) — see §5 |
+| Q1b | **Cash Flow Statement** (indirect method: net income + non-cash adjustments + working capital + investing + financing) | ✅ Done (2026-07-27) — see §5 |
 | M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | Revenue-side; needed for companies that invoice clients |
 | SA-B | **SA Portal — Billing & Subscription backend** | Needed to charge customers |
 

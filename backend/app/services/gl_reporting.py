@@ -12,6 +12,16 @@ Financial Statements (Q1a):
         Cumulative BS account balances up to as_at_date.
         Same sign convention: net = total_credit − total_debit.
 
+Cash Flow Statement — Indirect Method (Q1b):
+    cash_flow(db, tenant_id, *, date_from, date_to)
+        → CFResponse
+        Indirect method: starts with net income from P&L, then adjusts for:
+          - Non-cash PL items tagged cf_category='operating' (e.g. depreciation)
+          - Working capital movements: BS accounts tagged cf_category='operating'
+          - Investing movements: BS/PL accounts tagged cf_category='investing'
+          - Financing movements: BS/PL accounts tagged cf_category='financing'
+        Opening/closing cash derived from BS accounts tagged cf_category='cash'.
+
 
 
 Pure read / compute functions. POSTED entries only (DRAFT and REVERSED excluded).
@@ -56,6 +66,10 @@ from app.models.master_data import ChartOfAccount
 from app.schemas.gl import (
     AccountLedgerResponse,
     BSResponse,
+    CFGroup,
+    CFLineItem,
+    CFResponse,
+    CFSection,
     FSGroup,
     FSLineItem,
     FSSection,
@@ -525,4 +539,299 @@ async def balance_sheet(
         sections=sections,
         has_unmapped=has_unmapped,
         as_at_date=as_at_date,
+    )
+
+
+# ── Cash Flow Statement — Indirect Method (Q1b) ───────────────────────────────
+
+async def _bs_balance_at(
+    db: AsyncSession,
+    tenant_id: UUID,
+    gl_account_id: UUID,
+    as_at: Optional[date],
+) -> Decimal:
+    """
+    Return the cumulative (credit − debit) balance for a BS GL account up to as_at.
+
+    If as_at is None, returns the all-time cumulative balance.
+    Only POSTED journal entries are included.
+    """
+    q = (
+        select(
+            func.coalesce(func.sum(JournalLine.credit), _ZERO).label("sum_credit"),
+            func.coalesce(func.sum(JournalLine.debit),  _ZERO).label("sum_debit"),
+        )
+        .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
+        .where(
+            JournalLine.tenant_id == tenant_id,
+            JournalLine.gl_account_id == gl_account_id,
+            JournalEntry.status == "POSTED",
+        )
+    )
+    if as_at is not None:
+        q = q.where(JournalEntry.entry_date <= as_at)
+    row = (await db.execute(q)).one()
+    return _d(row.sum_credit) - _d(row.sum_debit)
+
+
+async def _pl_period_amount(
+    db: AsyncSession,
+    tenant_id: UUID,
+    gl_account_id: UUID,
+    date_from: Optional[date],
+    date_to: Optional[date],
+) -> Decimal:
+    """
+    Return the period (credit − debit) for a PL GL account within [date_from, date_to].
+
+    Only POSTED journal entries are included.
+    """
+    q = (
+        select(
+            func.coalesce(func.sum(JournalLine.credit), _ZERO).label("sum_credit"),
+            func.coalesce(func.sum(JournalLine.debit),  _ZERO).label("sum_debit"),
+        )
+        .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
+        .where(
+            JournalLine.tenant_id == tenant_id,
+            JournalLine.gl_account_id == gl_account_id,
+            JournalEntry.status == "POSTED",
+        )
+    )
+    if date_from is not None:
+        q = q.where(JournalEntry.entry_date >= date_from)
+    if date_to is not None:
+        q = q.where(JournalEntry.entry_date <= date_to)
+    row = (await db.execute(q)).one()
+    return _d(row.sum_credit) - _d(row.sum_debit)
+
+
+def _build_cf_section(
+    label: str,
+    items: list[tuple[str, str, str]],  # (gl_number, gl_name, cf_sub_category)
+    amounts: dict[str, Decimal],         # gl_number → CF amount
+    net_income: Optional[Decimal] = None,
+) -> CFSection:
+    """
+    Build a CFSection from a list of accounts and their computed CF amounts.
+
+    Items are grouped by cf_sub_category ('Other' when None).
+    Groups are ordered by first-seen gl_number.
+    Section total = net_income (if present) + sum of all group subtotals.
+    """
+    from collections import defaultdict as _dd
+
+    group_items: dict[str, list[CFLineItem]] = _dd(list)
+    group_order: list[str] = []
+
+    for gl_number, gl_name, sub_cat in items:
+        label_key = sub_cat if sub_cat else "Other"
+        if label_key not in group_order:
+            group_order.append(label_key)
+        amount = amounts.get(gl_number, _ZERO)
+        group_items[label_key].append(
+            CFLineItem(gl_number=gl_number, gl_name=gl_name, amount=amount)
+        )
+
+    groups: list[CFGroup] = []
+    for gk in group_order:
+        it = group_items[gk]
+        subtotal = sum((i.amount for i in it), _ZERO)
+        groups.append(CFGroup(label=gk, items=it, subtotal=subtotal))
+
+    groups_total = sum((g.subtotal for g in groups), _ZERO)
+    section_total = (net_income or _ZERO) + groups_total
+
+    return CFSection(
+        label=label,
+        net_income=net_income,
+        groups=groups,
+        total=section_total,
+    )
+
+
+async def cash_flow(
+    db: AsyncSession,
+    tenant_id: UUID,
+    *,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> CFResponse:
+    """
+    Compute the indirect method Cash Flow Statement from POSTED journal lines.
+
+    Parameters:
+        db         — async session (read-only).
+        tenant_id  — tenant scope.
+        date_from  — inclusive period start (None = beginning of all history).
+        date_to    — inclusive period end (None = all posted entries to date).
+
+    Returns:
+        CFResponse with three sections (Operating, Investing, Financing) plus
+        opening/closing cash balances and reconciliation flags.
+
+    Algorithm (indirect method):
+        A. OPERATING
+           1. Start with net_income from profit_and_loss(date_from, date_to).
+           2. Non-cash PL adjustments: PL accounts with cf_category='operating'.
+              CF amount = −period_amount  (depreciation debit → add back positive).
+           3. Working capital changes: BS accounts with cf_category='operating'.
+              CF amount = closing_balance − opening_balance
+              (asset grows: more negative → outflow; liability grows: more positive → inflow).
+
+        B. INVESTING
+           BS accounts with cf_category='investing': delta = closing − opening.
+           PL accounts with cf_category='investing': −period_amount.
+
+        C. FINANCING
+           BS accounts with cf_category='financing': delta = closing − opening.
+           PL accounts with cf_category='financing': −period_amount.
+
+        D. CASH RECONCILIATION
+           Opening cash = −Σ(balance of cf_category='cash' accounts up to date_from − 1 day).
+           Closing cash from GL = −Σ(balance of cf_category='cash' accounts up to date_to).
+           Net change = A.total + B.total + C.total.
+           Closing cash (computed) = opening_cash + net_change.
+
+    Sign conventions:
+        CF amounts: positive = inflow, negative = outflow.
+        Cash balances: always positive (negated from GL credit−debit convention).
+
+    has_untagged_bs:
+        True when at least one BS account has posted POSTED activity in the period AND
+        cf_category IS NULL.  Signals to the user that the statement may be incomplete.
+    """
+    from datetime import timedelta
+
+    # ── 1. Fetch net income for the period ────────────────────────────────────
+    pl_result = await profit_and_loss(db, tenant_id, date_from=date_from, date_to=date_to)
+    net_income = pl_result.net_income
+
+    # ── 2. Load all cf_category-tagged GL accounts for this tenant ────────────
+    tagged_q = (
+        select(
+            ChartOfAccount.id,
+            ChartOfAccount.gl_number,
+            ChartOfAccount.gl_name,
+            ChartOfAccount.account_type,
+            ChartOfAccount.cf_category,
+            ChartOfAccount.cf_sub_category,
+        )
+        .where(
+            ChartOfAccount.tenant_id == tenant_id,
+            ChartOfAccount.is_active == True,  # noqa: E712
+            ChartOfAccount.cf_category.in_(["operating", "investing", "financing", "cash"]),
+        )
+        .order_by(ChartOfAccount.gl_number)
+    )
+    tagged_rows = (await db.execute(tagged_q)).all()
+
+    # ── 3. Determine opening date for delta computations ──────────────────────
+    # opening = cumulative balance one day before date_from.
+    # If date_from is None, opening balance is always zero (start of history).
+    opening_date: Optional[date] = None
+    if date_from is not None:
+        opening_date = date_from - timedelta(days=1)
+
+    # ── 4. Compute amounts for each tagged account ────────────────────────────
+    # Buckets keyed by cf_category
+    operating_items: list[tuple[str, str, str]] = []  # (gl_number, gl_name, cf_sub_category)
+    investing_items: list[tuple[str, str, str]] = []
+    financing_items: list[tuple[str, str, str]] = []
+    amounts: dict[str, Decimal] = {}  # gl_number → CF amount
+
+    opening_cash_raw = _ZERO
+    closing_cash_raw = _ZERO
+
+    for row in tagged_rows:
+        gl_no   = row.gl_number
+        gl_name = row.gl_name
+        sub_cat = row.cf_sub_category or ""
+        cat     = row.cf_category
+        acct_id = row.id
+
+        if cat == "cash":
+            # Cash accounts feed the opening/closing cash reconciliation only — they do not
+            # appear as line items in the statement body.  When date_from is None (all-time
+            # from inception) the opening cash balance is zero by definition.
+            if opening_date is not None:
+                opening_cash_raw += await _bs_balance_at(db, tenant_id, acct_id, opening_date)
+            closing_cash_raw += await _bs_balance_at(db, tenant_id, acct_id, date_to)
+            continue
+
+        if row.account_type in ("PL", "SOCI"):
+            # Non-cash PL adjustment: CF amount = −period_amount
+            period_amt = await _pl_period_amount(db, tenant_id, acct_id, date_from, date_to)
+            cf_amt = -period_amt
+        else:
+            # BS account: CF amount = closing_balance − opening_balance.
+            # When date_from is None, opening balance is zero (start of history).
+            closing_bal = await _bs_balance_at(db, tenant_id, acct_id, date_to)
+            opening_bal = (
+                await _bs_balance_at(db, tenant_id, acct_id, opening_date)
+                if opening_date is not None
+                else _ZERO
+            )
+            cf_amt = closing_bal - opening_bal
+
+        amounts[gl_no] = cf_amt.quantize(Decimal("0.01"))
+
+        if cat == "operating":
+            operating_items.append((gl_no, gl_name, sub_cat))
+        elif cat == "investing":
+            investing_items.append((gl_no, gl_name, sub_cat))
+        elif cat == "financing":
+            financing_items.append((gl_no, gl_name, sub_cat))
+
+    # Cash accounts are debit-normal: their credit−debit amount is negative when cash exists.
+    # Negate to display as positive cash balance figures.
+    opening_cash = (-opening_cash_raw).quantize(Decimal("0.01"))
+    gl_closing_cash = (-closing_cash_raw).quantize(Decimal("0.01"))
+
+    # ── 5. Build sections ─────────────────────────────────────────────────────
+    operating_section = _build_cf_section(
+        "Operating Activities",
+        operating_items,
+        amounts,
+        net_income=net_income,
+    )
+    investing_section = _build_cf_section("Investing Activities", investing_items, amounts)
+    financing_section = _build_cf_section("Financing Activities", financing_items, amounts)
+
+    sections = [operating_section, investing_section, financing_section]
+
+    # ── 6. Net change and closing cash ────────────────────────────────────────
+    net_change = sum((s.total for s in sections), _ZERO).quantize(Decimal("0.01"))
+    closing_cash = (opening_cash + net_change).quantize(Decimal("0.01"))
+
+    # ── 7. has_untagged_bs: any BS account with activity and no cf_category ───
+    untagged_q = (
+        select(func.count(ChartOfAccount.id.distinct()))
+        .join(JournalLine, JournalLine.gl_account_id == ChartOfAccount.id)
+        .join(JournalEntry, JournalLine.journal_entry_id == JournalEntry.id)
+        .where(
+            ChartOfAccount.tenant_id == tenant_id,
+            ChartOfAccount.account_type.in_(["BS", "SOFP"]),
+            ChartOfAccount.cf_category.is_(None),
+            JournalEntry.status == "POSTED",
+        )
+    )
+    if date_from is not None:
+        untagged_q = untagged_q.where(JournalEntry.entry_date >= date_from)
+    if date_to is not None:
+        untagged_q = untagged_q.where(JournalEntry.entry_date <= date_to)
+    untagged_count = (await db.execute(untagged_q)).scalar_one() or 0
+    has_untagged_bs = int(untagged_count) > 0
+
+    return CFResponse(
+        sections=sections,
+        net_income=net_income,
+        net_change_in_cash=net_change,
+        opening_cash=opening_cash,
+        closing_cash=closing_cash,
+        gl_closing_cash=gl_closing_cash,
+        has_unmapped=False,  # reserved for future partial-result scenarios
+        has_untagged_bs=has_untagged_bs,
+        date_from=date_from,
+        date_to=date_to,
     )

@@ -311,6 +311,9 @@ export default function ChartOfAccountsPage() {
   const [editIsForeignCurrency, setEditIsForeignCurrency] = useState(false);
   const [editForeignCurrencyCode, setEditForeignCurrencyCode] = useState("");
   const [editRevalueAtPeriodEnd, setEditRevalueAtPeriodEnd] = useState(false);
+  // Q1b: Cash Flow Statement mapping
+  const [editCfCategory, setEditCfCategory] = useState<string>("");
+  const [editCfSubCategory, setEditCfSubCategory] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Dimensions modal
@@ -617,6 +620,9 @@ export default function ChartOfAccountsPage() {
           is_foreign_currency: editIsForeignCurrency,
           foreign_currency_code: editIsForeignCurrency ? editForeignCurrencyCode || null : null,
           revalue_at_period_end: editIsForeignCurrency ? editRevalueAtPeriodEnd : false,
+          // Q1b: Cash Flow Statement mapping
+          cf_category: editCfCategory || null,
+          cf_sub_category: editCfSubCategory.trim() || null,
         }),
       });
       setEditId(null);
@@ -1777,7 +1783,40 @@ export default function ChartOfAccountsPage() {
               )}
             </div>
 
-            <div className="flex gap-3 justify-end mt-2">
+            {/* ── Q1b: Cash Flow Statement mapping ───────────────────────── */}
+            <div className="border-t border-gray-100 pt-4 mt-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                Cash Flow Mapping <span className="font-normal text-gray-400">(Full ERP only)</span>
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">CF Category</label>
+                  <select
+                    value={editCfCategory}
+                    onChange={(e) => setEditCfCategory(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">— Not mapped —</option>
+                    <option value="cash">Cash &amp; Equivalents</option>
+                    <option value="operating">Operating</option>
+                    <option value="investing">Investing</option>
+                    <option value="financing">Financing</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">CF Sub-Category</label>
+                  <input
+                    type="text"
+                    value={editCfSubCategory}
+                    onChange={(e) => setEditCfSubCategory(e.target.value)}
+                    placeholder="e.g. Non-cash adjustments"
+                    className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end mt-4">
               <Button variant="secondary" onClick={() => setEditId(null)} disabled={savingEdit}>
                 Cancel
               </Button>
@@ -1943,6 +1982,8 @@ export default function ChartOfAccountsPage() {
                           setEditIsForeignCurrency(fresh.is_foreign_currency ?? false);
                           setEditForeignCurrencyCode(fresh.foreign_currency_code ?? "");
                           setEditRevalueAtPeriodEnd(fresh.revalue_at_period_end ?? false);
+                          setEditCfCategory((fresh as any).cf_category ?? "");
+                          setEditCfSubCategory((fresh as any).cf_sub_category ?? "");
                         }}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                       >

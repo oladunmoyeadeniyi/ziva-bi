@@ -234,6 +234,9 @@ class CoACreate(BaseModel):
     is_foreign_currency: Optional[bool] = False
     foreign_currency_code: Optional[str] = None
     revalue_at_period_end: Optional[bool] = False
+    # Q1b: Cash Flow Statement mapping
+    cf_category: Optional[str] = None      # 'cash' | 'operating' | 'investing' | 'financing' | None
+    cf_sub_category: Optional[str] = None  # free-text sub-group label
 
     @field_validator("gl_number")
     @classmethod
@@ -284,6 +287,9 @@ class CoAUpdate(BaseModel):
     is_foreign_currency: Optional[bool] = None
     foreign_currency_code: Optional[str] = None
     revalue_at_period_end: Optional[bool] = None
+    # Q1b: Cash Flow Statement mapping
+    cf_category: Optional[str] = None      # 'cash' | 'operating' | 'investing' | 'financing' | None
+    cf_sub_category: Optional[str] = None  # free-text sub-group label
 
     @field_validator("account_type")
     @classmethod
@@ -339,6 +345,9 @@ class CoAResponse(BaseModel):
     tb_mapping: str | None = None
     group_account_number: str | None = None
     group_account_name: str | None = None
+    # Q1b: Cash Flow Statement mapping
+    cf_category: str | None = None
+    cf_sub_category: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -372,6 +381,8 @@ class CoAResponse(BaseModel):
             tb_mapping=g.tb_mapping,
             group_account_number=g.group_account_number,
             group_account_name=g.group_account_name,
+            cf_category=g.cf_category,
+            cf_sub_category=g.cf_sub_category,
         )
 
 
@@ -391,6 +402,9 @@ class CoAListItem(BaseModel):
     is_foreign_currency: Optional[bool] = False
     foreign_currency_code: Optional[str] = None
     revalue_at_period_end: Optional[bool] = False
+    # Q1b: Cash Flow Statement mapping
+    cf_category: Optional[str] = None
+    cf_sub_category: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -412,6 +426,8 @@ class CoAListItem(BaseModel):
             is_foreign_currency=g.is_foreign_currency or False,
             foreign_currency_code=g.foreign_currency_code,
             revalue_at_period_end=g.revalue_at_period_end or False,
+            cf_category=g.cf_category,
+            cf_sub_category=g.cf_sub_category,
         )
 
 

@@ -67,13 +67,14 @@ from app.schemas.gl import (
     JournalEntryListItem,
     JournalEntryOut,
     JournalLineInput,
+    CFResponse,
     JournalLineOut,
     ManualJournalCreate,
     PLResponse,
     TrialBalanceResponse,
 )
 from app.services.gl_posting import PostingError, post_journal
-from app.services.gl_reporting import account_ledger, balance_sheet, profit_and_loss, trial_balance
+from app.services.gl_reporting import account_ledger, balance_sheet, cash_flow, profit_and_loss, trial_balance
 
 router = APIRouter(prefix="/api/gl", tags=["gl"])
 
@@ -248,6 +249,55 @@ async def get_balance_sheet(
     """
     tenant_id = _require_gl_user(current_user)
     return await balance_sheet(db, tenant_id, as_at_date=as_at_date)
+
+
+@router.get("/financial-statements/cf", response_model=CFResponse)
+async def get_cash_flow(
+    date_from: Optional[date] = Query(
+        None,
+        description="Period start date (YYYY-MM-DD). Omit for all-time from inception.",
+    ),
+    date_to: Optional[date] = Query(
+        None,
+        description="Period end date (YYYY-MM-DD). Omit for all posted entries to date.",
+    ),
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CFResponse:
+    """
+    Indirect method Cash Flow Statement for the tenant (Q1b). Full ERP mode only.
+
+    Computes cash flows via the indirect method:
+        A. Operating: net income ± non-cash adjustments ± working capital changes.
+        B. Investing: movements in long-term asset / investment accounts.
+        C. Financing: movements in debt, equity, and dividend accounts.
+
+    Opening and closing cash balances are derived from GL accounts tagged
+    cf_category='cash' (e.g. bank accounts, petty cash).
+
+    Prerequisites (accounts must be tagged on the Chart of Accounts):
+        cf_category = 'cash'       → cash & cash equivalents accounts.
+        cf_category = 'operating'  → working capital BS accounts + non-cash PL items.
+        cf_category = 'investing'  → capex / disposal accounts.
+        cf_category = 'financing'  → debt / equity / dividend accounts.
+
+    has_untagged_bs in the response is True if any BS account has posted activity
+    but no cf_category — this signals an incomplete statement.
+
+    Access: Full ERP tenants only (Lite and Connected tenants receive 403).
+    """
+    tenant_id = _require_gl_user(current_user)
+
+    # Mode guard — Full ERP only
+    posting_mode = await _get_posting_mode(tenant_id, db)
+    if posting_mode != "full_erp":
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=403,
+            detail="Cash Flow Statement is only available in Full ERP mode.",
+        )
+
+    return await cash_flow(db, tenant_id, date_from=date_from, date_to=date_to)
 
 
 # ── Manual journal entries (Q2) ───────────────────────────────────────────────

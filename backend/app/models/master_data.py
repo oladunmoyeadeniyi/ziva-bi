@@ -234,6 +234,19 @@ class ChartOfAccount(Base):
     # from plain-deactivated, hence this separate flag.
     is_retired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Q1b: Cash Flow Statement — indirect method mapping.
+    # cf_category: 'cash' | 'operating' | 'investing' | 'financing' | NULL
+    #   'cash'      → cash & cash equivalents; used to derive opening/closing balances.
+    #   'operating' → working capital BS accounts (AR, AP, inventory) or non-cash PL items
+    #                 (depreciation). Delta (BS) or period activity (PL) populates operating section.
+    #   'investing' → PPE / long-term investment movements (BS) or gain/loss on disposal (PL).
+    #   'financing' → debt, equity, dividend accounts (BS) or interest expense (PL).
+    #   NULL        → not classified; excluded from cash flow. Warning banner shown to user.
+    # cf_sub_category: free-text group label within the section (e.g. 'Non-cash adjustments').
+    #   Defaults to 'Other' in the service layer when NULL.
+    cf_category: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    cf_sub_category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -16,6 +16,12 @@ Read / reporting (Brief 2):
     TrialBalanceResponse — full TB response with grand totals + integrity flag.
     LedgerLine         — one posted line in an account ledger.
     AccountLedgerResponse — full ledger: opening balance, lines, closing balance.
+
+Cash Flow Statement (Q1b):
+    CFLineItem         — one GL account within a cash flow group.
+    CFGroup            — named sub-group within a cash flow section.
+    CFSection          — Operating, Investing, or Financing section.
+    CFResponse         — full indirect method cash flow statement.
 """
 
 from datetime import date, datetime
@@ -279,5 +285,92 @@ class AccountLedgerResponse(BaseModel):
     opening_balance: Decimal
     lines: list[LedgerLine]
     closing_balance: Decimal
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+
+
+# ── Cash Flow Statement schemas (Q1b) ─────────────────────────────────────────
+
+class CFLineItem(BaseModel):
+    """
+    One GL account line within a cash flow group.
+
+    amount:
+        Positive = cash inflow.  Negative = cash outflow.
+
+    For BS accounts (working capital / investing / financing):
+        amount = closing_balance − opening_balance.
+        Asset accounts: a debit increase (asset grows) → amount becomes more negative → outflow.
+        Liability/equity accounts: a credit increase → amount becomes more positive → inflow.
+
+    For PL accounts (non-cash adjustments):
+        amount = −(period credit − debit).
+        Depreciation (debit expense): period amount < 0 → CF amount > 0 (add-back).
+        Gain on disposal (credit income): period amount > 0 → CF amount < 0 (deduct).
+    """
+
+    gl_number: str
+    gl_name: str
+    amount: Decimal   # positive = inflow, negative = outflow
+
+
+class CFGroup(BaseModel):
+    """
+    A named sub-group within a cash flow section.
+
+    label   — cf_sub_category value (e.g. 'Non-cash adjustments', 'Working capital changes').
+    items   — GL accounts in this group.
+    subtotal — sum of item amounts (positive = net inflow, negative = net outflow).
+    """
+
+    label: str
+    items: list[CFLineItem]
+    subtotal: Decimal
+
+
+class CFSection(BaseModel):
+    """
+    One of the three main cash flow sections.
+
+    label      — 'Operating Activities', 'Investing Activities', or 'Financing Activities'.
+    net_income — Only set on 'Operating Activities' section; None for Investing/Financing.
+                 This is the starting net profit/loss that the operating section adjusts from.
+    groups     — Sub-groups within the section.
+    total      — Section total INCLUDING net_income for Operating; group subtotals only for others.
+                 Positive = net inflow from this section, negative = net outflow.
+    """
+
+    label: str
+    net_income: Optional[Decimal] = None   # Operating section only
+    groups: list[CFGroup]
+    total: Decimal
+
+
+class CFResponse(BaseModel):
+    """
+    Indirect method Cash Flow Statement response.
+
+    sections           — Three CFSection objects: Operating, Investing, Financing.
+    net_income         — Net profit/loss for the period (same value as PLResponse.net_income).
+    net_change_in_cash — Sum of the three section totals (Operating + Investing + Financing).
+    opening_cash       — Cumulative cash & equivalents balance at the start of the period.
+    closing_cash       — opening_cash + net_change_in_cash.
+    gl_closing_cash    — Closing cash derived directly from GL (for reconciliation check).
+    has_unmapped       — True if any cf_category='operating'/'investing'/'financing' account
+                         could not be processed (data integrity warning).
+    has_untagged_bs    — True if any BS account with posted activity has cf_category IS NULL.
+                         Signals the user that the statement may be incomplete.
+    date_from          — Period start (None = beginning of all history).
+    date_to            — Period end (None = latest posted entry date).
+    """
+
+    sections: list[CFSection]
+    net_income: Decimal
+    net_change_in_cash: Decimal
+    opening_cash: Decimal
+    closing_cash: Decimal
+    gl_closing_cash: Decimal
+    has_unmapped: bool
+    has_untagged_bs: bool
     date_from: Optional[date] = None
     date_to: Optional[date] = None
