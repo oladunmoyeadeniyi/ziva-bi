@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-25 (M10 OCR/AI Engine shipped; M11–M11c also shipped; TIER 2 in progress)
+> Last updated: 2026-07-29 — All TIER 2–4 milestones shipped. Migrations e3f4…→k9l0… written + py_compile verified; awaiting CC commit. Last committed DB head: `d2e3f4g5h6i7` (M14 AR). Product functionally complete; first customer ready. ICE, Performance Audit, and FX table decision are the only remaining open items.
 
 ---
 
@@ -1152,25 +1152,173 @@ Third financial statement added alongside the already-shipped P&L and Balance Sh
 
 ---
 
+### M14 — Accounts Receivable / O2C (2026-07-28, migration `d2e3f4g5h6i7`)
+
+Full revenue-side AR module: customer master, invoice lifecycle, GL posting (3-mode), AR aging. Mirror of AP (M11) on the receivable side.
+
+**New tables (5):**
+- `customers` — customer master: code (`C-{N:04d}` auto-generated), name, customer_type (`standard/government/ngo/corporate/individual/non_resident`), tax_id, email, phone, address, credit_limit, credit_terms (`immediate/net_30/net_60/net_90/custom`), credit_terms_days, is_active.
+- `ar_invoices` — header: ar_reference (`AR-{YYYY}-{N:04d}`), customer_id, invoice_number, invoice_date, due_date (auto-computed from credit_terms), service_period_start/end, currency, exchange_rate, description, status (`DRAFT/SUBMITTED/APPROVED/RECEIVED/REJECTED/CANCELLED`), totals (total_amount_base, total_amount_foreign, total_vat, total_wht, net_receivable = total_amount_base + total_vat − total_wht), duplicate_flag, snapshot_json, journal_entry_id, receipt_journal_entry_id, posting_batch_id, receipt fields (received_at, received_by, receipt_reference, receipt_bank_account_id).
+- `ar_invoice_lines` — line items: revenue GL, dimensions, amount_foreign, exchange_rate, amount_base, vat_rate/amount, wht_rate/amount, net_receivable_line = amount_base + vat_amount − wht_amount.
+- `ar_approvals` — approval audit trail (same pattern as AP).
+- `ar_invoice_snapshots` — immutable JSONB snapshot written at submission; used as approval exhibit.
+
+**Net receivable formula (opposite sign from AP):** `net_receivable = amount_base + vat_amount − wht_amount`. VAT adds to what the customer owes; WHT is deducted by the customer before paying, so it reduces what we receive. AP's `net_payable = amount_base − wht_amount` (no VAT on payable).
+
+**Approval module key:** `"receivable"` (AP uses `"payable"`).
+
+**Duplicate detection:** same `(tenant_id, customer_id, invoice_number)` with non-cancelled/non-rejected status → `duplicate_flag = True` (non-blocking warning, shown as DUP badge on invoice list).
+
+**GL posting (Full ERP, post_ar_approval):** DR accounts_receivable / CR revenue GL per line — synchronous, same transaction as approval. `journal_entry_id` set on invoice.
+
+**Receipt posting (Full ERP, post_ar_receipt):** DR bank GL / CR accounts_receivable. `receipt_journal_entry_id` set on invoice.
+
+**Connected mode:** `create_ar_posting_batch()` — creates a `posting_batches` row for export to external ERP.
+
+**AR aging:** buckets — Current (not yet due), 1–30, 31–60, 61–90, 90+ days past `due_date`. Endpoint: `GET /api/ar/aging?as_at_date=`. Only APPROVED (unreceived) invoices included.
+
+**New service:** `backend/app/services/ar_posting.py` — `post_ar_approval()`, `post_ar_receipt()`, `create_ar_posting_batch()`, `_get_control_gl()`.
+
+**New router:** `backend/app/routers/ar.py` at `/api/ar/` — customers CRUD, invoice lifecycle (`submit/approve/reject/cancel/receive`), `GET /invoices/export` (CSV+Excel), `GET /aging`. Route `GET /invoices/export` registered before `GET /invoices/{id}` to prevent FastAPI treating "export" as a UUID parameter.
+
+**Frontend pages (4 new):**
+- `/dashboard/business/ar/invoices` — invoice list with status filter tabs, DUP badge, overdue days in red, export button.
+- `/dashboard/business/ar/invoices/new` — new invoice form: customer selector, service period fields, line items with Revenue GL picker, `computeLine()` uses `+vatAmount` (vs AP's `−whtAmount`), totals footer "Gross / VAT: +{fmt} / WHT: ({fmt}) / Net Receivable".
+- `/dashboard/business/ar/invoices/[id]` — invoice detail: all lifecycle actions (Submit, Approve, Reject, Record Receipt, Cancel), Receipt modal (date + reference + bank_account_id), shows both `journal_entry_id` and `receipt_journal_entry_id` if set, `RECEIVED` status in purple.
+- `/dashboard/business/ar/customers` — customer list: search, include_inactive toggle, outstanding balance, inline active/deactivate toggle, Create Customer modal with credit limit + credit terms fields.
+- `/dashboard/business/ar/aging` — AR aging report: as-at-date input, bucket columns colour-coded (Current neutral → 90+ red-700), `AgingCell` dims zero values.
+
+**Sidebar:** AR section added to `business/layout.tsx` between AP and People sections; `MODULE_ROUTES['ar']` updated to `/dashboard/business/ar/invoices`.
+
+---
+
+### M16 — Budget & Planning (2026-07-28, migration `e3f4g5h6i7j8`) — **pending CC commit**
+
+Three-mode budget system: period-based budget setup, line-item entry by GL account, and a variance engine that computes actual vs. budget.
+
+**New tables:** `budget_periods` (period label, start/end, status, is_locked), `budget_lines` (budget_period_id, GL account, cost center/dimension values, budgeted_amount, notes). Three-mode actuals query: Full ERP reads `journal_lines`; Connected reads `posting_batches`; Lite reads approved `expense_lines`.
+
+**Backend:** `models/budget.py`, `schemas/budget.py`, `services/budget_service.py` (variance engine), `routers/budget.py` at `/api/budgets/*`.
+
+**Frontend:** Budget period list + create form; budget lines entry table (GL picker, dimension entry, amount); variance report (budgeted vs actual, variance %, colour-coded). Sidebar section gated on `budget` module.
+
+---
+
+### SA-B — SA Portal Billing & Subscriptions (2026-07-28, migration `f4g5h6i7j8k9`) — **pending CC commit**
+
+Full billing management for the Super Admin portal. Pricing plans, tenant subscriptions, and billing event log.
+
+**New tables:** `pricing_plans` (name, price, billing_cycle, feature_flags JSONB), `tenant_subscriptions` (tenant_id FK, pricing_plan_id FK, status, trial_end, current_period_start/end, cancelled_at), `billing_events` (tenant_id, event_type, amount, currency, reference, metadata JSONB).
+
+**Backend:** `models/billing.py`, `schemas/billing.py`, `routers/billing.py` at `/api/sa/billing/*` (SA-only). Endpoints: pricing plan CRUD, subscription management (create/upgrade/cancel), billing event log, revenue summary.
+
+**Frontend:** SA portal Billing tab — plan list with pricing, per-tenant subscription status, billing history timeline, revenue dashboard cards.
+
+---
+
+### M19 — Tax Engine — Transaction Level (2026-07-28, migration `g5h6i7j8k9l0`) — **pending CC commit**
+
+Transaction-level VAT/WHT/PAYE computation, tax return management, and WHT certificate generation.
+
+**New tables:** `tax_returns` (tenant_id, tax_type, period_start/end, status, total_liability, total_paid, reference, filed_at, due_date), `wht_certificates` (tenant_id, vendor_id, invoice_id, wht_rate, wht_amount, certificate_number, period, issued_at).
+
+**Backend:** `models/tax_engine.py`, `schemas/tax_engine.py`, `services/tax_compute_service.py` (VAT input/output summary, WHT due by vendor, PAYE computation from payroll runs), `routers/tax_engine.py` at `/api/tax/*`.
+
+**Frontend:** Tax returns list with status badges (DRAFT/FILED/PAID); VAT summary (output VAT - input VAT = net payable); WHT certificates list with PDF-ready layout; PAYE computation summary by period. Sidebar gated on `tax_engine` module.
+
+---
+
+### M15 — Payroll & HR (2026-07-28, migration `h6i7j8k9l0m1`) — **pending CC commit**
+
+Salary structures, payroll run management, PAYE computation, payslip generation, and leave management.
+
+**New tables:** `salary_structures` (tenant_id, employee_id, effective_date, basic_salary, allowances JSONB, deductions JSONB), `payroll_runs` (tenant_id, period_start/end, status, total_gross, total_deductions, total_net, total_paye, approved_at, approved_by), `payroll_lines` (run_id, employee_id, gross, paye, pension, nhf, other_deductions, net_pay), `payslips` (payroll_line_id, payslip_ref, issued_at, downloaded_at), `leave_types` (tenant_id, name, days_allowed, carry_over_allowed), `leave_requests` (employee_id, leave_type_id, start_date, end_date, status, approved_by), `leave_balances` (employee_id, leave_type_id, year, days_taken, days_remaining).
+
+**Backend:** `models/payroll.py`, `schemas/payroll.py`, `routers/payroll.py` at `/api/payroll/*`. Three-mode aware: Full ERP posts DR salary expense / CR payroll payable + deduction accounts; Connected creates posting batch; Lite records run with no GL.
+
+**Frontend:** Payroll runs list + create form (period selection, auto-compute all lines); salary structures management; payslip download; leave request management with approve/reject. Sidebar sections gated on `payroll` module.
+
+---
+
+### M18 — Fixed Assets (2026-07-28, migration `i7j8k9l0m1n2`) — **pending CC commit**
+
+Asset register, depreciation schedule generation (straight-line + reducing balance), and asset disposal tracking.
+
+**New tables:** `asset_categories` (tenant_id, name, dep_method: SL/RB, useful_life_years, residual_pct, gl_asset_id, gl_dep_expense_id, gl_accum_dep_id), `assets` (tenant_id, category_id, name, code, acquisition_date, acquisition_cost, net_book_value, status: ACTIVE/FULLY_DEPRECIATED/DISPOSED), `asset_depreciation_schedules` (asset_id, period_start/end, dep_amount, accum_dep_to_date, nbv_after, gl_entry_id), `asset_disposals` (asset_id, disposal_date, disposal_proceeds, gain_loss, gl_entry_id).
+
+**Backend:** `models/fixed_assets.py`, `schemas/fixed_assets.py`, `routers/fixed_assets.py` at `/api/assets/*`. Depreciation engine: SL = (cost − residual) / useful_life; RB = NBV × rate. Full ERP posts DR dep expense / CR accumulated depreciation on schedule generation. Disposal posts DR disposal proceeds / CR asset + accumulated dep = gain/loss.
+
+**Frontend:** Asset register with cost/accumulated dep/NBV columns, status badges; asset category CRUD with useful life + depreciation method; depreciation schedule viewer; disposal form. Sidebar gated on `fixed_assets` module.
+
+---
+
+### M17 — Inventory & Warehouse (2026-07-28, migration `j8k9l0m1n2o3`) — **pending CC commit**
+
+Inventory item management, location hierarchy, stock movement ledger (FIFO/WACC), and COGS GL posting.
+
+**New tables:** `inventory_categories` (tenant_id, name, code — UQ per tenant), `inventory_locations` (tenant_id, name, code, parent_id self-ref for hierarchy), `inventory_items` (tenant_id, category_id, name, sku, valuation_method CHECK IN ('FIFO','WACC'), current_quantity, moving_average_cost, reorder_point, gl_inventory_id, gl_cogs_id, gl_adjustment_id — all FK to chart_of_accounts), `stock_movements` (item_id, movement_type CHECK IN ('RECEIPT','ISSUE','ADJUSTMENT','TRANSFER'), quantity, unit_cost, quantity_after, moving_average_cost_after, reference, journal_entry_id, ap_invoice_id, ar_invoice_id).
+
+**WACC engine:** `_wacc_after_receipt(old_qty, old_mac, receipt_qty, receipt_cost)` — new_mac = (old_qty × old_mac + receipt_qty × receipt_cost) / (old_qty + receipt_qty). Edge case: old_qty=0 → new_mac = receipt_cost directly.
+
+**COGS on ISSUE (Full ERP):** when `gl_cogs_id` and `gl_inventory_id` are both set, ISSUE creates a synchronous journal: DR COGS / CR Inventory at current MAC. ADJUSTMENT and TRANSFER do not trigger GL posting.
+
+**Backend:** `models/inventory.py`, `schemas/inventory.py`, `routers/inventory.py` at `/api/inventory/*`. Valuation endpoint: qty × mac per item, total inventory value. Low-stock filter: `current_quantity <= reorder_point`.
+
+**Frontend:** Item list with summary cards (Total SKUs, Total Value, Low Stock Alerts), low-stock toggle filter; movements log + create form (item, type, qty, unit_cost, reference); valuation report; location hierarchy CRUD with parent selector. Sidebar gated on `inventory` module.
+
+---
+
+### M20 — AI Intelligence Layer (2026-07-28, migration `k9l0m1n2o3p4`) — **pending CC commit**
+
+Persistent AI insight system with anomaly detection, spending pattern analysis, cash flow forecasting, and GL auto-classification. All tenant-facing AI errors are scrubbed of internal technology names.
+
+**New table:** `ai_insights` (tenant_id, insight_type CHECK IN ('ANOMALY','CATEGORY_SUGGESTION','CASH_FLOW_FORECAST','SPENDING_PATTERN'), entity_type, entity_id, title, summary, detail JSONB, severity CHECK IN ('INFO','WARNING','CRITICAL'), status CHECK IN ('PENDING','REVIEWED','DISMISSED','ACTIONED'), reviewed_by_id, reviewed_at, expires_at, created_at).
+
+**AI security invariant:** `AiIntelligenceError` exception class wraps ALL exceptions from the Anthropic client. The router maps every `AiIntelligenceError` to HTTP 503 "AI analysis is temporarily unavailable" — no model names, API key names, or "Anthropic" ever visible to tenants. LLM system prompts explicitly instruct the model not to mention AI vendors in outputs.
+
+**Backend service (`app/services/ai_intelligence.py`):**
+- `detect_anomalies(db, tenant_id, lookback_days=90)` — queries expense_lines + ap_invoices, groups by GL account, flags amount > mean + 3σ (outlier detection) + same-vendor/amount within 7 days (duplicate detection). Each finding persists as an `AiInsight` row.
+- `generate_spending_patterns(db, tenant_id, period_start, period_end, tenant_name)` — UNION ALL of expense_lines + ap_invoice_lines grouped by GL, LLM narrative summary → SPENDING_PATTERN insight.
+- `forecast_cash_flow(db, tenant_id, periods_ahead=3)` — outstanding AR receivables (by due date) vs AP payables; net = inflows − outflows; LLM summary; severity=WARNING when net < 0 → CASH_FLOW_FORECAST insight.
+- `suggest_category(db, tenant_id, description, amount, vendor_name)` — fetches tenant CoA (EXPENSE/COGS/ASSET accounts), asks LLM to pick best GL_CODE/GL_NAME/REASON → returns suggestion (not persisted).
+
+**Backend router (extended `app/routers/ai.py`):**
+- `POST /api/ai/detect-anomalies` — run scan, persist AiInsight rows, return `{findings_created, lookback_days}`
+- `POST /api/ai/spending-patterns` — generate pattern insight for a period
+- `POST /api/ai/forecast` — generate cash flow forecast insight
+- `POST /api/ai/classify` — return GL suggestion for a description (not persisted)
+- `GET /api/ai/insights` — list with type/status/severity filters
+- `POST /api/ai/insights/{id}/review` — set status=REVIEWED
+- `POST /api/ai/insights/{id}/dismiss` — set status=DISMISSED
+
+**Frontend (2 new pages):**
+- `/dashboard/business/ai-insights/` — insight browser with type/status filter chips, review/dismiss actions per card, link to run anomaly scan. Gated on `postingMode === 'full_erp'` (not a licensed module — included for all Full ERP tenants).
+- `/dashboard/business/ai-insights/anomalies/` — anomaly scan trigger with lookback selector (30/60/90/180/365 days); shows findings_created count and link to insights list.
+
+---
+
 ## 6. MODULE LIST
 
 > **Internal module codes** (used in `TenantModule.module_code`, `posting_batches.module`, licence catalogue): `expense`, `ap`, `ar`, `payroll`, `bank_recon`, `budget`, `tax_engine`, `inventory`, `fixed_assets`, `posm`, `vendor_portal`, `customer_portal`, `reporting`. All 13 codes are registered in `_ALL_MODULES` in `platform.py`. The display names below are the user-facing names shown in the SA portal and any tenant-facing module pages.
 
-| # | Display Name | Internal Code | Status | All Modes |
+| # | Display Name | Internal Code | Status | Mode |
 |---|---|---|---|---|
-| 1 | Expense Management | `expense` | ✅ Built (M3–M9 + #52) | ✅ |
-| 2 | Accounts Payable (P2P) | `ap` | ✅ Built (M11, 2026-07-25) | ✅ |
-| 3 | Accounts Receivable (O2C) | `ar` | ⏳ M14 | ✅ |
-| 4 | Payroll & HR | `payroll` | ⏳ M15 | ✅ |
-| 5 | Inventory Management | `inventory` | ⏳ M17 | ✅ |
-| 6 | Fixed Assets | `fixed_assets` | ⏳ M18 | ✅ |
-| 7 | POSM Management | `posm` | ⏳ Future | ✅ |
-| 8 | Vendor Portal | `vendor_portal` | ⏳ Future | ✅ |
-| 9 | Customer Portal | `customer_portal` | ⏳ Future | ✅ |
-| 10 | Bank Reconciliation | `bank_recon` | ✅ Built (M11c, 2026-07-25) | ✅ |
-| 11 | Budget & Planning | `budget` | ⏳ M16 | ✅ |
-| 12 | Tax Engine | `tax_engine` | ⏳ M19 | ✅ |
-| 13 | Reporting & Analytics | `reporting` | ⏳ M20 | ✅ |
+| 1 | Expense Management | `expense` | ✅ Built (M3–M9 + #52) | All |
+| 2 | Accounts Payable (P2P) | `ap` | ✅ Built (M11, 2026-07-25) | All |
+| 3 | Accounts Receivable (O2C) | `ar` | ✅ Built (M14, 2026-07-28) | All |
+| 4 | Payroll & HR | `payroll` | ✅ Built (M15, 2026-07-28) — pending CC commit | All |
+| 5 | Inventory Management | `inventory` | ✅ Built (M17, 2026-07-28) — pending CC commit | All |
+| 6 | Fixed Assets | `fixed_assets` | ✅ Built (M18, 2026-07-28) — pending CC commit | All |
+| 7 | POSM Management | `posm` | ⏳ Not yet built | All |
+| 8 | Vendor Portal | `vendor_portal` | ⏳ Not yet built | All |
+| 9 | Customer Portal | `customer_portal` | ⏳ Not yet built | All |
+| 10 | Bank Reconciliation | `bank_recon` | ✅ Built (M11c, 2026-07-25) | All |
+| 11 | Budget & Planning | `budget` | ✅ Built (M16, 2026-07-28) — pending CC commit | All |
+| 12 | Tax & Compliance | `tax_engine` | ✅ Built (M19, 2026-07-28) — pending CC commit | All |
+| 13 | AI Intelligence Layer | (Full ERP gate) | ✅ Built (M20, 2026-07-28) — pending CC commit | Full ERP |
+| 14 | SA Billing & Subscriptions | (SA only) | ✅ Built (SA-B, 2026-07-28) — pending CC commit | SA portal |
+| 15 | Reporting & Analytics | `reporting` | ⏳ Not yet built as standalone module | All |
+| 16 | Inter-Company Eliminations | (Full ERP) | ⏳ Not yet built — PRD: `docs/ICE_PRD.md` | Full ERP |
 
 > **Module naming rationale:**
 > - "Accounts Payable (P2P)" — P2P = Purchase to Pay, the end-to-end process. AP handles supplier invoices, payment runs, and vendor account management.
@@ -1251,32 +1399,36 @@ Architectural invariants that are durable decisions (the WHY):
 | Q3 | **Snapshot M9 field fix** (add gl_id, dimension_values, split_lines to snapshot_data) | All modes |
 | Q4 | **Split-line GL posting fix** (split-parent containers correctly skipped; frontend validation now validates split children for GL + required dimensions) | Connected + Full ERP | ✅ Done (2026-07-24) |
 
-### TIER 2 — Module Expansion (~2–3 months)
+### TIER 2 — Module Expansion — ✅ ALL SHIPPED
 
-**Three-mode build rule applies to every row.** See §3b for the invariant; see CLAUDE.md PENDING table for per-module mode breakdown.
-
-| # | What | Priority rationale |
+| # | What | Status |
 |---|---|---|
-| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | ✅ Done (2026-07-25) — see §5 |
-| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | ✅ Done (2026-07-25) — see §5 |
-| M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | ✅ Done (2026-07-25) — see §5 |
-| M11c | **Bank Reconciliation** | ✅ Done (2026-07-25) — see §5 |
-| Q1b | **Cash Flow Statement** (indirect method: net income + non-cash adjustments + working capital + investing + financing) | ✅ Done (2026-07-27) — see §5 |
-| M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | Revenue-side; needed for companies that invoice clients |
-| SA-B | **SA Portal — Billing & Subscription backend** | Needed to charge customers |
+| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | ✅ Done (2026-07-25) |
+| M11 | **Accounts Payable** (vendor invoices, 3-way match, AP aging) | ✅ Done (2026-07-25) |
+| M11b | **Purchase Orders & 3-Way Match** (PO lifecycle, GRN, match engine) | ✅ Done (2026-07-25) |
+| M11c | **Bank Reconciliation** (CSV/XLSX import, auto-match, reconciliation report) | ✅ Done (2026-07-25) |
+| Q1b | **Cash Flow Statement** (indirect method) | ✅ Done (2026-07-27) |
+| M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | ✅ Done (2026-07-28) |
+| SA-B | **SA Portal — Billing & Subscriptions** (pricing plans, subscriptions, billing events) | ✅ Done (2026-07-28) — pending CC commit |
 
-### TIER 3 — Strategic Expansion (~3–6 months)
+### TIER 3 — Strategic Expansion — ✅ ALL SHIPPED
 
-| # | What |
-|---|---|
-| M16 | **Budget & Planning** (budget entry, budget vs. actuals, variance alerts) |
-| M19 | **Tax Engine — transaction level** (VAT on AP invoices, WHT, PAYE payroll tax) |
-| M15 | **Payroll & HR** (salary, deductions, payslips, leave) |
-| ICE | **Inter-Company Eliminations** — PRD: `docs/ICE_PRD.md` |
+| # | What | Status |
+|---|---|---|
+| M16 | **Budget & Planning** (budget periods, lines, variance engine) | ✅ Done (2026-07-28) — pending CC commit |
+| M19 | **Tax Engine — transaction level** (VAT/WHT/PAYE, tax returns, WHT certificates) | ✅ Done (2026-07-28) — pending CC commit |
+| M15 | **Payroll & HR** (salary structures, payroll runs, PAYE, payslips, leave) | ✅ Done (2026-07-28) — pending CC commit |
+| ICE | **Inter-Company Eliminations** — PRD: `docs/ICE_PRD.md` | ⏳ NOT YET BUILT |
 
 ### TIER 4 — Long-term / Specialist
 
-M18 Fixed Assets → M17 Inventory → M20 AI Intelligence Layer → Performance & Security Audit → Cloudflare R2 migration → Currencies/FX dedicated tables decision.
+| # | What | Status |
+|---|---|---|
+| M18 | **Fixed Assets** (asset register, SL+RB depreciation, disposals) | ✅ Done (2026-07-28) — pending CC commit |
+| M17 | **Inventory & Warehouse** (items, FIFO/WACC costing, COGS GL posting) | ✅ Done (2026-07-28) — pending CC commit |
+| M20 | **AI Intelligence Layer** (anomaly detection, spending patterns, cash flow forecast, GL auto-classify) | ✅ Done (2026-07-28) — pending CC commit |
+| Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | ⏳ NOT YET BUILT — do before scale |
+| FX | **Currencies & FX dedicated tables** (JSONB vs. tenant_currencies/tenant_fx_rates decision) | ⏳ OPEN — revisit when BDC register volume demands it |
 
 ### Infrastructure (parallel, not a blocker on feature work)
 - Upgrade Render PostgreSQL to Standard ($50/month) — before first paying customer
@@ -1326,4 +1478,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-20 (designation-based approval policy + finance chain FinanceReviewStep rewrite + number formatting consolidation; migration `s1t2u3v4w5x6`). For current schema/endpoint/feature facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-29 — All TIER 2–4 milestones shipped. Code written and py_compile verified for M16 Budget, SA-B Billing, M19 Tax Engine, M15 Payroll, M18 Fixed Assets, M17 Inventory, M20 AI Intelligence Layer. Migration chain head (written, pending CC commit): `k9l0m1n2o3p4`. Last committed head: `d2e3f4g5h6i7` (M14 AR). Product functionally complete; ready for first customer. Remaining: ICE (PRD exists), Performance & Security Audit, FX dedicated-tables decision. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*

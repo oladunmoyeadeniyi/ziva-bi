@@ -216,6 +216,14 @@ ruff check app/
 | Q2 | Manual Journal Entry — list + new entry form; `POST /api/gl/journal-entries`; sidebar Accounting section | `c5ca38c` |
 | Q1a | Financial Statements UI — P&L + Balance Sheet (fs_head/fs_note grouping; Full ERP only) | `467b254` |
 | P1 | Production Deployment on Render — frontend Docker fix (`libc6-compat` on Alpine; live 2026-07-24) | `775e873` |
+| M14 | Accounts Receivable (customers, AR invoices, payment recording, AR aging; migration `d2e3f4g5h6i7`) | (pending CC commit) |
+| M16 | Budget & Planning (budget_periods, budget_lines, variance engine, frontend; migration `e3f4g5h6i7j8`) | (pending CC commit) |
+| SA-B | SA Portal — Billing & Subscription (pricing_plans, tenant_subscriptions, billing_events, SA API; migration `f4g5h6i7j8k9`) | (pending CC commit) |
+| M19 | Tax Engine — transaction level (VAT/WHT/PAYE compute service, tax_returns, wht_certificates; migration `g5h6i7j8k9l0`) | (pending CC commit) |
+| M15 | Payroll & HR (salary_structures, payroll_runs, payroll_lines, payslips, leave_types, leave_requests, leave_balances; migration `h6i7j8k9l0m1`) | (pending CC commit) |
+| M18 | Fixed Assets (asset_categories, assets, asset_depreciation_schedules, asset_disposals; SL+RB depreciation; migration `i7j8k9l0m1n2`) | (pending CC commit) |
+| M17 | Inventory & Warehouse (inventory_categories, inventory_locations, inventory_items, stock_movements; FIFO/WACC; COGS GL posting; migration `j8k9l0m1n2o3`) | (pending CC commit) |
+| M20 | AI Intelligence Layer (ai_insights table, anomaly detection, spending pattern analysis, cash flow forecast, GL auto-classify; extended /api/ai router; migration `k9l0m1n2o3p4`) | (pending CC commit) |
 
 ---
 
@@ -225,35 +233,35 @@ ruff check app/
 >
 > Mode abbreviations used below: **L** = Lite (workflow only, no GL), **C** = Connected (GL coding → posting_batches → external ERP), **E** = Full ERP (GL coding → journal_entries → in-app statements).
 
-#### TIER 2 — Module Expansion (~2–3 months)
+#### TIER 2 — Module Expansion — ⏳ CODE COMPLETE, PENDING CC COMMIT
 
 | # | Milestone | Mode scope | Notes |
 |---|---|---|---|
-| Q1b | **Cash Flow Statement** (indirect method: opening/closing BS comparison + non-cash adjustment logic) | **E only** | Separate design problem from P&L/BS — needs indirect-method or direct-method logic not currently in codebase. Moved from TIER 1 after CC verified no supporting query logic exists yet |
-| M11 | **Accounts Payable** (P2P: vendor invoices, 3-way match, payment runs, AP aging) | **L**: vendor bill workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AP ledger | Most critical missing module; daily pain for every finance team. Higher deal-closing priority than OCR |
-| M11b | **Bank Reconciliation** | **L**: statement import + manual match. **C**: match to posting batches + export recon entries. **E**: match to GL bank account + clearing journal | Depends on GL engine + Bank Accounts (both already built) — not on AP. Has standalone value for Full ERP tenants posting expense journals today |
-| M10 | **OCR & Receipt Scanning** (Anthropic Vision API) | **All modes** — mode-agnostic | Enhances already-shipped Expense module; high UX value but not a new-module unlock |
-| M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | **L**: invoice workflow + CSV export. **C**: + GL coding + posting_batches. **E**: + GL posting + AR ledger | Revenue-side; needed for companies that issue invoices |
-| SA-B | **SA Portal — Billing & Subscription backend** (pricing plans, subscription tracking, payment provider integration) | SA portal only — mode-agnostic | Full billing integration (webhooks, payment provider onboarding). Manual paid flag (SA-B-lite) ships in TIER 1 to unblock first invoice |
+| Q1b | **Cash Flow Statement** ✅ | **E only** | Shipped — indirect-method cash flow query + UI |
+| M11 | **Accounts Payable** ✅ | **L/C/E** | Shipped — vendors, invoices, 3-way match, AP aging |
+| M11b | **Bank Reconciliation** ✅ | **L/C/E** | Shipped — CSV import, auto-match, recon matches |
+| M10 | **OCR & Receipt Scanning** ✅ | **All modes** | Shipped — Anthropic Vision API + learning overrides |
+| M14 | **Accounts Receivable** ⏳ | **L/C/E** | Code complete — pending CC commit |
+| SA-B | **SA Portal — Billing & Subscriptions** ⏳ | SA only | Code complete — pending CC commit |
 
-#### TIER 3 — Strategic Expansion (~3–6 months)
-
-| # | Milestone | Mode scope | Notes |
-|---|---|---|---|
-| M16 | **Budget & Planning** (budget entry, budget vs. actuals reporting, variance alerts) | **L**: budget vs CSV exports. **C**: budget vs posting batch values. **E**: budget vs GL actuals | High retention driver; CFOs need this |
-| M19 | **Tax Engine — transaction level** (VAT on AP invoices, WHT on vendor payments, PAYE payroll tax) | **L**: tax calcs on invoices, CSV output. **C**: + VAT/WHT in posting_batches. **E**: + auto-post tax journals (VAT payable, WHT payable, PAYE payable) | Nigerian compliance requirement. Distinct from already-built M8.4 Tax & Statutory *config* (JSONB rates) — this is transaction-level computation |
-| M15 | **Payroll & HR** (salary, deductions, payslips, leave management) | **L**: payroll run + manual pay. **C**: payroll run + posting_batches. **E**: payroll run + salary journal entry | Complex; major competitive moat; builds on People module foundation |
-| ICE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD exists: `docs/ICE_PRD.md` |
-
-#### TIER 4 — Long-term / Specialist
+#### TIER 3 — Strategic Expansion — ⏳ CODE COMPLETE, PENDING CC COMMIT
 
 | # | Milestone | Mode scope | Notes |
 |---|---|---|---|
-| M18 | **Fixed Assets** (asset register, depreciation schedules, disposal) | **L**: asset register only. **C**: + posting_batches for depreciation. **E**: + depreciation journal entries | Capital-intensive companies |
-| M17 | **Inventory & Warehouse** (stock management, COGS, warehouse locations) | **L**: stock tracking only. **C**: + COGS posting batch. **E**: + COGS journal entries | Narrows vs. broadens market; build last |
-| M20 | **AI Intelligence Layer** (auto-categorization, anomaly detection, cash flow forecasting) | **All modes** — trains on whichever transaction data exists | Built on top of accumulated transaction history; ~98%+ accuracy target |
-| Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | — | Before scale |
-| FX | **Currencies & FX dedicated tables decision** (JSONB vs. tenant_currencies/tenant_fx_rates) | — | Revisit when BDC register volume or reporting complexity demands it |
+| M16 | **Budget & Planning** ⏳ | **L/C/E** | Code complete — pending CC commit |
+| M19 | **Tax Engine — transaction level** ⏳ | **L/C/E** | Code complete — pending CC commit |
+| M15 | **Payroll & HR** ⏳ | **L/C/E** | Code complete — pending CC commit |
+| ICE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD exists: `docs/ICE_PRD.md` — NOT YET BUILT |
+
+#### TIER 4 — Long-term / Specialist — ⏳ CODE COMPLETE, PENDING CC COMMIT
+
+| # | Milestone | Mode scope | Notes |
+|---|---|---|---|
+| M18 | **Fixed Assets** ⏳ | **L/C/E** | Code complete — pending CC commit |
+| M17 | **Inventory & Warehouse** ⏳ | **L/C/E** | Code complete — pending CC commit |
+| M20 | **AI Intelligence Layer** ⏳ | **All modes** | Code complete — pending CC commit |
+| Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | — | Before scale — NOT YET BUILT |
+| FX | **Currencies & FX dedicated tables decision** (JSONB vs. tenant_currencies/tenant_fx_rates) | — | Revisit when BDC register volume or reporting complexity demands it — NOT YET BUILT |
 
 ## Module PRDs
 

@@ -70,17 +70,17 @@ const MODULE_ICONS: Record<string, string> = {
 const MODULE_ROUTES: Record<string, string> = {
   expense:          "/dashboard/business/settings/expense-config",
   ap:               "/dashboard/business/ap/invoices",
-  ar:               "/dashboard/business/setup/modules/ar",
-  payroll:          "/dashboard/business/setup/modules/payroll",
-  inventory:        "/dashboard/business/setup/modules/inventory",
-  fixed_assets:     "/dashboard/business/setup/modules/fixed-assets",
+  ar:               "/dashboard/business/ar/invoices",
+  payroll:          "/dashboard/business/payroll",
+  inventory:        "/dashboard/business/inventory",
+  fixed_assets:     "/dashboard/business/assets",
   posm:             "/dashboard/business/setup/modules/posm",
   vendor_portal:    "/dashboard/business/setup/modules/vendor-portal",
   customer_portal:  "/dashboard/business/setup/modules/customer-portal",
   warehouse:        "/dashboard/business/setup/modules/warehouse",
   bank_recon:       "/dashboard/business/setup/modules/bank",
-  budget:           "/dashboard/business/setup/modules/budget",
-  tax_engine:       "/dashboard/business/setup/modules/tax-engine",
+  budget:           "/dashboard/business/budgets",
+  tax_engine:       "/dashboard/business/tax",
   reporting:        "/dashboard/business/setup/modules/reporting",
 };
 
@@ -438,6 +438,73 @@ export default function BusinessLayout({
                   <NavLink href="/dashboard/business/po" label="Purchase Orders" icon="shopping-cart" />
                   <NavLink href="/dashboard/business/po/match-report" label="Match Report" icon="git-compare" />
                   <NavLink href="/dashboard/business/bank-recon" label="Bank Reconciliation" icon="building-bank" />
+                </div>
+              )}
+
+              {/* ACCOUNTS RECEIVABLE — shown only when ar module is active */}
+              {activeModules?.some(m => m.module_key === 'ar') && (
+                <div className="px-2">
+                  <SectionLabel label="Accounts Receivable" />
+                  <NavLink href="/dashboard/business/ar/invoices" label="Invoices" icon="invoice" />
+                  <NavLink href="/dashboard/business/ar/customers" label="Customers" icon="users" />
+                  <NavLink href="/dashboard/business/ar/aging" label="AR Aging" icon="chart-bar" />
+                </div>
+              )}
+
+              {/* BUDGET & PLANNING */}
+              {activeModules?.some(m => m.module_key === 'budget') && (
+                <div className="px-2">
+                  <SectionLabel label="Budget &amp; Planning" />
+                  <NavLink href="/dashboard/business/budgets" label="Budgets" icon="chart-bar" />
+                </div>
+              )}
+
+              {/* PAYROLL */}
+              {activeModules?.some(m => m.module_key === 'payroll') && (
+                <div className="px-2">
+                  <SectionLabel label="Payroll" />
+                  <NavLink href="/dashboard/business/payroll" label="Payroll runs" icon="wallet" />
+                  <NavLink href="/dashboard/business/payroll/salary-structures" label="Salary structures" icon="file-dollar" />
+                  <NavLink href="/dashboard/business/payroll/leave" label="Leave management" icon="calendar-off" />
+                </div>
+              )}
+
+              {/* INVENTORY */}
+              {activeModules?.some(m => m.module_key === 'inventory') && (
+                <div className="px-2">
+                  <SectionLabel label="Inventory" />
+                  <NavLink href="/dashboard/business/inventory" label="Items" icon="package" />
+                  <NavLink href="/dashboard/business/inventory/movements" label="Stock movements" icon="arrows-transfer-up" />
+                  <NavLink href="/dashboard/business/inventory/valuation" label="Valuation report" icon="report-money" />
+                  <NavLink href="/dashboard/business/inventory/locations" label="Locations" icon="building-warehouse" />
+                </div>
+              )}
+
+              {/* FIXED ASSETS */}
+              {activeModules?.some(m => m.module_key === 'fixed_assets') && (
+                <div className="px-2">
+                  <SectionLabel label="Fixed Assets" />
+                  <NavLink href="/dashboard/business/assets" label="Asset register" icon="chart-pie" />
+                  <NavLink href="/dashboard/business/assets/categories" label="Categories" icon="tag" />
+                </div>
+              )}
+
+              {/* TAX ENGINE */}
+              {activeModules?.some(m => m.module_key === 'tax_engine') && (
+                <div className="px-2">
+                  <SectionLabel label="Tax &amp; Compliance" />
+                  <NavLink href="/dashboard/business/tax" label="Tax returns" icon="calculator" />
+                  <NavLink href="/dashboard/business/tax/wht-certificates" label="WHT certificates" icon="certificate" />
+                  <NavLink href="/dashboard/business/tax/vat-summary" label="VAT summary" icon="receipt-tax" />
+                </div>
+              )}
+
+              {/* AI INSIGHTS — Full ERP only */}
+              {postingMode === 'full_erp' && (
+                <div className="px-2">
+                  <SectionLabel label="AI Insights" />
+                  <NavLink href="/dashboard/business/ai-insights" label="Insights" icon="brain" />
+                  <NavLink href="/dashboard/business/ai-insights/anomalies" label="Run anomaly scan" icon="alert-triangle" />
                 </div>
               )}
 

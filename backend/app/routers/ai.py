@@ -1,41 +1,44 @@
 """
-ZivaBI — AI Engine router (M10+).
+ZivaBI — AI Engine router (M10 + M20).
 
 Registered at prefix /api/ai.
 
 Endpoints (M10):
-    POST  /api/ai/ocr       Submit an image or PDF for receipt/invoice OCR extraction.
-    POST  /api/ai/override  Record a Finance reviewer's override of an AI field prediction.
+    POST  /api/ai/ocr                  Receipt/invoice OCR extraction.
+    POST  /api/ai/override             Record a Finance reviewer's field override.
 
-Planned endpoints (M20 — not yet implemented):
-    POST  /api/ai/classify         GL / dimension / vendor category prediction
-    POST  /api/ai/detect-duplicate Invoice duplicate detection
-    POST  /api/ai/reconcile        AI bank statement matching suggestions
-    POST  /api/ai/tax-predict      VAT / WHT applicability prediction
-    POST  /api/ai/fraud            Fraud / anomaly scoring
+Endpoints (M20 — AI Intelligence Layer):
+    POST  /api/ai/detect-anomalies     Run statistical anomaly scan → ai_insights
+    POST  /api/ai/spending-patterns    Spending pattern narrative for a period
+    POST  /api/ai/forecast             Cash flow forecast for N months ahead
+    POST  /api/ai/classify             Auto-suggest GL account for a description
+    GET   /api/ai/insights             List ai_insights for current tenant
+    POST  /api/ai/insights/{id}/review Mark insight as REVIEWED
+    POST  /api/ai/insights/{id}/dismiss Mark insight as DISMISSED
 
-Architecture:
-    - This router is the single entry point for all AI Engine functionality.
-    - The OCR service (services/ocr.py) is pure business logic — no DB access.
-    - This router handles all DB writes (ai_predictions, ai_learning_overrides).
-    - OCR is guarded by the tenant's ocr_enabled flag — returns 400 if disabled.
-    - A missing / blank ANTHROPIC_API_KEY returns 501 (not 500) so ops teams
-      know immediately it's a configuration issue, not a code bug.
+Security note:
+    All AI errors are caught by the service layer and re-raised as AiIntelligenceError.
+    The router maps this to a generic HTTP 503 response.
+    Under no circumstances do error messages expose "Anthropic",
+    model names, API key names, or any internal infrastructure detail to tenants.
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Optional
+from datetime import date, datetime, timezone
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
-from app.models.ai import AILearningOverride, AIPrediction
+from app.models.ai import AILearningOverride, AIPrediction, AiInsight
+from app.models.auth import Tenant
 from app.models.expenses import TenantExpenseConfig
 from app.schemas.ai import AIOverrideRequest, AIOverrideResponse, OcrLineItem, OcrResponse
 from app.services.ocr import (
@@ -45,6 +48,14 @@ from app.services.ocr import (
     OCRServiceError,
     OcrExtractedData,
     extract_receipt,
+)
+from app.services.ai_intelligence import (
+    AiIntelligenceError,
+    detect_anomalies,
+    generate_anomaly_insight,
+    generate_spending_patterns,
+    forecast_cash_flow,
+    suggest_category,
 )
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -300,3 +311,261 @@ async def record_ai_override(
     await db.refresh(override)
 
     return AIOverrideResponse(status="recorded", override_id=override.id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M20 — AI Intelligence Layer endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _get_tenant_name(db: AsyncSession, tenant_id: uuid.UUID) -> str:
+    result = await db.execute(select(Tenant.name).where(Tenant.id == tenant_id))
+    return result.scalar_one_or_none() or ""
+
+
+def _require_tenant(user: CurrentUser) -> uuid.UUID:
+    if not user.tenant_id:
+        raise HTTPException(status_code=400, detail="No tenant context.")
+    return user.tenant_id
+
+
+# ── Pydantic schemas (inline — small enough not to need a separate file) ──────
+
+class SpendingPatternRequest(BaseModel):
+    period_start: date
+    period_end: date
+
+
+class ClassifyRequest(BaseModel):
+    description: str
+    amount: float = 0.0
+    vendor_name: str = ""
+
+
+class ForecastRequest(BaseModel):
+    periods_ahead: int = 3
+
+
+class InsightResponse(BaseModel):
+    id: uuid.UUID
+    insight_type: str
+    entity_type: Optional[str]
+    entity_id: Optional[uuid.UUID]
+    title: str
+    summary: str
+    detail: Optional[Any]
+    severity: str
+    status: str
+    reviewed_by_id: Optional[uuid.UUID]
+    reviewed_at: Optional[datetime]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── POST /api/ai/detect-anomalies ─────────────────────────────────────────────
+
+@router.post("/detect-anomalies", status_code=status.HTTP_200_OK)
+async def run_anomaly_detection(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+    lookback_days: int = Query(90, ge=7, le=365),
+) -> dict:
+    """
+    Run statistical anomaly detection and persist findings as ai_insights rows.
+
+    Scans expense lines (amount outliers by GL account) and AP invoices
+    (duplicate detection). Each finding is summarised via AI into a human-readable
+    alert, then stored in ai_insights for Finance review.
+
+    Returns a summary count of findings created.
+    """
+    tenant_id = _require_tenant(current_user)
+    tenant_name = await _get_tenant_name(db, tenant_id)
+
+    try:
+        findings = await detect_anomalies(db, tenant_id, lookback_days=lookback_days)
+    except AiIntelligenceError as exc:
+        raise HTTPException(status_code=503, detail="AI analysis is temporarily unavailable. Please try again later.")
+
+    created = 0
+    for finding in findings:
+        try:
+            enriched = await generate_anomaly_insight(finding, tenant_name)
+        except AiIntelligenceError:
+            enriched = {**finding, "title": "Unusual transaction detected", "summary": "An anomaly was identified in your financial data."}
+
+        insight = AiInsight(
+            tenant_id=tenant_id,
+            insight_type=enriched["insight_type"],
+            entity_type=enriched.get("entity_type"),
+            entity_id=uuid.UUID(enriched["entity_id"]) if enriched.get("entity_id") else None,
+            title=enriched["title"],
+            summary=enriched["summary"],
+            severity=enriched.get("severity", "INFO"),
+            status="PENDING",
+            detail={k: v for k, v in enriched.items() if k not in ("insight_type", "entity_type", "entity_id", "title", "summary", "severity")},
+        )
+        db.add(insight)
+        created += 1
+
+    if created:
+        await db.commit()
+
+    return {"findings_created": created, "lookback_days": lookback_days}
+
+
+# ── POST /api/ai/spending-patterns ────────────────────────────────────────────
+
+@router.post("/spending-patterns", status_code=status.HTTP_201_CREATED)
+async def run_spending_patterns(
+    body: SpendingPatternRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> InsightResponse:
+    """Generate and persist a spending pattern insight for the given period."""
+    tenant_id = _require_tenant(current_user)
+    tenant_name = await _get_tenant_name(db, tenant_id)
+
+    try:
+        result = await generate_spending_patterns(db, tenant_id, body.period_start, body.period_end, tenant_name)
+    except AiIntelligenceError:
+        raise HTTPException(status_code=503, detail="AI analysis is temporarily unavailable. Please try again later.")
+
+    insight = AiInsight(
+        tenant_id=tenant_id,
+        insight_type=result["insight_type"],
+        entity_type=result.get("entity_type"),
+        title=result["title"],
+        summary=result["summary"],
+        severity=result.get("severity", "INFO"),
+        status="PENDING",
+        detail=result.get("detail"),
+    )
+    db.add(insight)
+    await db.commit()
+    await db.refresh(insight)
+    return InsightResponse.model_validate(insight)
+
+
+# ── POST /api/ai/forecast ─────────────────────────────────────────────────────
+
+@router.post("/forecast", status_code=status.HTTP_201_CREATED)
+async def run_cash_flow_forecast(
+    body: ForecastRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> InsightResponse:
+    """Generate and persist a cash flow forecast insight."""
+    tenant_id = _require_tenant(current_user)
+    tenant_name = await _get_tenant_name(db, tenant_id)
+
+    try:
+        result = await forecast_cash_flow(db, tenant_id, periods_ahead=body.periods_ahead, tenant_name=tenant_name)
+    except AiIntelligenceError:
+        raise HTTPException(status_code=503, detail="AI analysis is temporarily unavailable. Please try again later.")
+
+    insight = AiInsight(
+        tenant_id=tenant_id,
+        insight_type=result["insight_type"],
+        entity_type=result.get("entity_type"),
+        title=result["title"],
+        summary=result["summary"],
+        severity=result.get("severity", "INFO"),
+        status="PENDING",
+        detail=result.get("detail"),
+    )
+    db.add(insight)
+    await db.commit()
+    await db.refresh(insight)
+    return InsightResponse.model_validate(insight)
+
+
+# ── POST /api/ai/classify ─────────────────────────────────────────────────────
+
+@router.post("/classify", status_code=status.HTTP_200_OK)
+async def classify_transaction(
+    body: ClassifyRequest,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Suggest a GL account for a transaction based on its description."""
+    tenant_id = _require_tenant(current_user)
+    try:
+        result = await suggest_category(db, tenant_id, body.description, body.amount, body.vendor_name)
+    except AiIntelligenceError:
+        raise HTTPException(status_code=503, detail="AI analysis is temporarily unavailable. Please try again later.")
+    return result
+
+
+# ── GET /api/ai/insights ──────────────────────────────────────────────────────
+
+@router.get("/insights", status_code=status.HTTP_200_OK)
+async def list_insights(
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+    insight_type: Optional[str] = Query(None),
+    insight_status: Optional[str] = Query(None, alias="status"),
+    severity: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+) -> list[InsightResponse]:
+    """List AI insights for the current tenant, newest first."""
+    tenant_id = _require_tenant(current_user)
+    q = select(AiInsight).where(AiInsight.tenant_id == tenant_id)
+    if insight_type:
+        q = q.where(AiInsight.insight_type == insight_type.upper())
+    if insight_status:
+        q = q.where(AiInsight.status == insight_status.upper())
+    if severity:
+        q = q.where(AiInsight.severity == severity.upper())
+    q = q.order_by(AiInsight.created_at.desc()).limit(limit)
+    result = await db.execute(q)
+    return [InsightResponse.model_validate(i) for i in result.scalars().all()]
+
+
+# ── POST /api/ai/insights/{id}/review ────────────────────────────────────────
+
+@router.post("/insights/{insight_id}/review", status_code=status.HTTP_200_OK)
+async def review_insight(
+    insight_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> InsightResponse:
+    """Mark an insight as REVIEWED."""
+    tenant_id = _require_tenant(current_user)
+    result = await db.execute(
+        select(AiInsight).where(AiInsight.id == insight_id, AiInsight.tenant_id == tenant_id)
+    )
+    insight = result.scalar_one_or_none()
+    if not insight:
+        raise HTTPException(status_code=404, detail="Insight not found.")
+    insight.status = "REVIEWED"
+    insight.reviewed_by_id = current_user.user_id
+    insight.reviewed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(insight)
+    return InsightResponse.model_validate(insight)
+
+
+# ── POST /api/ai/insights/{id}/dismiss ───────────────────────────────────────
+
+@router.post("/insights/{insight_id}/dismiss", status_code=status.HTTP_200_OK)
+async def dismiss_insight(
+    insight_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> InsightResponse:
+    """Mark an insight as DISMISSED."""
+    tenant_id = _require_tenant(current_user)
+    result = await db.execute(
+        select(AiInsight).where(AiInsight.id == insight_id, AiInsight.tenant_id == tenant_id)
+    )
+    insight = result.scalar_one_or_none()
+    if not insight:
+        raise HTTPException(status_code=404, detail="Insight not found.")
+    insight.status = "DISMISSED"
+    insight.reviewed_by_id = current_user.user_id
+    insight.reviewed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(insight)
+    return InsightResponse.model_validate(insight)

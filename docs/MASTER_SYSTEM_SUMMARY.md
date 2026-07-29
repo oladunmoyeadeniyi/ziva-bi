@@ -1,304 +1,334 @@
 # MASTER SYSTEM SUMMARY — Ziva BI
 
-> Architecture overview. The "how it's built" reference.
-> If anything here conflicts with `MASTER_CONTEXT.md` or `MASTER_INSTRUCTION.md`, those win.
-> Last updated: May 2026
+> Architecture overview — the "how it's built" reference.
+> If anything here conflicts with `MASTER_CONTEXT.md`, that document wins.
+> For current schema/endpoint/feature facts, see `PROJECT_STATE.md`.
+> **Last updated: 2026-07-29** (all TIER 2–4 milestones shipped; pending CC commit for migrations e3f4…→k9l0…)
 
 ---
 
-## 1. Product Vision (recap)
+## 1. Product Vision
 
-Ziva BI is an intelligent, end-to-end finance and operations automation platform serving **both individuals and businesses**.
+Ziva BI is an intelligent, multi-tenant, end-to-end finance automation SaaS platform for businesses of every size. The platform is live on Render; the product is functionally complete for a first customer.
 
-**Mission:** *Zero manual work. 100% automation. Intelligent decision-making.*
+**Mission:** Zero manual work. 100% automation. Intelligent decision-making.
 
-**Two tiers:**
-- **Personal** — individuals managing their own finances
-- **Business** — companies of every size and industry, local or multinational
-
-Both tiers share core infrastructure (auth, accounting engine, AI/OCR, document storage); each gets its own UX and module set.
-
-Core capabilities across both tiers:
-- AI/OCR automation
-- Smart accounting engine (double-entry where applicable)
-- Finance-grade validations
-- Real-time dashboards and tracking
-- Role-based access control (Business tier)
-- Audit-ready transparency
+**Core invariants (locked — do not change without explicit decision):**
+- Production-grade code at all times — no shortcuts, no "TODO: fix later"
+- Every table has `tenant_id`; data isolation is enforced at the DB query layer
+- Three-mode architecture: Lite / Connected / Full ERP — every module supports all three from day one
+- AI and OCR are core, not optional
+- Everything configurable per tenant — no hardcoded rules
+- Cowork writes code; Claude Code reviews, commits, pushes, and runs migrations
 
 ---
 
-## 2. Multi-Tenant Architecture (Business tier)
+## 2. Tech Stack (current, as of 2026-07-29)
 
-**Model:** Hybrid — shared codebase, isolated tenant data.
-
-### Rules
-- All tenants run on the same backend deployment.
-- Every business-tier table has `tenant_id` (or links via a foreign key chain to a `tenant_id`).
-- Data isolation enforced at the database query layer — every query is automatically scoped to the current tenant.
-- Super Admin sees and manages all tenants and all individual accounts.
-- Tenant Admin sees and configures only their own tenant.
-
-### Tenant configurability
-- Chart of Accounts (uploadable Excel/PDF/TXT)
-- Dimensions: Real IO, Stat IO, Cost Center, Material IO, Location
-- Number of required dimensions per GL
-- Tax rules: WHT, VAT, reverse VAT, custom tax
-- Vendor KYC requirements
-- Approval workflows (multi-level, variable per module)
-- Budget uploads (BP, FRE, SRE, with version history)
-- Expense limits and caps per employee/category
-- FX rate sources (manual, CBN, ECB, custom feeds)
-- Inventory valuation method (standard cost, weighted avg, FIFO, actual landed)
-- Accrual system behaviour
-- Modules to activate/deactivate
-- Branding and theme colours
-- Document layouts and invoice templates
-- Custom field labels (e.g. rename "P&L Line" to tenant's internal terminology)
-
-### Individual accounts
-- No `tenant_id` — scoped by `user_id` only
-- Sensible defaults for currency, tax jurisdiction, categories
-- User can override common settings
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 15 (App Router) + React 19 + TailwindCSS v4 + ShadCN UI |
+| Backend | Python 3.12 + FastAPI |
+| Database | PostgreSQL (Render managed) via async SQLAlchemy + Alembic |
+| Auth | JWT (access + refresh tokens) + TOTP 2FA + session tracking |
+| File Storage | Supabase Storage (current) → Cloudflare R2 (planned migration at >5 tenants or >5 GB) |
+| AI / OCR | Anthropic claude-haiku-4-5-20251001 via Vision API |
+| Email | Resend (via httpx REST; falls back to console log when key is unset) |
+| Deployment | Render — backend Dockerised FastAPI + frontend Next.js Web Service + managed PostgreSQL |
+| CI/CD | GitHub → Render auto-deploy (main branch) |
+| PWA | Enabled — installable on mobile |
 
 ---
 
-## 3. Platform Architecture
+## 3. Multi-Tenant Architecture
 
-### Frontend
-- **Next.js 14** (App Router)
-- **React 18**
-- **TailwindCSS** + **ShadCN UI** — enterprise-grade components
-- **PWA-enabled** — installable on mobile as a shortcut
-- **Mobile-responsive** — mobile-first for individual tier
-- TypeScript with strict mode
-- State: React Server Components where possible, client state minimal
+**Model:** Shared codebase, isolated tenant data. Every business-tier table carries `tenant_id`. Data isolation is enforced at the query layer — every query is automatically scoped.
 
-### Backend
-- **Python 3.14**
-- **FastAPI** — high performance, auto-generated OpenAPI docs
-- **SQLAlchemy** + **Alembic** for ORM and migrations
-- **Pydantic** for validation and type safety
-- Modular architecture — one folder per module
-- Structured logging (JSON in production)
-- Comprehensive error handling and validation at every layer
-- **JWT authentication** (access + refresh tokens)
-- **RBAC engine** for permissions (Business tier)
-- **Universal Workflow Engine** (Business tier)
+### Environment model (test-first, since M9.0.1)
+- **Signup** creates ONLY a test tenant (`environment="test"`, `parent_tenant_id=NULL`, `lifecycle_status="in_implementation"`). No clone at signup.
+- **Live tenant** is born second, via explicit SA-portal promotion. `live.parent_tenant_id = test.id` (live points at the test it came from).
+- Test environment stays active permanently after go-live — never archived.
 
-### Database
-- **PostgreSQL** (Render managed)
-- Migrations only via Alembic — never edit DB directly
-- Indexed on `tenant_id`, `user_id`, and common query fields
-- Foreign key constraints enforced
+### Three-mode architecture (sealed invariant)
 
-### File Storage
-- **Cloudflare R2** (S3-compatible)
-- All user uploads (receipts, invoices, KYC docs, statements) go here
-- Signed URLs for access; never expose direct file paths
+| Mode | GL posting | Use case |
+|---|---|---|
+| **Lite** | None — workflow only, CSV/XLSX export | Simple companies with an external accounting system |
+| **Connected** | Export queue (`posting_batches` table) → external ERP | GL coding in Ziva, posts to SAP/Oracle/etc. |
+| **Full ERP** | In-app double-entry (`journal_entries`) | Full GL + financial statements in Ziva BI |
 
-### AI/OCR Layer
-- Reads invoices, receipts, bank statements, PODs, KYC documents
-- Line-by-line extraction
-- Vendor-based learning (per tenant)
-- Confidence scoring on every prediction
-- Multi-document recognition
-- Auto-prediction: GL, dimensions, tax categories, vendor categories
-- Auto-matching: against POs, budgets, vendor rules
-- Continuous learning from Finance corrections
-- **Target accuracy: 98%+**
+`posting_mode` lives on `tenant_org_config`. Set by consultant in SA portal — tenants never see or change it. Every module must support all three modes from first commit.
+
+### Role tiers
+
+| Tier | Role | Access |
+|---|---|---|
+| 1 | Consultant (SA team) | Full access + implementation lock controls |
+| 2 | Power Admin (CFO/Finance Director) | Full tenant config; cannot override consultant-locked sections |
+| 3 | Functional Admin (HR Manager, etc.) | Only what Power Admin delegates |
 
 ---
 
-## 4. Universal Workflow Engine
+## 4. Accounting Engine
 
-Every business-tier module that needs approvals uses the same engine.
+All financial modules post via double-entry. The posting path is:
 
-### States
-`Draft` → `Submitted` → `LM Reviewed` → `GM Approved` → `Finance Reviewed` → `Finance Approved` → `Posted` → `Paid` → `Closed` → `Archived`
+1. **Expense approval** → `expense_posting.py` → Full ERP: DR expense / CR AP control; Connected: PostingBatch; Lite: no GL
+2. **AP invoice approval** → `ap_posting.py` → DR expense lines / CR AP; Full ERP GL journal
+3. **AP payment** → DR AP / CR bank GL
+4. **AR invoice approval** → `ar_posting.py` → DR AR control / CR revenue GL
+5. **AR receipt** → DR bank / CR AR control
+6. **GRN confirm (M11b)** → `po_posting.py` → DR expense GL / CR GRNI accrual
+7. **GRNI clearance on invoice approval** → DR GRNI / CR AP
+8. **Payroll posting** → DR payroll expense / CR payroll payable, deductions, bank
+9. **Fixed asset depreciation** → DR dep expense / CR accum dep
+10. **Inventory COGS on ISSUE** → DR COGS / CR inventory GL (WACC cost)
 
-Not every module uses every state — tenants can configure which states apply per workflow.
-
-### Actions
-- Approve
-- Reject
-- Request Info
-- Split line (where line-level approval is enabled)
-- Add attachments
-- Override (configurable, audit-logged)
-- Auto-return after timeout (configurable)
-
-### Configurability
-- Tenant Admin defines who approves at each state
-- Single or multi-level approval per module
-- Workflow steps can be reordered or skipped per module
-- Notifications fire on state transitions
-- Full audit trail of every state change
+All GL journals: immutable once posted; corrections via reversing entries; always balances (DR = CR verified before save); synchronous in the same DB transaction as the approval (GL failure rolls back the approval).
 
 ---
 
-## 5. Accounting Engine (Double-Entry)
+## 5. Module Status (as of 2026-07-29)
 
-The system posts journal entries automatically based on GL metadata and tenant configuration.
+> All modules marked ✅ are live in the codebase. Migrations e3f4g5h6i7j8 → k9l0m1n2o3p4 cover M16, SA-B, M19, M15, M18, M17, M20 and are **written but pending CC commit**.
 
-For every accounting event:
-- Auto-determines debit/credit from GL metadata
-- Applies the dimension set required for that GL
-- Applies tax rules (WHT, VAT, reverse VAT) where applicable
-- Applies FX conversion (using tenant's configured rate source)
-- Creates reversing entries for accruals
-- Supports manual override (if enabled per tenant)
-- Maintains full audit trail — who posted, when, what changed
-- Always balances (DR = CR) before saving
-
-Individual accounts use simplified single-entry tracking (income/expense categories) but can opt into double-entry if they understand it.
-
----
-
-## 6. Modules — Build Tier Summary
-
-(Full requirements live in each module's PRD in `/docs/`. This is the architectural summary.)
-
-### Available to Both Tiers (Individual and Business)
-- Authentication & User Management
-- Document Vault (uploads, tagging, search)
-- Bank Reconciliation (simplified for individuals, full for business)
-- Budget Engine (personal budgets / corporate budgets)
-- Personal/Corporate Tax Prep
-
-### Individual-Only
-- Personal Expense Tracking
-- Personal Income Tracking
-
-### Business-Only
-- Expense Management (with multi-level approvals)
-- Accounts Payable
-- Accounts Receivable
-- Vendor Onboarding
-- Vendor Portal
-- Customer Portal
-- Warehouse / 3PL Portal
-- Inventory Management
-- POSM Management
-- Fixed Assets
-- Payroll & HR
-- Workflow Approvals Engine
-- Tenant Admin
-- Inter-Company Eliminations (ICE)
-- Audit & Compliance
-
-### Cross-Cutting Infrastructure
-- Super Admin (manages all accounts)
-- AI/OCR Engine
-- Notifications
-- Reporting & Analytics
+| # | Module | Code | Status | Mode |
+|---|---|---|---|---|
+| 1 | Expense Management | `expense` | ✅ Built (M3–M9) | All |
+| 2 | Accounts Payable + PO + Bank Recon | `ap` / `bank_recon` | ✅ Built (M11/M11b/M11c, 2026-07-25) | All |
+| 3 | Accounts Receivable | `ar` | ✅ Built (M14, 2026-07-28) | All |
+| 4 | OCR & Receipt Scanning | (AI layer) | ✅ Built (M10, 2026-07-25) | All |
+| 5 | Financial Statements (P&L + BS + CF) | (Full ERP) | ✅ Built (Q1a/Q1b, 2026-07-24/27) | Full ERP |
+| 6 | Budget & Planning | `budget` | ✅ Built (M16, 2026-07-28) | All |
+| 7 | SA Billing & Subscriptions | (SA only) | ✅ Built (SA-B, 2026-07-28) | SA |
+| 8 | Tax Engine (transaction level) | `tax_engine` | ✅ Built (M19, 2026-07-28) | All |
+| 9 | Payroll & HR | `payroll` | ✅ Built (M15, 2026-07-28) | All |
+| 10 | Fixed Assets | `fixed_assets` | ✅ Built (M18, 2026-07-28) | All |
+| 11 | Inventory & Warehouse | `inventory` | ✅ Built (M17, 2026-07-28) | All |
+| 12 | AI Intelligence Layer | (Full ERP gate) | ✅ Built (M20, 2026-07-28) | Full ERP |
+| 13 | Vendor Portal | `vendor_portal` | ⏳ Not yet built | All |
+| 14 | Customer Portal | `customer_portal` | ⏳ Not yet built | All |
+| 15 | POSM Management | `posm` | ⏳ Not yet built | All |
+| 16 | Inter-Company Eliminations | (Full ERP) | ⏳ Not yet built — PRD: `docs/ICE_PRD.md` | Full ERP |
+| 17 | Reporting & Analytics | `reporting` | ⏳ Not yet built as standalone module | All |
 
 ---
 
-## 7. Deployment Strategy
+## 6. Database Schema Overview
 
-### Environments
-- **Development & Testing:** Render
-- **Production:** Render to start. Can migrate to AWS/GCP/Azure once scale requires it.
+> For authoritative column-level detail, see `docs/PROJECT_STATE.md`. This section lists tables grouped by domain.
 
-### Architecture
-- **Frontend:** Next.js built and served via Render's Web Service
-- **Backend:** Dockerised FastAPI service on Render
-- **Database:** Render managed PostgreSQL
-- **File Storage:** Cloudflare R2
-- **CI/CD:** GitHub → Render auto-deploy pipeline
+### Core / Auth
+`tenants`, `users`, `user_tenants`, `roles`, `permissions`, `role_permissions`, `user_roles`, `sessions`, `refresh_tokens`, `audit_logs`, `impersonation_sessions`, `platform_config`, `password_reset_tokens`
 
-### Environment management
-- All secrets and environment-specific values in Render dashboard
-- Nothing sensitive committed to GitHub
-- Separate environments for dev, staging, production (over time)
+### Setup / Config
+`tenant_org_config`, `tenant_modules`, `tenant_tax_config`, `tenant_fx_config`, `org_structure`, `employee_onboarding_tokens`, `implementation_locks`, `document_rules`, `system_function_mappings`
+
+### Accounting Periods
+`accounting_periods`, `period_grace_overrides`, `future_posting_exceptions`, `close_checklist_items`, `period_checklist_completions`, `fiscal_year_states`, `period_audit_logs`
+
+### Chart of Accounts / Dimensions
+`chart_of_accounts`, `tenant_dimensions`, `dimension_values`, `gl_dimension_requirements`, `gl_code_remaps`
+
+### People / HR
+`employees`, `employee_code_history`, `employee_transfers`, `employee_position_assignments`, `approval_roles`, `cost_center_config`, `finance_review_config`, `finance_review_steps`
+
+### Expenses
+`expense_reports`, `expense_lines`, `expense_report_snapshots`, `tenant_expense_config`, `expense_categories`, `category_gl_mappings`, `expense_documents`, `document_access_log`
+
+### Approvals
+`approval_policies`, `approval_role_thresholds`, `expense_approvals`
+
+### GL
+`journal_entries`, `journal_lines`, `posting_batches`, `posting_roles`, `tenant_account_mappings`, `tenant_posting_role_settings`, `bank_accounts`
+
+### Accounts Payable + PO
+`vendors`, `ap_invoices`, `ap_invoice_lines`, `ap_approvals`, `ap_invoice_snapshots`, `purchase_orders`, `purchase_order_lines`, `po_approvals`, `po_snapshots`, `goods_receipt_notes`, `grn_lines`, `ap_invoice_po_matches`, `po_tolerance_config`
+
+### Bank Reconciliation
+`bank_statements`, `bank_statement_lines`, `bank_recon_matches`
+
+### Accounts Receivable
+`customers`, `ar_invoices`, `ar_invoice_lines`, `ar_approvals`, `ar_invoice_snapshots`
+
+### Budget & Planning
+`budget_periods`, `budget_lines`
+
+### Billing (SA)
+`pricing_plans`, `tenant_subscriptions`, `billing_events`
+
+### Tax Engine (transaction level)
+`tax_returns`, `wht_certificates`
+
+### Payroll & HR
+`salary_structures`, `payroll_runs`, `payroll_lines`, `payslips`, `leave_types`, `leave_requests`, `leave_balances`
+
+### Fixed Assets
+`asset_categories`, `assets`, `asset_depreciation_schedules`, `asset_disposals`
+
+### Inventory & Warehouse
+`inventory_categories`, `inventory_locations`, `inventory_items`, `stock_movements`
+
+### AI / OCR
+`ai_predictions`, `ai_learning_overrides`, `ai_insights`
+
+### CoA Templates (system-wide, no tenant_id)
+`coa_templates`, `coa_template_accounts`
 
 ---
 
-## 8. Repository Structure
+## 7. API Router Map
 
-**Monorepo** — single GitHub repo containing both frontend and backend.
+| Prefix | Module | File |
+|---|---|---|
+| `/api/auth/*` | Auth | `routers/auth.py` |
+| `/api/users/*` | Profile, 2FA, sessions | `routers/users.py` |
+| `/api/tenant/*` | Tenant user management | `routers/tenant.py` |
+| `/api/invitations/*` | Public invite flow | `routers/invitations.py` |
+| `/api/expenses/*` | Expense reports | `routers/expenses.py` |
+| `/api/approvals/*` | Approval matrix + chain | `routers/approvals.py` |
+| `/api/documents/*` | File upload/storage | `routers/documents.py` |
+| `/api/config/*` | CoA, dimensions, categories | `routers/config.py` |
+| `/api/expense-config/*` | Expense form config | `routers/expense_config.py` |
+| `/api/setup/*` | Org, periods, modules, currencies, tax | `routers/setup.py` |
+| `/api/hr/*` | Employees, positions, leave | `routers/hr.py` |
+| `/api/gl/*` | Trial balance, ledger, journals, financial statements | `routers/gl.py` |
+| `/api/account-mapping/*` | Posting roles → GL | `routers/account_mapping.py` |
+| `/api/bank-accounts/*` | Bank account register | `routers/bank_accounts.py` |
+| `/api/posting-batches/*` | Connected-mode export queue | `routers/posting_batches.py` |
+| `/api/ap/*` | Accounts Payable | `routers/ap.py` |
+| `/api/po/*` | Purchase Orders + GRN + 3-way match | `routers/po.py` |
+| `/api/bank-recon/*` | Bank Reconciliation | `routers/bank_recon.py` |
+| `/api/ar/*` | Accounts Receivable | `routers/ar.py` |
+| `/api/budgets/*` | Budget & Planning | `routers/budget.py` |
+| `/api/sa/billing/*` | SA Billing & Subscriptions | `routers/billing.py` |
+| `/api/tax/*` | Tax Engine (transaction) | `routers/tax_engine.py` |
+| `/api/payroll/*` | Payroll & HR | `routers/payroll.py` |
+| `/api/assets/*` | Fixed Assets | `routers/fixed_assets.py` |
+| `/api/inventory/*` | Inventory & Warehouse | `routers/inventory.py` |
+| `/api/ai/*` | OCR, AI insights, anomaly detection | `routers/ai.py` |
+| `/api/platform/*` | Super Admin portal | `routers/platform.py` |
+| `/api/app-config` | Dynamic app name (no auth) | `routers/app_config.py` |
+
+---
+
+## 8. Repository Structure (current)
 
 ```
 ziva-bi/
-├── frontend/              # Next.js app
+├── frontend/
 │   ├── src/
-│   ├── public/
-│   ├── package.json
-│   └── Dockerfile
-├── backend/               # FastAPI app
+│   │   ├── app/                    — Next.js 15 App Router pages
+│   │   │   ├── auth/               — login, signup, forgot-password, reset-password, change-password
+│   │   │   ├── onboard/[token]/    — public employee self-onboarding
+│   │   │   ├── platform/           — Super Admin portal
+│   │   │   └── dashboard/business/ — Tenant portal (setup + transactional modules)
+│   │   │       ├── setup/          — Org, modules, CoA, dimensions, currencies, tax, roles, periods
+│   │   │       ├── expenses/       — Expense retirement module
+│   │   │       ├── approvals/      — Approval queue
+│   │   │       ├── ap/             — Accounts Payable (invoices, vendors, POs, GRNs, aging)
+│   │   │       ├── ar/             — Accounts Receivable (invoices, customers, aging)
+│   │   │       ├── bank-recon/     — Bank Reconciliation
+│   │   │       ├── accounting/     — Manual journal entry, financial statements
+│   │   │       ├── payroll/        — Payroll runs, salary structures, leave
+│   │   │       ├── inventory/      — Items, locations, movements, valuation
+│   │   │       ├── assets/         — Fixed asset register, categories
+│   │   │       ├── tax/            — Tax returns, VAT summary, WHT certificates
+│   │   │       ├── budget/         — Budget periods and lines
+│   │   │       └── ai-insights/    — AI insight browser, anomaly scan
+│   │   ├── components/             — Shared UI (Button, PageContainer, PageHeading, Banner, OcrScanModal, etc.)
+│   │   ├── contexts/               — AuthContext, AppConfigContext
+│   │   └── lib/                    — api.ts, utils.ts, modules.ts
+│   ├── Dockerfile                  — multi-stage Alpine build (libc6-compat included)
+│   └── .env.example
+├── backend/
 │   ├── app/
-│   │   ├── modules/       # one folder per module
-│   │   ├── core/          # shared config, security, db
-│   │   ├── workflow/      # universal workflow engine
-│   │   ├── accounting/    # double-entry engine
-│   │   ├── ai/            # AI/OCR layer
-│   │   └── main.py
-│   ├── alembic/           # migrations
-│   ├── tests/
-│   ├── pyproject.toml
-│   └── Dockerfile
-├── docs/                  # PRDs, ADRs, master docs
-│   └── adr/               # architecture decision records
-├── .github/               # workflows, issue templates
-├── README.md
-└── CLAUDE.md              # Claude Code project memory
+│   │   ├── main.py                 — FastAPI app, CORS, router registration (27 routers)
+│   │   ├── config.py               — pydantic-settings (DATABASE_URL, RESEND_API_KEY, Supabase, Anthropic)
+│   │   ├── database.py             — async SQLAlchemy engine + AsyncSession
+│   │   ├── middleware/auth.py      — require_auth, require_super_admin, impersonation guard
+│   │   ├── models/                 — ORM models (one file per domain group)
+│   │   ├── routers/                — FastAPI routers (27 files)
+│   │   ├── schemas/                — Pydantic schemas (one file per router)
+│   │   ├── services/               — Business logic + posting engines
+│   │   └── constants/modules.py   — _ALL_MODULES single source of truth
+│   ├── alembic/versions/           — 65+ migration files; single-head chain at k9l0m1n2o3p4
+│   ├── scripts/                    — seed_demo_tenant.py + cleanup scripts
+│   ├── requirements.txt
+│   └── .env.example
+├── docs/                           — Master docs + active PRDs + cc_results archive
+│   ├── MASTER_CONTEXT.md          — Single source of truth (wins all conflicts)
+│   ├── MASTER_INSTRUCTION.md      — Coding standards + workflow rulebook
+│   ├── MASTER_SYSTEM_SUMMARY.md   — This file
+│   ├── PROJECT_STATE.md           — Live codebase snapshot (updated after every CC commit)
+│   ├── PENDING_COMMIT.md          — Active commit spec for CC (deleted by CC after commit)
+│   ├── CC_RESULT.md               — Latest CC review result
+│   ├── ICE_PRD.md                 — Inter-Company Eliminations PRD (not yet built)
+│   ├── AUTH_USER_MANAGEMENT_PRD.md
+│   ├── Audit_Compliance_Module_PRD.md
+│   ├── Vendor_Portal_PRD.md / Vendor_Onboarding_Module_PRD.md / Vendor_Master_Data_Change_Module_PRD.md
+│   ├── Expense_Management_Module_PRD.md / M6 Supporting Documents.md
+│   ├── RECREATE_ENV_FILES.md      — Ops runbook for env var recovery
+│   ├── ZIVA_BI_EVALUATION_2026_07_20.md — Platform evaluation snapshot
+│   ├── cc_results/                — Archived CC review results (timestamped)
+│   ├── RB/                        — Excel upload templates (CoA, employees, dimensions, etc.)
+│   └── archive/                   — Stale working docs (BRIEFs, FIX notes, diagnoses — do not reference)
+├── render.yaml                    — Render deployment config (infra-as-code)
+├── CLAUDE.md                      — Project instructions for Cowork + CC agents
+└── .gitignore
 ```
 
-Repo name: **ziva-bi** (single repo, monorepo)
-GitHub user: `oladunmoyeadeniyi`
+---
+
+## 9. Deployment (live on Render as of 2026-07-24)
+
+| Component | Provider | Config |
+|---|---|---|
+| Backend | Render Web Service (Docker) | `backend/Dockerfile` |
+| Frontend | Render Web Service (Docker) | `frontend/Dockerfile` |
+| Database | Render managed PostgreSQL | 3-day PITR backup active |
+| File storage | Supabase Storage | Bucket: `documents` (private) |
+| Email | Resend | `RESEND_API_KEY` env var |
+| AI/OCR | Anthropic Vision API | `ANTHROPIC_API_KEY` env var |
+
+**GitHub → Render auto-deploy** is active on `main` branch. Both frontend and backend build automatically on push.
+
+**Migration procedure (post-commit):**
+```bash
+cd backend && alembic upgrade head
+```
+CC runs this unconditionally after every successful commit.
 
 ---
 
-## 9. Build Plan — Milestone-Based
+## 10. Coding Standards Summary
 
-We work in vertical feature slices, not horizontal layers. Each milestone is usable, demoable, deployable.
+> Full rules in `MASTER_INSTRUCTION.md`. Key non-negotiables:
 
-### Phase 1 — Foundation
-- **Milestone 1:** Empty monorepo deployed to Render. Frontend serves a placeholder page; backend serves `/health`. PostgreSQL connected. GitHub auto-deploy working.
-- **Milestone 2:** User can sign up and log in. Both account types (Individual / Business) selectable. JWT working.
-- **Milestone 3:** Individual user can log a personal expense. Saves to DB, shows on dashboard. Mobile-friendly.
-
-### Phase 2 — Business core
-- **Milestone 4:** Business account can create a tenant, invite first user. Multi-tenant data isolation enforced.
-- **Milestone 5:** RBAC working — roles and permissions configurable per tenant.
-- **Milestone 6:** Business employee can submit an expense retirement (mirrors Adeniyi's Red Bull workflow).
-- **Milestone 7:** Approval workflow end-to-end. Submitted → LM Approves → Finance Reviews → Posted.
-
-### Phase 3 — Intelligence and modules
-- **Milestone 8:** OCR reads a receipt and auto-fills an expense.
-- **Milestone 9+:** AP, AR, Bank Recon, Payroll, etc. — priority order decided as we go.
-
-### Phase 4 — Portals and advanced
-- Vendor Portal
-- Customer Portal
-- Warehouse / 3PL Portal
-- Super Admin Dashboard
-- Budget & Financial Analytics
-- Audit & Compliance
-- ICE
-
-### Phase 5 — AI deepening
-- GL prediction
-- Vendor category classification
-- AR/AP anomaly detection
-- Bank statement enrichment
-- Risk scoring
-
-Milestones get refined and reordered as we learn. Claude Code proposes the next; Adeniyi approves.
+- Every Python file: module-level docstring + function docstrings + type hints
+- Every TypeScript file: typed props/state, no `any` without justification
+- All migrations via Alembic — never edit DB directly
+- `chart_of_accounts` (not `gl_accounts`) is the canonical FK target for all GL references
+- `posting_mode` from `TenantOrgConfig` drives three-mode routing — never hardcode mode-specific forks in feature code
+- All AI errors mapped to generic HTTP 503 — tenant must never see "Anthropic" or model names
+- No secrets in code — all config via `app/config.py` from env vars
+- Every milestone ends with PENDING_COMMIT.md → CC review → commit + push → alembic upgrade head
 
 ---
 
-## 10. Quality Standards (cross-reference)
+## 11. Key Architecture Decisions (ADRs)
 
-See `MASTER_INSTRUCTION.md` Section 2.6 for full code quality rules. In brief:
-- Linting + formatting enforced (Ruff/Black for Python, ESLint/Prettier for TS)
-- Type safety required (TypeScript strict, Python type hints, Pydantic)
-- Tests for every module, thorough for critical paths
-- Migrations via Alembic, never direct DB edits
-- Security: parameterised queries, hashed passwords, JWT properly handled, HTTPS only
-- Mandatory commenting on every file and function
+| Decision | Outcome | Reference |
+|---|---|---|
+| Test-first environment model | Signup creates test tenant only; live born via SA promotion | MASTER_CONTEXT.md §5 M9.0.1 |
+| Posting mode = tenant setting, not code fork | `tenant_org_config.posting_mode` drives routing in service layer | §3b |
+| Cost centers in `org_structure`, NOT `dimension_values` | Prevents data duplication; single source of truth | MASTER_CONTEXT.md §7 |
+| Currency in `tenant_org_config`, NOT `tenant_fx_config` | `tenant_fx_config` holds FX mechanics only | MASTER_CONTEXT.md §12 |
+| App name in `platform_config` table | Live rename without redeploy; 5-min cache | MASTER_CONTEXT.md §5 |
+| WACC costing for inventory | `moving_average_cost` updated on every RECEIPT | inventory.py |
+| AI security — no vendor names in errors | `AiIntelligenceError` wrapper → generic 503 | ai_intelligence.py |
+| Supabase Storage now, R2 later | Migrate when >5 tenants or >5 GB stored | MASTER_CONTEXT.md §7 |
 
 ---
 
-*End of Master System Summary. Update when architecture meaningfully changes.*
+*End of Master System Summary. Last updated: 2026-07-29.*

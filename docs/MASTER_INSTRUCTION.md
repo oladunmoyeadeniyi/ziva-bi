@@ -1,8 +1,9 @@
 # MASTER INSTRUCTION DOCUMENT — Ziva BI
 
-> The rulebook. Every Claude Code session must follow these.
-> If anything conflicts with `MASTER_CONTEXT.md`, that one wins (it's the deepest source of truth).
-> Last updated: May 2026
+> The rulebook. Every Cowork and Claude Code (CC) session must follow these.
+> If anything conflicts with `MASTER_CONTEXT.md`, that document wins (it's the deepest source of truth).
+> For the Cowork ↔ CC workflow (who writes code vs. who commits), see `CLAUDE.md`.
+> **Last updated: 2026-07-29**
 
 ---
 
@@ -165,10 +166,10 @@ Claude Code proposes the next milestone; Adeniyi approves before work starts.
 
 ### 2.5 PWA-enabled, mobile-first frontend
 
-- Next.js 14 with App Router
+- Next.js 15 with App Router (React 19)
 - Installable as mobile shortcut (PWA manifest, service worker)
-- Fully responsive — mobile-first design for individuals
-- ShadCN UI + TailwindCSS for consistent, modern look
+- Fully responsive — mobile-first design
+- ShadCN UI + TailwindCSS v4 for consistent, modern look
 
 ### 2.6 Code quality standards
 

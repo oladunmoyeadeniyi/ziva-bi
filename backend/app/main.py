@@ -165,6 +165,13 @@ from app.routers import po as po_router
 from app.routers import bank_recon as bank_recon_router
 from app.routers import app_config as app_config_router
 from app.routers import ai as ai_router
+from app.routers import ar as ar_router
+from app.routers import budget as budget_router
+from app.routers import billing as billing_router
+from app.routers import tax_engine as tax_engine_router
+from app.routers import payroll as payroll_router
+from app.routers import fixed_assets as fixed_assets_router
+from app.routers import inventory as inventory_router
 
 app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
@@ -187,6 +194,13 @@ app.include_router(ap_router.router)
 app.include_router(po_router.router)
 app.include_router(bank_recon_router.router)
 app.include_router(ai_router.router)
+app.include_router(ar_router.router)
+app.include_router(budget_router.router)
+app.include_router(billing_router.router)
+app.include_router(tax_engine_router.router)
+app.include_router(payroll_router.router)
+app.include_router(fixed_assets_router.router)
+app.include_router(inventory_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

@@ -163,3 +163,40 @@ class AILearningOverride(Base):
     prediction: Mapped["AIPrediction"] = relationship(
         "AIPrediction", back_populates="overrides"
     )
+
+
+class AiInsight(Base):
+    """
+    A structured AI-generated insight for a tenant.
+
+    M20 generates these via three analyses:
+      ANOMALY            — statistical outliers in expenses, AP invoices, etc.
+      SPENDING_PATTERN   — trend summaries and spend-by-category breakdowns
+      CASH_FLOW_FORECAST — projected cash position over future periods
+      CATEGORY_SUGGESTION — recommended GL account / cost centre for a transaction
+
+    Tenants review, dismiss, or action each insight via the UI.
+    """
+
+    __tablename__ = "ai_insights"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    insight_type: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    severity: Mapped[str] = mapped_column(Text, nullable=False, server_default="INFO")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="PENDING")
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
