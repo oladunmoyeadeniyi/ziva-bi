@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-29 — All TIER 2–4 milestones shipped. Migrations e3f4…→k9l0… written + py_compile verified; awaiting CC commit. Last committed DB head: `d2e3f4g5h6i7` (M14 AR). Product functionally complete; first customer ready. ICE, Performance Audit, and FX table decision are the only remaining open items.
+> Last updated: 2026-07-29 — All TIER 2–4 milestones committed to GitHub (`9ffd9e0`). DB head: `k9l0m1n2o3p4` (M20 AI Intelligence). Product functionally complete; first customer ready. Open items: ICE (group consolidation), Performance & Security Audit, FX dedicated-tables decision.
 
 ---
 

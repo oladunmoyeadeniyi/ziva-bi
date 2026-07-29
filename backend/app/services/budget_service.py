@@ -251,7 +251,7 @@ async def compute_variance(
         data_source = "gl_entries"
     elif posting_mode == "connected":
         actuals = await _actuals_connected(db, period.tenant_id, gl_ids, period.period_start, effective_end)
-        data_source = "posting_batches"
+        data_source = "unavailable"  # posting_batches has no queryable per-GL shape; GL lives in external ERP
     else:
         actuals = await _actuals_lite(db, period.tenant_id, gl_ids, period.period_start, effective_end)
         data_source = "expense_reports"
