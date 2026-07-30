@@ -46,7 +46,7 @@ export default function AssetCategoriesPage() {
         body: { ...form, useful_life_months: parseInt(form.useful_life_months), residual_pct: parseFloat(form.residual_pct) },
       });
       setShowForm(false); load();
-    } catch (err: any) { setError(err?.message || "Failed."); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed."); }
     finally { setSaving(false); }
   };
 

@@ -48,7 +48,7 @@ export default function LeavePage() {
     try {
       await apiFetch(`/api/payroll/leave/requests/${id}/approve`, { token: accessToken!, method: "POST" });
       setRequests(prev => prev.map(r => r.id === id ? { ...r, status: "APPROVED" } : r));
-    } catch (err: any) { setError(err?.message || "Failed to approve."); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed to approve."); }
   };
 
   const handleReject = async (id: string) => {
@@ -59,7 +59,7 @@ export default function LeavePage() {
         token: accessToken!, method: "POST", body: { rejection_reason: reason },
       });
       setRequests(prev => prev.map(r => r.id === id ? { ...r, status: "REJECTED" } : r));
-    } catch (err: any) { setError(err?.message || "Failed to reject."); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed to reject."); }
   };
 
   return (

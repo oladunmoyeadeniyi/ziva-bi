@@ -51,8 +51,8 @@ export default function InventoryLocationsPage() {
       setShowForm(false);
       setForm({ name: "", code: "", parent_id: "" });
       load();
-    } catch (err: any) {
-      setError(err?.message || "Failed to create location.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create location.");
     } finally {
       setSaving(false);
     }

@@ -95,8 +95,8 @@ export default function StockMovementsPage() {
         apiFetch<StockMovement[]>("/api/inventory/movements?limit=100", { token: accessToken! }),
       ]);
       setMovements(mvts);
-    } catch (err: any) {
-      setError(err?.message || "Failed to record movement.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record movement.");
     } finally {
       setSaving(false);
     }

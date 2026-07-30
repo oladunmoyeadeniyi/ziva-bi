@@ -108,7 +108,7 @@ ziva-bi/
 │   │   ├── seed_demo_tenant.py   — idempotent demo seeder for trial tenants (--list-trials, --tenant-slug, --apply)
 │   │   ├── cleanup_orphan_employee_usertenant.py — one-time: deactivate UserTenants for employees already deactivated before cascade was wired
 │   │   └── purge_test_tenant_users.py — hard-delete deactivated test-tenant user accounts
-├── frontend/src/
+├── apps/ziva-bi/src/
 │   ├── app/                      — Next.js App Router pages (see §5)
 │   ├── components/
 │   │   ├── AppHeader.tsx         — top navigation bar with environment toggle
@@ -1250,7 +1250,7 @@ The existing `/api/ai/ocr` and `/api/ai/override` endpoints (M10) remain. M20 ex
 
 **Fixed 2026-06-28, committed `b3e70e3` (confirmed pushed to `origin/main`, 2026-06-29):**
 - Duplicate fiscal-year periods: app-level date-range-overlap check + DB-level UQ(tenant_id,start_date) via migration `k7l8m9n0o1p2`. Cleanup script `backend/scripts/cleanup_duplicate_periods.py` run successfully against local data first.
-- Stub first-year (registration-truncated, e.g. Aug–Dec) had no Year-end close section and showed an incorrect "Jan–Dec" dropdown label. Root cause: 3 places hardcoded `period_no == 12` / December instead of deriving the FY's actual last period via MAX(period_no). Fixed in `backend/app/routers/setup.py` (`management_close`, `get_period_checklist`) and `frontend/src/app/dashboard/business/setup/periods/page.tsx` (`decPeriod`, `formatFY`).
+- Stub first-year (registration-truncated, e.g. Aug–Dec) had no Year-end close section and showed an incorrect "Jan–Dec" dropdown label. Root cause: 3 places hardcoded `period_no == 12` / December instead of deriving the FY's actual last period via MAX(period_no). Fixed in `backend/app/routers/setup.py` (`management_close`, `get_period_checklist`) and `apps/ziva-bi/src/app/dashboard/business/setup/periods/page.tsx` (`decPeriod`, `formatFY`).
 
 ---
 

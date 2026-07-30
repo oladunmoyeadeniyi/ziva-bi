@@ -39,6 +39,8 @@ interface GLAccount {
   is_foreign_currency?: boolean;
   foreign_currency_code?: string;
   revalue_at_period_end?: boolean;
+  cf_category?: string;
+  cf_sub_category?: string;
 }
 
 interface Dimension {
@@ -1982,8 +1984,8 @@ export default function ChartOfAccountsPage() {
                           setEditIsForeignCurrency(fresh.is_foreign_currency ?? false);
                           setEditForeignCurrencyCode(fresh.foreign_currency_code ?? "");
                           setEditRevalueAtPeriodEnd(fresh.revalue_at_period_end ?? false);
-                          setEditCfCategory((fresh as any).cf_category ?? "");
-                          setEditCfSubCategory((fresh as any).cf_sub_category ?? "");
+                          setEditCfCategory(fresh.cf_category ?? "");
+                          setEditCfSubCategory(fresh.cf_sub_category ?? "");
                         }}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                       >

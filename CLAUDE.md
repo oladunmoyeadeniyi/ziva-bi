@@ -63,13 +63,19 @@ The user cannot stay at the keyboard during a review. CC must:
 ## Repository Structure
 
 ```
-ziva-bi/                       ← monorepo root
-├── frontend/                  ← Next.js 15 (App Router) + TailwindCSS + ShadCN UI
-│   ├── src/app/               ← pages and layouts (App Router)
-│   ├── src/components/        ← shared UI components
-│   ├── src/lib/               ← utility functions
-│   ├── Dockerfile             ← multi-stage build for Render
-│   └── .env.example           ← required env vars for local dev
+ziva-bi/                       ← monorepo root (Turborepo workspace)
+├── apps/
+│   └── ziva-bi/               ← Next.js 15 (App Router) + TailwindCSS + ShadCN UI
+│       ├── src/app/           ← pages and layouts (App Router)
+│       ├── src/components/    ← shared UI components
+│       ├── src/lib/           ← utility functions
+│       ├── Dockerfile         ← multi-stage build for Render
+│       └── .env.example       ← required env vars for local dev
+├── packages/                  ← shared packages (stubs — code extracted in Phase 5)
+│   ├── api-client/            ← @ziva/api-client
+│   ├── ui/                    ← @ziva/ui
+│   ├── types/                 ← @ziva/types
+│   └── pwa-config/            ← @ziva/pwa-config
 ├── backend/                   ← Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── main.py            ← FastAPI app, middleware, router registration
@@ -85,6 +91,8 @@ ziva-bi/                       ← monorepo root
 │   └── .env.example           ← required env vars for local dev
 ├── docs/                      ← PRDs, ADRs, master documents (markdown only)
 │   └── adr/                   ← Architecture Decision Records
+├── package.json               ← Turborepo workspace root
+├── turbo.json                 ← Turborepo pipeline (build, dev, lint, type-check)
 ├── render.yaml                ← Render deployment config (infra-as-code)
 ├── .gitignore
 └── CLAUDE.md                  ← this file

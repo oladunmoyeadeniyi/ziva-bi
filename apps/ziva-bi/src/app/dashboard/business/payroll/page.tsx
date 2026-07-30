@@ -60,8 +60,8 @@ export default function PayrollRunsPage() {
       });
       setShowCreate(false);
       load();
-    } catch (err: any) {
-      setError(err?.message || "Failed to create payroll run.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create payroll run.");
     } finally { setSaving(false); }
   };
 
@@ -70,7 +70,7 @@ export default function PayrollRunsPage() {
     try {
       await apiFetch(`/api/payroll/runs/${id}/approve`, { token: accessToken!, method: "POST" });
       load();
-    } catch (err: any) { setError(err?.message || "Failed to approve."); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed to approve."); }
   };
 
   const fmt = (n: number) => n.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

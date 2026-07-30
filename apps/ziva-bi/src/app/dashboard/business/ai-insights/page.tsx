@@ -66,7 +66,7 @@ export default function AiInsightsPage() {
     try {
       await apiFetch(`/api/ai/insights/${id}/${action}`, { token: accessToken!, method: "POST" });
       setInsights(prev => prev.map(i => i.id === id ? { ...i, status: action === "review" ? "REVIEWED" : "DISMISSED" } : i));
-    } catch (err: any) { setError(err?.message || "Failed."); }
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed."); }
   };
 
   return (

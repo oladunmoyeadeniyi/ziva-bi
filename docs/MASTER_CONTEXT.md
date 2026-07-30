@@ -289,8 +289,8 @@ Posting-role catalogue (`posting_roles`) with per-tenant GL mapping (`tenant_acc
 > **Doc lapse, same pattern as the M9.0.1 retrofit:** this was scoped as "Organisation tab restructuring," carried as a pending item in §9/§10 and Cowork task #36, with no record it had shipped. Reading the actual current code (2026-06-30) confirms `docs/BRIEF-0-org-tax-restructure.md` is **fully implemented**, almost certainly landed silently alongside the M8.3/M8.4 work. No further build needed — this entry just closes the loop.
 
 - Organisation page's Configuration tab is flattened exactly as specified: no sub-tabs, just **Financial features** then a divider then **Governance**, with a single shared **"Save configuration"** button at the bottom (`organisation/page.tsx`, `tab === "config"` block). No fiscal-year or tax-applicability content remains on this page.
-- Fiscal year settings (`fiscal_year_start_month`/`_day`, `period_closing_frequency`, `generatePeriods`) live on the dedicated Period Management page (`frontend/src/app/dashboard/business/setup/periods/page.tsx`), confirmed by direct grep — this is the M8.3 Accounting Periods Engine page above.
-- Tax applicability is the first, gating tab on the Tax & Statutory page (`frontend/src/app/dashboard/business/setup/tax/page.tsx`): `type Tab = "applicability" | "vat" | "wht" | "paye" | "other"` — matching BRIEF-0's spec exactly.
+- Fiscal year settings (`fiscal_year_start_month`/`_day`, `period_closing_frequency`, `generatePeriods`) live on the dedicated Period Management page (`apps/ziva-bi/src/app/dashboard/business/setup/periods/page.tsx`), confirmed by direct grep — this is the M8.3 Accounting Periods Engine page above.
+- Tax applicability is the first, gating tab on the Tax & Statutory page (`apps/ziva-bi/src/app/dashboard/business/setup/tax/page.tsx`): `type Tab = "applicability" | "vat" | "wht" | "paye" | "other"` — matching BRIEF-0's spec exactly.
 
 ### M9.0 — Shadow Test Environment (live-first clone model)
 13-step clone engine (`services/tenant_clone.py`) that, under the original design, created a test shadow tenant from a live tenant at signup. Superseded by M9.0.1's direction flip (below) — no longer invoked at signup, but still used on demand by a super admin to create a test shadow for a live tenant that doesn't already have one (e.g. a legacy/retrofitted tenant). Migration: `x4y5z6a7b8c9_m9_0_environment_architecture`.
@@ -324,9 +324,9 @@ Lets a tenant with zero GL accounts adopt one of 3 system-managed starter Chart 
 
 Code-level audit (`docs/UI_POLISH_AUDIT.md`) found 46 pages with no shared component library — 44 distinct button className variants, 2 competing page-container conventions, 11 page-title styles, plus drift in date-input handling, tab-state persistence, modal backdrops, and banner colors (findings A–H). Adeniyi signed off on tackling the highest-leverage trio first (`docs/BRIEF_ui_polish_phase1.md`). Phase 1 ships findings **A, B, C only**:
 
-- **`Button`** (`frontend/src/components/ui/button.tsx`) — CVA-based, scaffolded against the project's already-configured-but-unused shadcn/ui setup (`components.json` existed, `src/components/ui/` didn't). Variants `primary`/`secondary`/`danger` (colors = the single most common existing string for each, not an average), sizes `default` (`min-h-[44px]`, closing the touch-target gap finding A flagged) / `sm`, built-in `loading` prop with spinner. Zero new npm dependencies — `class-variance-authority`/`clsx`/`tailwind-merge`/`lucide-react`/`radix-ui` were all already in `package.json`.
-- **`PageContainer`** (`frontend/src/components/PageContainer.tsx`) — replaces both the old fixed `p-8 max-w-Nxl` convention and the old unshared-but-correct `px-4 sm:px-6 py-8 max-w-Nxl mx-auto` convention with one component, `maxWidth` prop (default `5xl`), each page's existing width preserved rather than forced uniform.
-- **`PageHeading`** (`frontend/src/components/PageHeading.tsx`) — standardizes on the single most common existing `<h1>` style (`text-xl font-semibold text-gray-900`, optional subtitle). Applied across `dashboard/` pages only; pages outside `dashboard/` (auth, onboarding, landing) deliberately excluded per the brief — different visual context, audit explicitly called this a reasonable difference.
+- **`Button`** (`apps/ziva-bi/src/components/ui/button.tsx`) — CVA-based, scaffolded against the project's already-configured-but-unused shadcn/ui setup (`components.json` existed, `src/components/ui/` didn't). Variants `primary`/`secondary`/`danger` (colors = the single most common existing string for each, not an average), sizes `default` (`min-h-[44px]`, closing the touch-target gap finding A flagged) / `sm`, built-in `loading` prop with spinner. Zero new npm dependencies — `class-variance-authority`/`clsx`/`tailwind-merge`/`lucide-react`/`radix-ui` were all already in `package.json`.
+- **`PageContainer`** (`apps/ziva-bi/src/components/PageContainer.tsx`) — replaces both the old fixed `p-8 max-w-Nxl` convention and the old unshared-but-correct `px-4 sm:px-6 py-8 max-w-Nxl mx-auto` convention with one component, `maxWidth` prop (default `5xl`), each page's existing width preserved rather than forced uniform.
+- **`PageHeading`** (`apps/ziva-bi/src/components/PageHeading.tsx`) — standardizes on the single most common existing `<h1>` style (`text-xl font-semibold text-gray-900`, optional subtitle). Applied across `dashboard/` pages only; pages outside `dashboard/` (auth, onboarding, landing) deliberately excluded per the brief — different visual context, audit explicitly called this a reasonable difference.
 
 Scope boundary respected: small inline/per-row icon-only action buttons inside tables (a different use case from page-level CTAs) were deliberately left untouched, not swept into the Button rollout.
 
@@ -341,7 +341,7 @@ Brief: `docs/BRIEF_ui_polish_phase2.md`. Closes the remaining five audit finding
 - **Build D** — All `type="date"` inputs in `dashboard/` now use the locked `defaultValue` + `onBlur`-only pattern (was: 3 coexisting patterns — hybrid controlled+onChange+onBlur autosave, controlled+onChange-only, and a few bare inputs). 5 files converted: `expenses/new`, `expenses/[report_id]/edit`, `settings/employees`, `settings/dimensions/[id]/values`, `setup/organisation` (registration/commencement fields only — the already-correct fiscal-year-end field left untouched) + `setup/currencies`. Acceptance grep (`type="date"` with `value=`) returns 0 matches.
 - **Build E** — Tab state now URL-synced via `useSearchParams` + `Suspense` wrapper on all 6 previously-broken tabbed pages: `approvals`, `expenses`, `setup/currencies`, `setup/periods`, `setup/roles`, `setup/tax`. Reference pattern copied from already-correct pages (`dimensions`, `organisation`, `chart-of-accounts`).
 - **Build F** — Modal backdrop standardised to `bg-black/40` across `dashboard/`. `setup/organisation`'s two modals converted from `bg-black/30`. The remaining `fixed inset-0` entries without `bg-black/40` on the *outer* div were confirmed as intentional architectural exceptions: 6 use a two-element pattern (outer `fixed inset-0 z-50` for positioning + inner `absolute inset-0 bg-black/40` sibling for the dim — independently code-verified against `dimensions/page.tsx:2289` and `chart-of-accounts/page.tsx:2407`), 1 is a click-outside-to-close catcher (`dimensions:2175`, z-20), 1 is a bottom drawer (`employees:843`).
-- **Build G** — New `Banner` component (`frontend/src/components/Banner.tsx`), 4 variants (`success`/`error`/`warning`/`info`) using `bg-green-50`/`bg-red-50`/`bg-orange-50`/`bg-blue-50` + matching border/text classes, optional `onDismiss` prop. Rolled out to 12 dashboard pages replacing inline banner divs.
+- **Build G** — New `Banner` component (`apps/ziva-bi/src/components/Banner.tsx`), 4 variants (`success`/`error`/`warning`/`info`) using `bg-green-50`/`bg-red-50`/`bg-orange-50`/`bg-blue-50` + matching border/text classes, optional `onDismiss` prop. Rolled out to 12 dashboard pages replacing inline banner divs.
 - **Build H** — Animate-pulse skeleton loading states added to 6 previously-uncovered pages that fetch data on mount: `expenses/new`, `setup/organisation`, `setup/modules`, `setup/documents`, `setup/periods`, `setup/tax`. `modules/[module]/page.tsx` confirmed no direct data fetch (Step 0 judgment call — correctly excluded). `tsc --noEmit` → 0 errors, `npm run lint` → 0 errors (warnings only, pre-existing). Also added `eslint.config.mjs` (`next/core-web-vitals + next/typescript`) since `npm run lint` had never been wired — now it is.
 
 **Side effects / housekeeping notes (independently verified):**
@@ -367,7 +367,7 @@ Brief: `docs/BRIEF_impersonation.md` (spec: `docs/IMPERSONATION_DESIGN.md`). Ext
 **Frontend:**
 - `ImpersonationState.mode` extended: `"implementation" | "support" | "user"`. Added `sessionId` and `targetUser` fields (only set when `mode === "user"`).
 - `startUserImpersonation(targetUserId, entryPoint, tenantContext?)` + `exitUserImpersonation()` in `AuthContext`. Original SA token stored in `_originalSAToken` state; restored on exit. `exitUserImpersonation` calls the backend end-session endpoint (best-effort — non-fatal if it fails).
-- New `ImpersonationUserBanner` component (`frontend/src/components/ImpersonationUserBanner.tsx`) — indigo styling (distinct from existing amber/blue tenant banner), non-dismissable, shows "You are viewing as [Full Name] — [Role]" + Exit button. Stacks below the tenant-context banner when both are active.
+- New `ImpersonationUserBanner` component (`apps/ziva-bi/src/components/ImpersonationUserBanner.tsx`) — indigo styling (distinct from existing amber/blue tenant banner), non-dismissable, shows "You are viewing as [Full Name] — [Role]" + Exit button. Stacks below the tenant-context banner when both are active.
 - `hideWorkspace = !!impersonation && impersonation.mode !== "user"` — WORKSPACE + ACCOUNT sidebar groups hidden in `"implementation"`/`"support"` mode (SA doing admin work, not acting as a user), visible in `"user"` mode (SA sees exactly what the target user sees). Fixes the sidebar bug visible in the screenshot.
 - Entry point 1: tenant detail page (`/platform/tenants/[id]`) → user list → indigo "Impersonate" button per active-user row. Calls `startUserImpersonation(userId, "user_list", { tenantId, tenantName, environment })` then navigates to `/dashboard/business`.
 - Entry point 2: employees page (`/settings/employees`) → list → indigo "Impersonate" button per row where `emp.user_id` is set (employee has portal account). Calls `startUserImpersonation(emp.user_id, "employee_list")`.
@@ -524,7 +524,7 @@ Extended the SA portal tenant detail page with a consultant-only configuration p
 - Modules catalogue (`_ALL_MODULES`): 13 modules (expense, ap, ar, payroll, bank_recon, budget, tax_engine, inventory, fixed_assets, posm, vendor_portal, customer_portal, reporting).
 
 **Frontend:**
-- **`frontend/src/app/platform/tenants/[id]/page.tsx`** — new "Consultant Config" section (indigo accent, SA-only): posting mode radio cards (lite/connected/full_erp) + module license checkboxes grid + save button.
+- **`apps/ziva-bi/src/app/platform/tenants/[id]/page.tsx`** — new "Consultant Config" section (indigo accent, SA-only): posting mode radio cards (lite/connected/full_erp) + module license checkboxes grid + save button.
 
 **Workflow tooling added this session:**
 - **`.claude/commands/review-commit.md`** — upgraded CC slash command: Step 0 (read MASTER_CONTEXT.md), Step 5 (architectural review — security, data integrity, count correctness, query efficiency, API contract, backwards compat), Step 7 (CC writes `docs/CC_RESULT.md` so Adeniyi doesn't need to copy-paste output). Also added: unexpected-file-diff check, import-time NameError check, alembic chain validation, CC_RESULT archiving to `docs/cc_results/`.
@@ -542,7 +542,7 @@ New page at `/platform/trials` that gives the SA team a live queue of all trial 
 - `PATCH /api/platform/trials/{tenant_id}` — updates `lead_status` and/or `implementation_notes`; 400 if tenant is not a trial; audit logged.
 - **Migration `j1k2l3m4n5o6`** — adds `lead_status VARCHAR(30) NOT NULL DEFAULT 'new'` and `implementation_notes TEXT` to `tenants`; index on `lead_status`.
 
-**Frontend (`frontend/src/app/platform/trials/page.tsx`):**
+**Frontend (`apps/ziva-bi/src/app/platform/trials/page.tsx`):**
 - Stats bar (total trials, new leads, contacted, qualified).
 - Filter tabs by lead status + search by name/email.
 - `lead_status` inline dropdown (new/contacted/qualified/disqualified) with instant PATCH.
@@ -562,7 +562,7 @@ The setup portal checklist (`GET /api/setup/progress`) is now fully posting-mode
 - Mode-aware unlock sequence: employees unlock after org (lite) or after CoA (connected/full_erp).
 - Mode-aware sections list: CoA + Account Mapping shown in connected/full_erp; Dimensions shown in full_erp; Periods + Bank Accounts always optional; sections hidden in lite.
 
-**Frontend (`frontend/src/app/dashboard/business/setup/page.tsx`):**
+**Frontend (`apps/ziva-bi/src/app/dashboard/business/setup/page.tsx`):**
 - New section icons: `account_mapping`, `bank_accounts`, `periods`.
 - `MODE_LABELS` and `MODE_COLORS` constants.
 - Mode badge rendered between page heading and progress bar.
@@ -577,9 +577,9 @@ Extends task #51 (mode-aware checklist) to the sidebar nav and individual setup 
 
 **What changed (frontend-only, no backend/migration changes):**
 
-- **`frontend/src/app/dashboard/business/layout.tsx`**: Added `postingMode` state (`'lite' | 'connected' | 'full_erp' | null`). Extended `fetchOrgConfig` apiFetch type to include `posting_mode?: string` at the top level of the `/api/setup/org` response (already returned by the backend). FINANCIALS sidebar section now wraps CoA, Dimensions, Currencies & FX, Account Mapping, and Tax with `postingMode !== 'lite'` guards. Dimensions keeps the `orgConfig?.use_dimensions` sub-gate; Currencies keeps `orgConfig?.use_multi_currency`. Fallback while loading (null): all links remain visible.
+- **`apps/ziva-bi/src/app/dashboard/business/layout.tsx`**: Added `postingMode` state (`'lite' | 'connected' | 'full_erp' | null`). Extended `fetchOrgConfig` apiFetch type to include `posting_mode?: string` at the top level of the `/api/setup/org` response (already returned by the backend). FINANCIALS sidebar section now wraps CoA, Dimensions, Currencies & FX, Account Mapping, and Tax with `postingMode !== 'lite'` guards. Dimensions keeps the `orgConfig?.use_dimensions` sub-gate; Currencies keeps `orgConfig?.use_multi_currency`. Fallback while loading (null): all links remain visible.
 
-- **`frontend/src/components/ModeNotAvailable.tsx`** (new): Neutral informational gate rendered by pages that are hidden in the current mode. Props: `pageName`, `availableIn[]`, `currentMode`. Shows a lock icon, descriptive message, and a "Back to setup dashboard" button.
+- **`apps/ziva-bi/src/components/ModeNotAvailable.tsx`** (new): Neutral informational gate rendered by pages that are hidden in the current mode. Props: `pageName`, `availableIn[]`, `currentMode`. Shows a lock icon, descriptive message, and a "Back to setup dashboard" button.
 
 - **5 page-level mode guards** (each fetches `posting_mode` from `/api/setup/org` — a call each page already makes or adds one): `settings/chart-of-accounts/page.tsx`, `settings/dimensions/page.tsx`, `setup/currencies/page.tsx`, `setup/tax/page.tsx`, `setup/account-mapping/page.tsx`. Guard renders `<ModeNotAvailable>` if `postingMode === 'lite'`; null (still loading) shows the page normally.
 
@@ -604,7 +604,7 @@ Extends task #51 (mode-aware checklist) to the sidebar nav and individual setup 
 
 - **`setup/modules/page.tsx`**: Replaced ad-hoc `MODULE_REQUIRES_GL` blocklist with `MODULE_MODE_AVAILABILITY` map — 14 module keys, each declaring which posting modes can list it. Lite allowlist: `expense`, `ap`, `ar`, `tax_engine`, `reporting` only. Connected + Full ERP: all 14 modules. `isAvailableForMode()` helper drives `visibleModules` filter (unlicensed incompatible modules hidden; licensed-but-incompatible modules stay visible with deactivate-only path for mode-downgrade cleanup). `postingMode` fetched from `/api/setup/org` in `Promise.all` alongside module list.
 - **`backend/app/routers/platform.py`** `create_tenant()`: seeds `TenantOrgConfig` with `legal_name=data.company_name.strip()` and `country=country` at creation time — Organisation tab now pre-populated on first entry instead of blank.
-- **"Tax & Compliance" rename**: `tax_engine` label updated from "Tax Engine" in `backend/app/constants/modules.py`, `frontend/src/lib/modules.ts`, and `frontend/src/app/dashboard/business/setup/modules/[module]/page.tsx`.
+- **"Tax & Compliance" rename**: `tax_engine` label updated from "Tax Engine" in `backend/app/constants/modules.py`, `apps/ziva-bi/src/lib/modules.ts`, and `apps/ziva-bi/src/app/dashboard/business/setup/modules/[module]/page.tsx`.
 
 **Module availability per mode (authoritative):**
 
@@ -744,7 +744,7 @@ Three improvements bundled in one commit (migration `p4q5r6s7t8u9`, all 7 files 
 - Use: Ziva BI internal sandbox/demo tenants (e.g. the Red Bull build-verification company) are marked `is_internal=True` so they can be excluded from commercial reporting and clearly distinguished in the SA portal.
 
 **2. `MODULE_MODE_AVAILABILITY` centralised to `lib/modules.ts`:**
-- Moved from an inline constant in `setup/modules/page.tsx` to `frontend/src/lib/modules.ts` as a named export.
+- Moved from an inline constant in `setup/modules/page.tsx` to `apps/ziva-bi/src/lib/modules.ts` as a named export.
 - `setup/modules/page.tsx` now imports it — no change in runtime behaviour, one source of truth.
 - Create Company modal imports from the same location.
 
@@ -874,10 +874,10 @@ Extended the approval-matrix system with three major capabilities:
 - Rewritten: queries `FinanceReviewStep` rows for the policy (ordered by level), resolves each step's assignee via two-tier hierarchy (`assigned_employee_id` first, `assigned_designation` fallback), handles vacant seat behavior (skip/hold/escalate_to_fallback). `FinanceReviewStep.assigned_employee` relationship added to model.
 
 **3. Number formatting consolidated into `utils.ts`:**
-- Four shared helpers added to `frontend/src/lib/utils.ts`: `fmtCommaInput` (comma display for amount inputs), `stripCommas` (strip before storing), `formatMoney` (₦ display, 2dp), `formatNumber` (plain comma-formatted number).
+- Four shared helpers added to `apps/ziva-bi/src/lib/utils.ts`: `fmtCommaInput` (comma display for amount inputs), `stripCommas` (strip before storing), `formatMoney` (₦ display, 2dp), `formatNumber` (plain comma-formatted number).
 - Local duplicate `formatNGN`/`fmtCommaInput`/`stripCommas` functions removed from 9 files across expenses/approvals pages and SplitLinePanel. All inline `toLocaleString` patterns replaced with `formatMoney`.
 
-**Key files:** `alembic/versions/s1t2u3v4w5x6_designation_based_policy.py` (new migration), `models/approvals.py`, `schemas/approvals.py`, `routers/approvals.py`, `services/approval_routing.py`, `frontend/src/lib/utils.ts` + 9 frontend pages/components.
+**Key files:** `alembic/versions/s1t2u3v4w5x6_designation_based_policy.py` (new migration), `models/approvals.py`, `schemas/approvals.py`, `routers/approvals.py`, `services/approval_routing.py`, `apps/ziva-bi/src/lib/utils.ts` + 9 frontend pages/components.
 
 ---
 
@@ -973,7 +973,7 @@ Fulfilled the core Lite-mode commercial promise: approved expense reports are no
 - `GET /api/expenses/export.csv` — applies `_csv_safe()` to all free-text columns; returns `text/csv StreamingResponse`.
 - `GET /api/expenses/export.xlsx` — uses `openpyxl` (already in requirements.txt); bold blue header row, date/money column formats, freeze pane on row 1, auto-fitted column widths; returns `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet StreamingResponse`.
 
-**Frontend — `frontend/src/app/dashboard/business/expenses/page.tsx`:**
+**Frontend — `apps/ziva-bi/src/app/dashboard/business/expenses/page.tsx`:**
 - Fetches `posting_mode` from `/api/setup/org` once on load (for admin users only).
 - Shows a blue export bar when `user.is_tenant_admin && postingMode === 'lite'`: date range inputs (from/to, default: current month) + "Download CSV" + "Download Excel" buttons.
 - `handleExport(format: 'csv' | 'xlsx')` — unified raw-fetch → Blob URL download; `isExporting` state typed as `'csv' | 'xlsx' | null` so each button shows its own spinner independently.
@@ -1000,7 +1000,7 @@ Enables the Super Admin to manually record a tenant's billing plan tier and firs
 - `app/schemas/platform.py`: `TenantDetail` now carries `plan`/`paid_since`; new `BillingUpdate` + `BillingResponse` schemas.
 - `app/routers/platform.py`: `get_tenant()` returns `plan`/`paid_since`; new `PATCH /api/platform/tenants/{id}/billing` (SA-only, audit-logged). Uses `model_fields_set` for both fields so sending `plan=null` correctly clears back to free.
 
-**Frontend (`frontend/src/app/platform/tenants/[id]/page.tsx`):**
+**Frontend (`apps/ziva-bi/src/app/platform/tenants/[id]/page.tsx`):**
 - `TenantDetail` interface extended with `plan: string | null` and `paid_since: string | null`.
 - "Billing & plan" section added (SA-only, between "Tenant details" and "Test/live environment"): plan tier dropdown (free/starter/growth/enterprise) + paid-since date input + Save button.
 - State seeded from the loaded tenant on every load; `saveBilling()` calls `PATCH .../billing`.

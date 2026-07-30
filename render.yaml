@@ -73,9 +73,9 @@ services:
   - type: web
     name: ziva-bi-frontend
     runtime: docker
-    rootDir: frontend
+    rootDir: apps/ziva-bi
     region: oregon
-    # The frontend is built via frontend/Dockerfile (multi-stage: deps → builder → runner).
+    # The frontend is built via apps/ziva-bi/Dockerfile (multi-stage: deps → builder → runner).
     # NEXT_PUBLIC_API_URL is baked into the JS bundle in the builder stage via ENV —
     # it must be set there, not as a runtime env var, for Next.js to inline it.
     plan: starter
