@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.ap import ApApproval, ApInvoice, ApInvoiceLine, ApInvoiceSnapshot, Vendor
 from app.models.auth import User, UserTenant
 from app.schemas.ap import (
@@ -76,7 +76,11 @@ from app.services.approval_routing import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/ap", tags=["Accounts Payable"])
+router = APIRouter(
+    prefix="/api/ap",
+    tags=["Accounts Payable"],
+    dependencies=[Depends(require_module("ap"))],
+)
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────

@@ -175,9 +175,11 @@ export default function BusinessLayout({
       .catch(() => {});
   }, [accessToken, pathname]);
 
-  // Fetch activated modules for MODULE SETUP section
+  // Fetch activated modules — needed by ALL authenticated users so the sidebar
+  // shows the correct operational links (AR, AP, Payroll, etc.).
+  // The Module Setup admin section is gated separately by {isAdmin && ...}.
   const fetchModules = useCallback(async () => {
-    if (!accessToken || !isAdmin) return;
+    if (!accessToken) return;
     try {
       const data = await apiFetch<{ modules: ModuleState[] }>("/api/setup/modules", {
         token: accessToken,
@@ -186,15 +188,17 @@ export default function BusinessLayout({
     } catch {
       setActiveModules([]);
     }
-  }, [accessToken, isAdmin, pathname]);
+  }, [accessToken, pathname]);
 
   useEffect(() => {
     fetchModules();
   }, [fetchModules]);
 
-  // Fetch org configuration to conditionally show/hide sidebar links
+  // Fetch org configuration to conditionally show/hide sidebar links.
+  // Needed by all users — posting_mode gates the GL/accounting sidebar section
+  // and branding applies to everyone. Only the Setup sub-sections use isAdmin gating.
   const fetchOrgConfig = useCallback(async () => {
-    if (!accessToken || !isAdmin) return;
+    if (!accessToken) return;
     try {
       const data = await apiFetch<{
         org_configuration?: { use_dimensions?: boolean; use_multi_currency?: boolean };
@@ -210,7 +214,7 @@ export default function BusinessLayout({
     } catch {
       // silently fail
     }
-  }, [accessToken, isAdmin, pathname]);
+  }, [accessToken, pathname]);
 
   useEffect(() => {
     fetchOrgConfig();
@@ -522,6 +526,13 @@ export default function BusinessLayout({
                 <NavLink href="/dashboard/business/settings/approval-matrix" label="Approval workflows" icon="git-merge" />
                 <NavLink href="/dashboard/business/setup/documents" label="Document rules" icon="file-check" />
                 <NavLink href="/dashboard/business/admin/users" label="Team" icon="user-plus" />
+              </div>
+
+              {/* AI CONFIGURATION */}
+              <div className="px-2">
+                <SectionLabel label="AI &amp; Intelligence" />
+                <NavLink href="/dashboard/business/settings/ai-config" label="AI categorisation" icon="brain" />
+                <NavLink href="/dashboard/business/ai-insights" label="AI insights" icon="sparkles" />
               </div>
 
               {/* MODULE SETUP */}

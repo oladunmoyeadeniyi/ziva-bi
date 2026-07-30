@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.auth import UserTenant
 from app.models.budget import BudgetLine, BudgetPeriod
 from app.models.master_data import ChartOfAccount
@@ -47,7 +47,11 @@ from app.services.budget_service import compute_variance
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/budgets", tags=["Budget & Planning"])
+router = APIRouter(
+    prefix="/api/budgets",
+    tags=["Budget & Planning"],
+    dependencies=[Depends(require_module("budget"))],
+)
 
 
 # ── Auth helper ───────────────────────────────────────────────────────────────

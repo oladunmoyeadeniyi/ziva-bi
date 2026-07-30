@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.ar import (
     ArApproval, ArInvoice, ArInvoiceLine, ArInvoiceSnapshot, Customer,
 )
@@ -69,7 +69,11 @@ from app.services.approval_routing import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/ar", tags=["Accounts Receivable"])
+router = APIRouter(
+    prefix="/api/ar",
+    tags=["Accounts Receivable"],
+    dependencies=[Depends(require_module("ar"))],
+)
 
 # Approval policy module key for AR
 _AR_MODULE = "receivable"

@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-29 — All TIER 2–4 milestones committed to GitHub (`9ffd9e0`). DB head: `k9l0m1n2o3p4` (M20 AI Intelligence). Product functionally complete; first customer ready. Open items: ICE (group consolidation), Performance & Security Audit, FX dedicated-tables decision.
+> Last updated: 2026-07-29 — M17b + ICE AI Categorisation Engine pending CC commit (migrations `l0m1n2o3p4q5`, `p9q0r1s2t3u4`). Last committed head: `k9l0m1n2o3p4` (M20 AI Intelligence). Product functionally complete; first customer ready. Open items: Inter-Company Eliminations (no PRD yet), Performance & Security Audit, FX dedicated-tables decision.
 
 ---
 
@@ -1192,7 +1192,7 @@ Full revenue-side AR module: customer master, invoice lifecycle, GL posting (3-m
 
 ---
 
-### M16 — Budget & Planning (2026-07-28, migration `e3f4g5h6i7j8`) — **pending CC commit**
+### M16 — Budget & Planning (2026-07-28, migration `e3f4g5h6i7j8`) — **committed `9ffd9e0`**
 
 Three-mode budget system: period-based budget setup, line-item entry by GL account, and a variance engine that computes actual vs. budget.
 
@@ -1204,7 +1204,7 @@ Three-mode budget system: period-based budget setup, line-item entry by GL accou
 
 ---
 
-### SA-B — SA Portal Billing & Subscriptions (2026-07-28, migration `f4g5h6i7j8k9`) — **pending CC commit**
+### SA-B — SA Portal Billing & Subscriptions (2026-07-28, migration `f4g5h6i7j8k9`) — **committed `9ffd9e0`**
 
 Full billing management for the Super Admin portal. Pricing plans, tenant subscriptions, and billing event log.
 
@@ -1216,7 +1216,7 @@ Full billing management for the Super Admin portal. Pricing plans, tenant subscr
 
 ---
 
-### M19 — Tax Engine — Transaction Level (2026-07-28, migration `g5h6i7j8k9l0`) — **pending CC commit**
+### M19 — Tax Engine — Transaction Level (2026-07-28, migration `g5h6i7j8k9l0`) — **committed `9ffd9e0`**
 
 Transaction-level VAT/WHT/PAYE computation, tax return management, and WHT certificate generation.
 
@@ -1228,7 +1228,7 @@ Transaction-level VAT/WHT/PAYE computation, tax return management, and WHT certi
 
 ---
 
-### M15 — Payroll & HR (2026-07-28, migration `h6i7j8k9l0m1`) — **pending CC commit**
+### M15 — Payroll & HR (2026-07-28, migration `h6i7j8k9l0m1`) — **committed `9ffd9e0`**
 
 Salary structures, payroll run management, PAYE computation, payslip generation, and leave management.
 
@@ -1240,7 +1240,7 @@ Salary structures, payroll run management, PAYE computation, payslip generation,
 
 ---
 
-### M18 — Fixed Assets (2026-07-28, migration `i7j8k9l0m1n2`) — **pending CC commit**
+### M18 — Fixed Assets (2026-07-28, migration `i7j8k9l0m1n2`) — **committed `9ffd9e0`**
 
 Asset register, depreciation schedule generation (straight-line + reducing balance), and asset disposal tracking.
 
@@ -1252,23 +1252,39 @@ Asset register, depreciation schedule generation (straight-line + reducing balan
 
 ---
 
-### M17 — Inventory & Warehouse (2026-07-28, migration `j8k9l0m1n2o3`) — **pending CC commit**
+### M17 — Inventory & Warehouse (2026-07-28, migration `j8k9l0m1n2o3`) — **committed 9ffd9e0**
 
-Inventory item management, location hierarchy, stock movement ledger (FIFO/WACC), and COGS GL posting.
+Inventory item management, location hierarchy, stock movement ledger, and COGS GL posting. M17 shipped WACC costing only; FIFO and Standard were added in M17b (see below).
 
-**New tables:** `inventory_categories` (tenant_id, name, code — UQ per tenant), `inventory_locations` (tenant_id, name, code, parent_id self-ref for hierarchy), `inventory_items` (tenant_id, category_id, name, sku, valuation_method CHECK IN ('FIFO','WACC'), current_quantity, moving_average_cost, reorder_point, gl_inventory_id, gl_cogs_id, gl_adjustment_id — all FK to chart_of_accounts), `stock_movements` (item_id, movement_type CHECK IN ('RECEIPT','ISSUE','ADJUSTMENT','TRANSFER'), quantity, unit_cost, quantity_after, moving_average_cost_after, reference, journal_entry_id, ap_invoice_id, ar_invoice_id).
+**New tables (M17):** `inventory_categories`, `inventory_locations` (self-ref hierarchy), `inventory_items` (see M17b for full column list), `stock_movements`.
 
-**WACC engine:** `_wacc_after_receipt(old_qty, old_mac, receipt_qty, receipt_cost)` — new_mac = (old_qty × old_mac + receipt_qty × receipt_cost) / (old_qty + receipt_qty). Edge case: old_qty=0 → new_mac = receipt_cost directly.
-
-**COGS on ISSUE (Full ERP):** when `gl_cogs_id` and `gl_inventory_id` are both set, ISSUE creates a synchronous journal: DR COGS / CR Inventory at current MAC. ADJUSTMENT and TRANSFER do not trigger GL posting.
-
-**Backend:** `models/inventory.py`, `schemas/inventory.py`, `routers/inventory.py` at `/api/inventory/*`. Valuation endpoint: qty × mac per item, total inventory value. Low-stock filter: `current_quantity <= reorder_point`.
-
-**Frontend:** Item list with summary cards (Total SKUs, Total Value, Low Stock Alerts), low-stock toggle filter; movements log + create form (item, type, qty, unit_cost, reference); valuation report; location hierarchy CRUD with parent selector. Sidebar gated on `inventory` module.
+**WACC engine:** `_wacc_after_receipt(old_qty, old_mac, receipt_qty, receipt_cost)` — new_mac = (old_qty × old_mac + receipt_qty × receipt_cost) / (old_qty + receipt_qty).
 
 ---
 
-### M20 — AI Intelligence Layer (2026-07-28, migration `k9l0m1n2o3p4`) — **pending CC commit**
+### M17b — Inventory FIFO + Standard Costing (2026-07-29, migration `l0m1n2o3p4q5`) — **pending CC commit**
+
+Extends M17 with full FIFO lot tracking and Standard costing (with Purchase Price Variance GL posting).
+
+**Schema changes:**
+- `inventory_items`: `valuation_method VARCHAR(8) CHECK IN ('FIFO','WACC','STANDARD')` (widened from 5), `gl_ppv_id UUID FK→chart_of_accounts SET NULL` (new), `standard_cost NUMERIC(18,4) DEFAULT 0`, `gl_inventory_id`, `gl_cogs_id`, `gl_revenue_id`, `moving_average_cost NUMERIC(18,4)`. Full column list: `id, tenant_id, category_id, item_code, name, description, unit_of_measure, current_quantity, reorder_point, reorder_quantity, standard_cost, moving_average_cost, valuation_method, gl_inventory_id, gl_cogs_id, gl_revenue_id, gl_ppv_id, is_active, created_at, updated_at`.
+- `inventory_cost_layers` (new table): `id, tenant_id, item_id FK→inventory_items CASCADE, receipt_movement_id FK→stock_movements SET NULL, received_date DATE, unit_cost NUMERIC(18,4), quantity_received NUMERIC(18,4), quantity_remaining NUMERIC(18,4), created_at`. Indexes: `(tenant_id)`, `(item_id)`, `(item_id, received_date)`.
+
+**FIFO costing:**
+- RECEIPT: creates an `InventoryCostLayer` row after `db.flush()` (to obtain the movement ID for the FK)
+- ISSUE: queries layers with `SELECT ... FOR UPDATE` in `(received_date, id)` order; consumes lot by lot; `total_cost = Σ(consumed × layer.unit_cost)`; raises 400 if layers can't cover the requested qty
+
+**Standard costing:**
+- RECEIPT: `total_cost = qty × standard_cost`; body's `unit_cost` = actual purchase price (used for PPV only); rejects with 400 if `unit_cost ≤ 0` (prevents fabricated favorable-variance journals). PPV journal (Full ERP + `gl_ppv_id` set): unfavorable (actual > std) → DR PPV / CR Inventory; favorable → DR Inventory / CR PPV.
+- ISSUE: `unit_cost = standard_cost`; COGS always at standard regardless of actual receipt cost
+
+**Valuation report:** single aggregation query (`SUM(qty_remaining × unit_cost) GROUP BY item_id`) for FIFO; returns `unit_cost` (method-appropriate) rather than `moving_average_cost`. New endpoint: `GET /api/inventory/items/{id}/cost-layers` for lot inspection.
+
+**Frontend:** New Item modal with 3-method radio selector + conditional `standard_cost` / `gl_ppv_id` fields; GL account fields use dropdown pickers (sourced from `/api/config/coa`) instead of raw UUIDs. Valuation report updated to `unit_cost` with method tooltip badges. Movements form shows contextual warning when STANDARD + RECEIPT.
+
+---
+
+### M20 — AI Intelligence Layer (2026-07-28, migration `k9l0m1n2o3p4`) — **committed 9ffd9e0**
 
 Persistent AI insight system with anomaly detection, spending pattern analysis, cash flow forecasting, and GL auto-classification. All tenant-facing AI errors are scrubbed of internal technology names.
 
@@ -1306,19 +1322,20 @@ Persistent AI insight system with anomaly detection, spending pattern analysis, 
 | 1 | Expense Management | `expense` | ✅ Built (M3–M9 + #52) | All |
 | 2 | Accounts Payable (P2P) | `ap` | ✅ Built (M11, 2026-07-25) | All |
 | 3 | Accounts Receivable (O2C) | `ar` | ✅ Built (M14, 2026-07-28) | All |
-| 4 | Payroll & HR | `payroll` | ✅ Built (M15, 2026-07-28) — pending CC commit | All |
-| 5 | Inventory Management | `inventory` | ✅ Built (M17, 2026-07-28) — pending CC commit | All |
-| 6 | Fixed Assets | `fixed_assets` | ✅ Built (M18, 2026-07-28) — pending CC commit | All |
+| 4 | Payroll & HR | `payroll` | ✅ Built (M15, 2026-07-28) — committed `9ffd9e0` | All |
+| 5 | Inventory Management | `inventory` | ✅ Built (M17+M17b, 2026-07-28/29) — M17b pending CC commit | All |
+| 6 | Fixed Assets | `fixed_assets` | ✅ Built (M18, 2026-07-28) — committed `9ffd9e0` | All |
 | 7 | POSM Management | `posm` | ⏳ Not yet built | All |
 | 8 | Vendor Portal | `vendor_portal` | ⏳ Not yet built | All |
 | 9 | Customer Portal | `customer_portal` | ⏳ Not yet built | All |
 | 10 | Bank Reconciliation | `bank_recon` | ✅ Built (M11c, 2026-07-25) | All |
-| 11 | Budget & Planning | `budget` | ✅ Built (M16, 2026-07-28) — pending CC commit | All |
-| 12 | Tax & Compliance | `tax_engine` | ✅ Built (M19, 2026-07-28) — pending CC commit | All |
-| 13 | AI Intelligence Layer | (Full ERP gate) | ✅ Built (M20, 2026-07-28) — pending CC commit | Full ERP |
-| 14 | SA Billing & Subscriptions | (SA only) | ✅ Built (SA-B, 2026-07-28) — pending CC commit | SA portal |
+| 11 | Budget & Planning | `budget` | ✅ Built (M16, 2026-07-28) — committed `9ffd9e0` | All |
+| 12 | Tax & Compliance | `tax_engine` | ✅ Built (M19, 2026-07-28) — committed `9ffd9e0` | All |
+| 13 | AI Intelligence Layer | (Full ERP gate) | ✅ Built (M20, 2026-07-28) — committed `9ffd9e0` | Full ERP |
+| 14 | SA Billing & Subscriptions | (SA only) | ✅ Built (SA-B, 2026-07-28) — committed `9ffd9e0` | SA portal |
 | 15 | Reporting & Analytics | `reporting` | ⏳ Not yet built as standalone module | All |
-| 16 | Inter-Company Eliminations | (Full ERP) | ⏳ Not yet built — PRD: `docs/ICE_PRD.md` | Full ERP |
+| 16 | AI Categorisation (ICE) | (All modes) | ✅ Built (ICE, 2026-07-29) — pending CC commit; migration `p9q0r1s2t3u4` | All |
+| 17 | Inter-Company Eliminations | (Full ERP) | ⏳ Not yet built — no PRD yet | Full ERP |
 
 > **Module naming rationale:**
 > - "Accounts Payable (P2P)" — P2P = Purchase to Pay, the end-to-end process. AP handles supplier invoices, payment runs, and vendor account management.
@@ -1409,24 +1426,26 @@ Architectural invariants that are durable decisions (the WHY):
 | M11c | **Bank Reconciliation** (CSV/XLSX import, auto-match, reconciliation report) | ✅ Done (2026-07-25) |
 | Q1b | **Cash Flow Statement** (indirect method) | ✅ Done (2026-07-27) |
 | M14 | **Accounts Receivable** (O2C: customer invoices, receipts, AR aging) | ✅ Done (2026-07-28) |
-| SA-B | **SA Portal — Billing & Subscriptions** (pricing plans, subscriptions, billing events) | ✅ Done (2026-07-28) — pending CC commit |
+| SA-B | **SA Portal — Billing & Subscriptions** (pricing plans, subscriptions, billing events) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 
 ### TIER 3 — Strategic Expansion — ✅ ALL SHIPPED
 
 | # | What | Status |
 |---|---|---|
-| M16 | **Budget & Planning** (budget periods, lines, variance engine) | ✅ Done (2026-07-28) — pending CC commit |
-| M19 | **Tax Engine — transaction level** (VAT/WHT/PAYE, tax returns, WHT certificates) | ✅ Done (2026-07-28) — pending CC commit |
-| M15 | **Payroll & HR** (salary structures, payroll runs, PAYE, payslips, leave) | ✅ Done (2026-07-28) — pending CC commit |
-| ICE | **Inter-Company Eliminations** — PRD: `docs/ICE_PRD.md` | ⏳ NOT YET BUILT |
+| M16 | **Budget & Planning** (budget periods, lines, variance engine) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
+| M19 | **Tax Engine — transaction level** (VAT/WHT/PAYE, tax returns, WHT certificates) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
+| M15 | **Payroll & HR** (salary structures, payroll runs, PAYE, payslips, leave) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
+| ICE | **AI Categorisation Engine** (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) — PRD: `docs/ICE_PRD.md` | ✅ Done (2026-07-29) — pending CC commit; migration `p9q0r1s2t3u4` |
+| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | ⏳ NOT YET BUILT — no PRD yet |
 
 ### TIER 4 — Long-term / Specialist
 
 | # | What | Status |
 |---|---|---|
-| M18 | **Fixed Assets** (asset register, SL+RB depreciation, disposals) | ✅ Done (2026-07-28) — pending CC commit |
-| M17 | **Inventory & Warehouse** (items, FIFO/WACC costing, COGS GL posting) | ✅ Done (2026-07-28) — pending CC commit |
-| M20 | **AI Intelligence Layer** (anomaly detection, spending patterns, cash flow forecast, GL auto-classify) | ✅ Done (2026-07-28) — pending CC commit |
+| M18 | **Fixed Assets** (asset register, SL+RB depreciation, disposals) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
+| M17 | **Inventory & Warehouse** (items, WACC costing, COGS GL posting) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
+| M17b | **Inventory FIFO + Standard Costing** (cost layers, PPV journals, GL pickers) | ✅ Done (2026-07-29) — committed `9ffd9e0` |
+| M20 | **AI Intelligence Layer** (anomaly detection, spending patterns, cash flow forecast, GL auto-classify) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | ⏳ NOT YET BUILT — do before scale |
 | FX | **Currencies & FX dedicated tables** (JSONB vs. tenant_currencies/tenant_fx_rates decision) | ⏳ OPEN — revisit when BDC register volume demands it |
 
@@ -1478,4 +1497,4 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-29 — All TIER 2–4 milestones shipped. Code written and py_compile verified for M16 Budget, SA-B Billing, M19 Tax Engine, M15 Payroll, M18 Fixed Assets, M17 Inventory, M20 AI Intelligence Layer. Migration chain head (written, pending CC commit): `k9l0m1n2o3p4`. Last committed head: `d2e3f4g5h6i7` (M14 AR). Product functionally complete; ready for first customer. Remaining: ICE (PRD exists), Performance & Security Audit, FX dedicated-tables decision. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*
+*End of Master Context. Last updated: 2026-07-29 — M17b (FIFO/Standard Costing, migration `l0m1n2o3p4q5`) and ICE AI Categorisation Engine (migration `p9q0r1s2t3u4`) both pending CC commit. Last committed DB head: `k9l0m1n2o3p4` (M20 AI Intelligence Layer). Product functionally complete; live on Render; ready for first customer. Next to build: Inter-Company Eliminations (no PRD yet), Performance & Security Audit. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*

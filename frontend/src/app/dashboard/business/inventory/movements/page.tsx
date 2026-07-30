@@ -16,6 +16,7 @@ interface InventoryItem {
   item_code: string;
   name: string;
   unit_of_measure: string;
+  valuation_method: string;
 }
 
 interface StockMovement {
@@ -183,15 +184,32 @@ export default function StockMovementsPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Unit Cost (for RECEIPT)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={form.unit_cost}
-                onChange={e => setForm(p => ({ ...p, unit_cost: e.target.value }))}
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
+              {(() => {
+                const selItem = items.find(i => i.id === form.item_id);
+                const isStdReceipt = selItem?.valuation_method === "STANDARD" && form.movement_type === "RECEIPT";
+                return (
+                  <>
+                    <label className="block text-xs text-gray-600 mb-1">
+                      Unit Cost (actual purchase price)
+                      {isStdReceipt && <span className="text-red-500 ml-1">* required for Standard-costed items</span>}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required={isStdReceipt}
+                      value={form.unit_cost}
+                      onChange={e => setForm(p => ({ ...p, unit_cost: e.target.value }))}
+                      className={`w-full border rounded px-3 py-2 text-sm ${isStdReceipt && !form.unit_cost ? "border-amber-400 bg-amber-50" : ""}`}
+                    />
+                    {isStdReceipt && (
+                      <p className="text-xs text-amber-600 mt-1">
+                        Enter the actual supplier price. The system will value inventory at the standard cost and post any Purchase Price Variance (PPV) to your configured GL account.
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div>
               <label className="block text-xs text-gray-600 mb-1">Reference</label>

@@ -454,15 +454,16 @@ async def suggest_category(
     Pulls the tenant's chart of accounts, then asks the LLM to pick the best match.
     Returns the top suggestion with a confidence label.
     """
+    # NOTE: columns are gl_number / gl_name (not code / name — M20 original had wrong names)
     coa_rows = await db.execute(text("""
-        SELECT code, name, account_type
+        SELECT gl_number, gl_name, account_type
           FROM chart_of_accounts
          WHERE tenant_id = :tid AND is_active = TRUE
            AND account_type IN ('EXPENSE','COGS','ASSET')
-         ORDER BY code
+         ORDER BY gl_number
          LIMIT 60
     """), {"tid": str(tenant_id)})
-    accounts = [{"code": r.code, "name": r.name, "type": r.account_type} for r in coa_rows.fetchall()]
+    accounts = [{"code": r.gl_number, "name": r.gl_name, "type": r.account_type} for r in coa_rows.fetchall()]
 
     if not accounts:
         return {"suggestion": None, "reason": "No chart of accounts configured."}

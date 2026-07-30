@@ -28,3 +28,4 @@ import app.models.tax_engine           # noqa: F401  — registers tax_returns, 
 import app.models.payroll              # noqa: F401  — registers salary_structures, payroll_runs, payroll_lines, payslips, leave_types, leave_requests, leave_balances
 import app.models.fixed_assets         # noqa: F401  — registers asset_categories, assets, asset_depreciation_schedules, asset_disposals
 import app.models.inventory             # noqa: F401  — registers inventory_categories, inventory_locations, inventory_items, stock_movements
+import app.models.ice                  # noqa: F401  — registers ice_tenant_config, ice_predictions, ice_feedback, ice_audit_log, vendor/employee profiles

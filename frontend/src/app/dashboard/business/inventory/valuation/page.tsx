@@ -1,7 +1,13 @@
 "use client";
 
 /**
- * Stock Valuation Report page — M17.
+ * Stock Valuation Report page — M17 / M17b.
+ *
+ * Shows current inventory value per item, with unit_cost computed by the
+ * backend using the item's costing method:
+ *   WACC     — moving average cost
+ *   FIFO     — weighted average of open cost layers (layer_value / qty_remaining)
+ *   STANDARD — standard cost (budgeted unit cost)
  */
 
 import { useEffect, useState } from "react";
@@ -16,10 +22,10 @@ interface ValuationRow {
   item_name: string;
   category_name: string | null;
   unit_of_measure: string;
-  current_quantity: number;
-  moving_average_cost: number;
-  total_value: number;
   valuation_method: string;
+  current_quantity: number;
+  unit_cost: number;
+  total_value: number;
   reorder_point: number | null;
   below_reorder: boolean;
 }
@@ -29,6 +35,18 @@ interface ValuationResponse {
   rows: ValuationRow[];
   total_inventory_value: number;
 }
+
+const METHOD_LABELS: Record<string, string> = {
+  WACC: "WACC",
+  FIFO: "FIFO",
+  STANDARD: "STD",
+};
+
+const METHOD_TOOLTIPS: Record<string, string> = {
+  WACC: "Weighted Average Cost — unit cost is the moving average",
+  FIFO: "First In First Out — unit cost is the weighted average of open lots",
+  STANDARD: "Standard Cost — unit cost is the budgeted standard rate",
+};
 
 export default function ValuationPage() {
   const { accessToken } = useAuth();
@@ -72,9 +90,9 @@ export default function ValuationPage() {
               <th className="px-4 py-3 text-left">Category</th>
               <th className="px-4 py-3 text-right">Qty</th>
               <th className="px-4 py-3 text-left">UoM</th>
-              <th className="px-4 py-3 text-right">Avg Cost</th>
-              <th className="px-4 py-3 text-right">Total Value</th>
               <th className="px-4 py-3 text-left">Method</th>
+              <th className="px-4 py-3 text-right">Unit Cost</th>
+              <th className="px-4 py-3 text-right">Total Value</th>
               <th className="px-4 py-3 text-center">Status</th>
             </tr>
           </thead>
@@ -90,9 +108,16 @@ export default function ValuationPage() {
                 <td className="px-4 py-3 text-gray-500">{r.category_name ?? "—"}</td>
                 <td className="px-4 py-3 text-right font-mono">{Number(r.current_quantity).toFixed(2)}</td>
                 <td className="px-4 py-3 text-gray-500">{r.unit_of_measure}</td>
-                <td className="px-4 py-3 text-right font-mono">₦{fmt(r.moving_average_cost)}</td>
+                <td className="px-4 py-3">
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 cursor-help"
+                    title={METHOD_TOOLTIPS[r.valuation_method] ?? r.valuation_method}
+                  >
+                    {METHOD_LABELS[r.valuation_method] ?? r.valuation_method}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right font-mono">₦{fmt(r.unit_cost)}</td>
                 <td className="px-4 py-3 text-right font-mono font-semibold">₦{fmt(r.total_value)}</td>
-                <td className="px-4 py-3 text-xs text-gray-500">{r.valuation_method}</td>
                 <td className="px-4 py-3 text-center">
                   {r.below_reorder ? (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-600">Low</span>
@@ -106,14 +131,18 @@ export default function ValuationPage() {
           {data && (
             <tfoot className="bg-gray-50 border-t">
               <tr>
-                <td colSpan={6} className="px-4 py-3 text-sm font-semibold text-gray-700">Total</td>
+                <td colSpan={7} className="px-4 py-3 text-sm font-semibold text-gray-700">Total</td>
                 <td className="px-4 py-3 text-right font-mono font-bold text-gray-800">₦{fmt(data.total_inventory_value)}</td>
-                <td colSpan={2} />
+                <td />
               </tr>
             </tfoot>
           )}
         </table>
       </div>
+
+      <p className="text-xs text-gray-400 mt-3">
+        Unit cost reflects the item&apos;s costing method: WACC = moving average; FIFO = weighted average of open lots; Standard = budgeted standard cost.
+      </p>
     </PageContainer>
   );
 }

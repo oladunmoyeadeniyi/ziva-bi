@@ -53,7 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser, block_if_readonly_impersonation, require_auth
+from app.middleware.auth import CurrentUser, block_if_readonly_impersonation, require_auth, require_module
 from app.models.bank_account import BankAccount
 from app.models.bank_recon import BankReconMatch, BankStatement, BankStatementLine
 from app.models.gl import JournalEntry, JournalLine, PostingBatch
@@ -79,7 +79,11 @@ from app.services.bank_recon_match import (
 )
 from app.services.bank_recon_parser import parse_statement_file
 
-router = APIRouter(prefix="/api/bank-recon", tags=["bank-reconciliation"])
+router = APIRouter(
+    prefix="/api/bank-recon",
+    tags=["bank-reconciliation"],
+    dependencies=[Depends(require_module("bank_recon"))],
+)
 
 UserTenant = CurrentUser  # alias for type annotations
 

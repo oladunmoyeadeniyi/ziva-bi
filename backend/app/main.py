@@ -172,6 +172,7 @@ from app.routers import tax_engine as tax_engine_router
 from app.routers import payroll as payroll_router
 from app.routers import fixed_assets as fixed_assets_router
 from app.routers import inventory as inventory_router
+from app.routers import ice as ice_router
 
 app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
@@ -201,6 +202,7 @@ app.include_router(tax_engine_router.router)
 app.include_router(payroll_router.router)
 app.include_router(fixed_assets_router.router)
 app.include_router(inventory_router.router)
+app.include_router(ice_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

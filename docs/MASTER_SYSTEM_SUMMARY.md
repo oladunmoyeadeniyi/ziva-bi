@@ -3,7 +3,7 @@
 > Architecture overview — the "how it's built" reference.
 > If anything here conflicts with `MASTER_CONTEXT.md`, that document wins.
 > For current schema/endpoint/feature facts, see `PROJECT_STATE.md`.
-> **Last updated: 2026-07-29** (all TIER 2–4 milestones shipped; pending CC commit for migrations e3f4…→k9l0…)
+> **Last updated: 2026-07-29** (all TIER 2–4 milestones committed `9ffd9e0`; M17b FIFO/Standard costing pending CC commit — migration `l0m1n2o3p4q5`)
 
 ---
 
@@ -90,7 +90,7 @@ All GL journals: immutable once posted; corrections via reversing entries; alway
 
 ## 5. Module Status (as of 2026-07-29)
 
-> All modules marked ✅ are live in the codebase. Migrations e3f4g5h6i7j8 → k9l0m1n2o3p4 cover M16, SA-B, M19, M15, M18, M17, M20 and are **written but pending CC commit**.
+> All modules marked ✅ are live in the codebase. Migrations e3f4g5h6i7j8 → k9l0m1n2o3p4 (M16, SA-B, M19, M15, M18, M17, M20) committed in `9ffd9e0`. M17b FIFO/Standard costing migration `l0m1n2o3p4q5` pending CC commit.
 
 | # | Module | Code | Status | Mode |
 |---|---|---|---|---|
@@ -109,7 +109,7 @@ All GL journals: immutable once posted; corrections via reversing entries; alway
 | 13 | Vendor Portal | `vendor_portal` | ⏳ Not yet built | All |
 | 14 | Customer Portal | `customer_portal` | ⏳ Not yet built | All |
 | 15 | POSM Management | `posm` | ⏳ Not yet built | All |
-| 16 | Inter-Company Eliminations | (Full ERP) | ⏳ Not yet built — PRD: `docs/ICE_PRD.md` | Full ERP |
+| 16 | Inter-Company Eliminations (IxE) | (Full ERP) | ⏳ Not yet built — PRD: `docs/IxE_PRD.md` | Full ERP |
 | 17 | Reporting & Analytics | `reporting` | ⏳ Not yet built as standalone module | All |
 
 ---

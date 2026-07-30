@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.auth import UserTenant
 from app.models.master_data import Employee
 from app.models.payroll import (
@@ -76,7 +76,11 @@ from app.services.tax_compute_service import compute_paye
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/payroll", tags=["Payroll & HR"])
+router = APIRouter(
+    prefix="/api/payroll",
+    tags=["Payroll & HR"],
+    dependencies=[Depends(require_module("payroll"))],
+)
 
 
 def _tenant_id(user: UserTenant) -> uuid.UUID:

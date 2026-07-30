@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.auth import UserTenant
 from app.models.tax_engine import TaxReturn, WhtCertificate
 from app.schemas.tax_engine import (
@@ -47,7 +47,11 @@ from app.services.tax_compute_service import build_vat_summary, build_wht_summar
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/tax", tags=["Tax Engine"])
+router = APIRouter(
+    prefix="/api/tax",
+    tags=["Tax Engine"],
+    dependencies=[Depends(require_module("tax_engine"))],
+)
 
 
 def _tenant_id(user: UserTenant) -> uuid.UUID:

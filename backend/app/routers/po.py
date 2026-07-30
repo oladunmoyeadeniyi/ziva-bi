@@ -46,7 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.ap import ApInvoice, ApInvoiceLine
 from app.models.auth import UserTenant
 from app.models.po import (
@@ -93,7 +93,11 @@ from app.services.po_posting import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/po", tags=["Purchase Orders"])
+router = APIRouter(
+    prefix="/api/po",
+    tags=["Purchase Orders"],
+    dependencies=[Depends(require_module("ap"))],  # PO is part of the AP (Procure-to-Pay) module
+)
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────

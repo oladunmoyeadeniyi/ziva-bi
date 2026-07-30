@@ -151,7 +151,7 @@ ruff check app/
 
 > **Authoritative as of 2026-07-29.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: ~60% of full product vision. 100% of MVP-for-first-customer (all TIER 0 + TIER 1 + TIER 2–4 modules shipped; product is live on Render at head `k9l0m1n2o3p4`).**
+> **Overall completion: ~68% of full product vision. 100% of MVP-for-first-customer (all TIER 0 + TIER 1 + TIER 2–4 modules shipped; product is live on Render at head `k9l0m1n2o3p4`). M17b + ICE AI Categorisation Engine pending CC commit — migrations `l0m1n2o3p4q5` (FIFO/Standard) and `p9q0r1s2t3u4` (ICE).**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -222,8 +222,10 @@ ruff check app/
 | M19 | Tax Engine — transaction level (VAT/WHT/PAYE compute service, tax_returns, wht_certificates; migration `g5h6i7j8k9l0`) | `9ffd9e0` |
 | M15 | Payroll & HR (salary_structures, payroll_runs, payroll_lines, payslips, leave_types, leave_requests, leave_balances; migration `h6i7j8k9l0m1`) | `9ffd9e0` |
 | M18 | Fixed Assets (asset_categories, assets, asset_depreciation_schedules, asset_disposals; SL+RB depreciation; migration `i7j8k9l0m1n2`) | `9ffd9e0` |
-| M17 | Inventory & Warehouse (inventory_categories, inventory_locations, inventory_items, stock_movements; FIFO/WACC; COGS GL posting; migration `j8k9l0m1n2o3`) | `9ffd9e0` |
+| M17 | Inventory & Warehouse (inventory_categories, inventory_locations, inventory_items, stock_movements; WACC COGS GL posting; migration `j8k9l0m1n2o3`) | `9ffd9e0` |
 | M20 | AI Intelligence Layer (ai_insights table, anomaly detection, spending pattern analysis, cash flow forecast, GL auto-classify; extended /api/ai router; migration `k9l0m1n2o3p4`) | `9ffd9e0` |
+| M17b | Inventory FIFO + Standard Costing (inventory_cost_layers table; FIFO lot tracking with SELECT FOR UPDATE; Standard costing + PPV journals; GL pickers; /api/config/coa fix; migration `l0m1n2o3p4q5`) | pending CC commit |
+| ICE | AI Categorisation Engine (ice_tenant_config, ice_predictions, ice_feedback, ice_audit_log, vendor/employee behavior profiles; predict/feedback/config/analytics endpoints; AI Config page; IceSuggestionBadge component; migration `p9q0r1s2t3u4`) | pending CC commit |
 
 ---
 
@@ -251,7 +253,8 @@ ruff check app/
 | M16 | **Budget & Planning** ✅ | **L/C/E** | Shipped `9ffd9e0` — budget periods, lines, variance engine |
 | M19 | **Tax Engine — transaction level** ✅ | **L/C/E** | Shipped `9ffd9e0` — VAT/WHT/PAYE compute, tax returns |
 | M15 | **Payroll & HR** ✅ | **L/C/E** | Shipped `9ffd9e0` — salary structures, payroll runs, leave |
-| ICE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD exists: `docs/ICE_PRD.md` — NOT YET BUILT |
+| ICE | **AI Categorisation Engine** ✅ (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) | **All modes** | Pending CC commit — migration `p9q0r1s2t3u4` |
+| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD: NOT YET WRITTEN — NOT YET BUILT |
 
 #### TIER 4 — Long-term / Specialist — ✅ ALL SHIPPED (except noted)
 
@@ -259,6 +262,8 @@ ruff check app/
 |---|---|---|---|
 | M18 | **Fixed Assets** ✅ | **L/C/E** | Shipped `9ffd9e0` — asset register, SL+RB depreciation, disposals |
 | M17 | **Inventory & Warehouse** ✅ | **L/C/E** | Shipped `9ffd9e0` — items, locations, movements, WACC COGS |
+| M17b | **Inventory FIFO + Standard Costing** ⏳ | **L/C/E** | Pending CC commit — FIFO lot tracking, Standard+PPV, GL pickers (`l0m1n2o3p4q5`) |
+| ICE | **AI Categorisation Engine** ⏳ | **All modes** | Pending CC commit — GL prediction, confidence scoring, feedback loop (`p9q0r1s2t3u4`) |
 | M20 | **AI Intelligence Layer** ✅ | **All modes** | Shipped `9ffd9e0` — anomaly detection, patterns, cash forecast |
 | Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | — | Before scale — NOT YET BUILT |
 | FX | **Currencies & FX dedicated tables decision** (JSONB vs. tenant_currencies/tenant_fx_rates) | — | Revisit when BDC register volume or reporting complexity demands it — NOT YET BUILT |
@@ -271,7 +276,8 @@ Read the corresponding PRD before building any module:
 |---|---|
 | Authentication & User Management | `docs/AUTH_USER_MANAGEMENT_PRD.md` |
 | Tenant Admin Portal | `docs/TENANT_ADMIN_PORTAL_PRD.md` |
-| Inter-Company Eliminations (ICE) | `docs/ICE_PRD.md` |
+| AI Categorisation Engine (ICE) | `docs/ICE_PRD.md` |
+| Inter-Company Eliminations (IxE) | `docs/IxE_PRD.md` |
 | Supporting Documents (M6) | `docs/M6 Supporting Documents.md` |
 | Accounts Payable | *(rewrite PDF → markdown when building this module)* |
 | Accounts Receivable | *(rewrite PDF → markdown when building this module)* |

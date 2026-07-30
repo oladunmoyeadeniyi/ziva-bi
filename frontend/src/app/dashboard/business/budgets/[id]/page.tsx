@@ -16,7 +16,7 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 
-interface GlAccount { id: string; account_code: string; account_name: string; }
+interface GlAccount { id: string; gl_number: string; gl_name: string; }
 
 interface BudgetLine {
   id: string;
@@ -71,7 +71,7 @@ export default function BudgetDetailPage() {
     try {
       const [pData, glData] = await Promise.all([
         apiFetch<BudgetPeriod>(`/api/budgets/${id}`),
-        apiFetch<{ accounts?: GlAccount[] } | GlAccount[]>("/api/coa?limit=500"),
+        apiFetch<{ accounts?: GlAccount[] } | GlAccount[]>("/api/config/coa?limit=500"),
       ]);
       setPeriod(pData);
       setGlAccounts(Array.isArray(glData) ? glData : (glData.accounts ?? []));
@@ -213,7 +213,7 @@ export default function BudgetDetailPage() {
                 >
                   <option value="">— Select GL —</option>
                   {glAccounts.map((g) => (
-                    <option key={g.id} value={g.id}>{g.account_code} — {g.account_name}</option>
+                    <option key={g.id} value={g.id}>{g.gl_number} — {g.gl_name}</option>
                   ))}
                 </select>
               </div>

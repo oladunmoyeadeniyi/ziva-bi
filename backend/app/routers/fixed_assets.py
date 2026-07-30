@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_module
 from app.models.auth import UserTenant
 from app.models.fixed_assets import Asset, AssetCategory, AssetDepreciationSchedule, AssetDisposal
 from app.schemas.fixed_assets import (
@@ -40,7 +40,11 @@ from app.schemas.fixed_assets import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/assets", tags=["Fixed Assets"])
+router = APIRouter(
+    prefix="/api/assets",
+    tags=["Fixed Assets"],
+    dependencies=[Depends(require_module("fixed_assets"))],
+)
 
 
 def _tenant_id(user: UserTenant) -> uuid.UUID:

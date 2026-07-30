@@ -7,12 +7,20 @@ and returns a lightweight CurrentUser object — no database query, just token
 decoding. For endpoints that need the full User ORM record, compose this
 dependency with a DB lookup.
 
-Usage in a router:
-    from app.middleware.auth import require_auth, CurrentUser
+Also provides `require_module(module_key)` — a router-level dependency factory
+that enforces module licensing/activation for the current tenant. Add it to a
+router's `dependencies` list to gate ALL endpoints in that router:
 
-    @router.get("/example")
-    async def example(current_user: CurrentUser = Depends(require_auth)):
-        return {"user_id": str(current_user.user_id)}
+    from app.middleware.auth import require_auth, require_module, CurrentUser
+
+    router = APIRouter(
+        prefix="/api/ar",
+        tags=["Accounts Receivable"],
+        dependencies=[Depends(require_module("ar"))],
+    )
+
+Super admins and individual accounts (tenant_id=None) are always exempt.
+The check requires both is_active=True AND is_licensed=True on TenantModule.
 """
 
 import uuid
@@ -21,8 +29,11 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.security import decode_access_token
+from app.database import get_db
 
 _bearer = HTTPBearer()
 
@@ -150,3 +161,64 @@ async def require_auth(
         is_user_impersonation=payload.get("is_user_impersonation", False),
         impersonation_session_id=uuid.UUID(payload["impersonation_session_id"]) if payload.get("impersonation_session_id") else None,
     )
+
+
+# ── Module licensing gate ─────────────────────────────────────────────────────
+
+def require_module(module_key: str):
+    """
+    FastAPI dependency factory — enforces module licensing + activation.
+
+    Returns a dependency function that raises HTTP 403 when the current tenant
+    does not have the given module both licensed (is_licensed=True) AND active
+    (is_active=True) in the tenant_modules table.
+
+    Exemptions (always allowed through):
+      - Super admins (is_super_admin=True) — SA impersonation / implementation support
+      - Individual accounts (tenant_id=None) — no module system applies
+
+    Usage (router-level — gates ALL endpoints in the router):
+
+        from fastapi import Depends
+        from app.middleware.auth import require_module
+
+        router = APIRouter(
+            prefix="/api/ar",
+            tags=["Accounts Receivable"],
+            dependencies=[Depends(require_module("ar"))],
+        )
+
+    Parameters
+    ----------
+    module_key : str
+        One of the keys in MODULE_CATALOGUE (e.g. "ar", "ap", "payroll").
+    """
+    async def _check(
+        current_user: CurrentUser = Depends(require_auth),
+        db: AsyncSession = Depends(get_db),
+    ) -> None:
+        # Super admins bypass all module checks (implementation / support access)
+        if current_user.is_super_admin:
+            return
+        # Individual accounts (tenant_id=None) have no module system
+        if current_user.tenant_id is None:
+            return
+        from app.models.setup import TenantModule
+        result = await db.execute(
+            select(TenantModule).where(
+                TenantModule.tenant_id == current_user.tenant_id,
+                TenantModule.module_key == module_key,
+                TenantModule.is_active.is_(True),
+                TenantModule.is_licensed.is_(True),
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This module is not active for your account. "
+                    "Contact your administrator to enable it."
+                ),
+            )
+
+    return _check
