@@ -102,6 +102,24 @@ class Settings(BaseSettings):
     # is configured and DNS-verified (Phase 3+ / custom domain cutover).
     cookie_domain: str | None = None
 
+    # ── WebAuthn (Phase 3) ────────────────────────────────────────────────────
+    # rpId must be a registrable-domain suffix of the actual frontend origin.
+    # Default is "localhost" (works for local dev without any config).
+    # Set WEBAUTHN_RP_ID in Render to match the actual serving domain:
+    #   today  → "ziva-bi-frontend.onrender.com"  (Render *.onrender.com domain)
+    #   future → "zivabi.com"  (once custom domain is DNS-verified and live)
+    # Do NOT set this to "zivabi.com" while the frontend is on onrender.com —
+    # the browser rejects rpIds that don't suffix-match the actual origin.
+    webauthn_rp_id: str = "localhost"
+
+    # ── Push / VAPID (Phase 3) ────────────────────────────────────────────────
+    # Generate keypair once: from pywebpush import Vapid; Vapid().generate_keys()
+    # Store in Render dashboard env vars (never commit to repo).
+    # If VAPID_PRIVATE_KEY is blank, push sends are silently skipped (safe for dev).
+    vapid_private_key: str = ""    # base64url-encoded VAPID private key
+    vapid_public_key: str = ""     # base64url-encoded VAPID public key (also in frontend)
+    vapid_mailto: str = ""         # e.g. "mailto:admin@zivabi.com"
+
     # ── Platform owner ────────────────────────────────────────────────────────
     # UUID of the Ziva BI platform owner. When set, this user's impersonation
     # sessions in live environments are unrestricted (no sensitive field masking).
