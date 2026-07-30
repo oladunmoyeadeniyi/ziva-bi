@@ -87,6 +87,21 @@ class Settings(BaseSettings):
     app_name: str = "ZivaBI"
     debug: bool = False
 
+    # ── Environment ───────────────────────────────────────────────────────────
+    # Controls env-sensitive behaviour: httpOnly cookie Secure attr,
+    # WebAuthn RP ID, etc. Set ENVIRONMENT=production in the Render dashboard.
+    # Default: "development" so local dev works with no extra config.
+    environment: str = "development"
+
+    # ── Cookie domain ─────────────────────────────────────────────────────────
+    # Domain attribute for the httpOnly refresh-token cookie (ziva_rt).
+    # Leave unset (None) until a custom domain is live in DNS — the cookie
+    # becomes host-only for the actual serving origin, which works correctly
+    # on Render's *.onrender.com domain.
+    # Set COOKIE_DOMAIN=.yourdomain.com in Render once the custom domain
+    # is configured and DNS-verified (Phase 3+ / custom domain cutover).
+    cookie_domain: str | None = None
+
     # ── Platform owner ────────────────────────────────────────────────────────
     # UUID of the Ziva BI platform owner. When set, this user's impersonation
     # sessions in live environments are unrestricted (no sensitive field masking).

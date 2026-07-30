@@ -96,15 +96,24 @@ class LoginRequest(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    """Refresh token rotation request."""
+    """Refresh token rotation request.
 
-    refresh_token: str
+    Phase 2 (httpOnly cookie migration): refresh_token is optional in the
+    request body. If omitted, the backend reads it from the httpOnly cookie
+    ``ziva_rt`` sent automatically by the browser. Passing it in the body is
+    still accepted for backward compatibility during the transition period.
+    """
+
+    refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
-    """Logout request — revokes the provided refresh token."""
+    """Logout request — revokes the provided refresh token.
 
-    refresh_token: str
+    Phase 2: refresh_token is optional; cookie ``ziva_rt`` is preferred.
+    """
+
+    refresh_token: str | None = None
 
 
 # ── Responses ─────────────────────────────────────────────────────────────────

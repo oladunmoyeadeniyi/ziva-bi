@@ -2,20 +2,27 @@
  * ZivaBI API client.
  *
  * Thin wrapper around fetch that:
- *   - Prepends NEXT_PUBLIC_API_URL to every path
- *   - Injects the Authorization header when a token is provided
- *   - Normalises error responses into thrown Error objects
+ *   - Uses relative paths (e.g. /api/auth/login) so every request goes
+ *     through the Next.js server proxy defined in next.config.ts rewrites.
+ *     The proxy forwards to NEXT_PUBLIC_API_URL (the FastAPI backend).
+ *   - Injects the Authorization header when a token is provided.
+ *   - Normalises error responses into thrown Error objects.
  *
- * Token storage strategy (MVP):
+ * Token storage strategy (Phase 2 — httpOnly cookie migration):
  *   - Access token:  React state (memory only — clears on page refresh)
- *   - Refresh token: localStorage — persists across refreshes
+ *   - Refresh token: httpOnly cookie ``ziva_rt`` set by FastAPI on login /
+ *     signup / token rotation. The cookie is invisible to JavaScript and is
+ *     sent automatically by the browser on all same-origin requests to
+ *     /api/auth/*. No manual cookie handling is required here.
  *
- * Security note: storing the refresh token in localStorage is a pragmatic
- * choice for development. Before production, migrate to httpOnly cookies via
- * a Next.js API route proxy so the token is never accessible to JavaScript.
+ * Routing note: using relative paths means all fetches are same-origin from
+ * the browser's perspective. Next.js rewrites (next.config.ts) proxy
+ * /api/:path* → NEXT_PUBLIC_API_URL/api/:path* server-side. This lets the
+ * browser send the httpOnly cookie on auth calls without needing
+ * credentials:'include' or CORS preflight gymnastics.
  */
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = ""; // Relative paths — routed through Next.js server proxy
 
 export interface ApiError {
   detail: string | { msg: string; loc: string[] }[];

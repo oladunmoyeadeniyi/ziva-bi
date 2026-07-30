@@ -6,21 +6,21 @@
  * Provides authentication state and actions to every client component.
  * Wrap the app root with <AuthProvider> (done in app/layout.tsx).
  *
- * State:
- *   accessToken  — short-lived JWT kept in memory (lost on page refresh).
- *                  While impersonating a tenant, this becomes the impersonation
- *                  token so all existing pages "just work" without changes.
- *   user         — current user profile (also cached in localStorage).
- *   isLoading    — true while restoring session on mount.
- *   impersonation — active impersonation session, or null.
+ * Token strategy (Phase 2 — httpOnly cookie migration):
+ *   accessToken  — short-lived JWT kept in React state (memory only).
+ *   refreshToken — httpOnly cookie ``ziva_rt`` set by FastAPI on login/signup/
+ *                  refresh. Invisible to JavaScript; sent automatically by the
+ *                  browser on same-origin /api/auth/* requests. No longer stored
+ *                  in localStorage. Existing localStorage tokens are migrated to
+ *                  the cookie path on the user's next page load (one-time fallback).
+ *   user profile — cached in localStorage (non-sensitive).
  *
  * Impersonation (M9.3b):
  *   - enterTenant() calls /enter, stores the impersonation token in memory +
  *     sessionStorage (tab-scoped, transient), and overrides accessToken.
  *   - exitImpersonation() restores accessToken to the base super-admin token.
- *   - The super admin's refresh token in localStorage is NEVER touched.
  *   - On page refresh while impersonating: base session is restored via the
- *     localStorage refresh token, then sessionStorage impersonation is rehydrated.
+ *     httpOnly cookie, then sessionStorage impersonation is rehydrated.
  */
 
 import React, {
@@ -187,7 +187,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const saveSession = (data: AuthResponse) => {
     _setAccessToken(data.access_token);
-    localStorage.setItem(REFRESH_KEY, data.refresh_token);
+    // Phase 2: refresh token is now an httpOnly cookie set by the backend.
+    // Stop writing it to localStorage. Remove any legacy stored token so
+    // existing users are migrated to the cookie path on their next refresh.
+    localStorage.removeItem(REFRESH_KEY);
     if (data.user) {
       setUser(data.user);
       localStorage.setItem(USER_KEY, JSON.stringify(data.user));
@@ -210,13 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const restore = async () => {
-      const storedRefresh = localStorage.getItem(REFRESH_KEY);
       const storedUser = localStorage.getItem(USER_KEY);
-
-      if (!storedRefresh) {
-        setIsLoading(false);
-        return;
-      }
 
       if (storedUser) {
         try {
@@ -227,12 +224,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        // Phase 2: refresh token lives in an httpOnly cookie (ziva_rt) sent
+        // automatically by the browser on same-origin /api/auth/* requests.
+        // For existing users who still have a token in localStorage
+        // (pre-Phase-2 sessions), pass it in the body as a one-time fallback.
+        // saveSession() will remove it from localStorage after a successful
+        // rotation, so from that point on only the cookie path is used.
+        const legacyToken = localStorage.getItem(REFRESH_KEY);
+        const body: Record<string, string> = legacyToken
+          ? { refresh_token: legacyToken }
+          : {};
+
         const data = await apiFetch<AuthResponse>("/api/auth/refresh-token", {
           method: "POST",
-          body: JSON.stringify({ refresh_token: storedRefresh }),
+          body,
         });
-        _setAccessToken(data.access_token);
-        localStorage.setItem(REFRESH_KEY, data.refresh_token);
+        // saveSession removes REFRESH_KEY and sets the access token in memory.
+        saveSession(data);
 
         // Rehydrate impersonation from sessionStorage (survives page refresh).
         const storedImp = sessionStorage.getItem(IMPERSONATION_KEY);
@@ -311,13 +319,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [_accessToken]);
 
   const logout = useCallback(async () => {
-    const storedRefresh = localStorage.getItem(REFRESH_KEY);
     try {
-      if (storedRefresh && _accessToken) {
+      if (_accessToken) {
+        // Phase 2: refresh token is in the httpOnly cookie (ziva_rt) —
+        // sent automatically by the browser. No need to read it from localStorage.
+        // The backend clears the cookie via Set-Cookie: Max-Age=0 in the response.
         await apiFetch("/api/auth/logout", {
           method: "POST",
           token: _accessToken,
-          body: JSON.stringify({ refresh_token: storedRefresh }),
+          body: {},
         });
       }
     } catch {

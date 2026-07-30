@@ -22,7 +22,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +67,51 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 LOCKOUT_THRESHOLD = 5    # failed attempts before lockout
 LOCKOUT_MINUTES = 15     # lockout duration
+
+# ── httpOnly refresh-token cookie ─────────────────────────────────────────────
+# Phase 2 (PWA architecture): the refresh token is stored in an httpOnly cookie
+# so it is invisible to JavaScript (XSS-safe). The cookie is set on every
+# successful login / signup / token rotation and cleared on logout.
+#
+# Cookie attributes are environment-aware:
+#   production  — Domain=.zivabi.com; Secure; SameSite=Lax
+#   development — no Domain; no Secure; SameSite=Lax
+#
+# Transition period: the JSON body still includes ``refresh_token`` for backward
+# compatibility. Once all clients are updated to use the cookie, drop the field.
+
+REFRESH_COOKIE_NAME = "ziva_rt"
+
+
+def _set_refresh_cookie(response: Response, raw_token: str) -> None:
+    """Attach the httpOnly refresh-token cookie to ``response``.
+
+    Domain comes from ``settings.cookie_domain`` (COOKIE_DOMAIN env var),
+    which defaults to None (host-only cookie). Leave it unset until a custom
+    domain is DNS-verified and live; host-only works correctly on
+    *.onrender.com or any single-origin deployment. Set COOKIE_DOMAIN once
+    the custom domain cutover happens (Phase 3+ / WebAuthn).
+    """
+    is_prod = settings.environment == "production"
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=raw_token,
+        httponly=True,
+        secure=is_prod,
+        samesite="lax",
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        domain=settings.cookie_domain,   # None = host-only; set via COOKIE_DOMAIN env var
+        path="/api/auth",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    """Remove the httpOnly refresh-token cookie on logout."""
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path="/api/auth",
+        domain=settings.cookie_domain,   # must match _set_refresh_cookie exactly
+    )
 
 # Country → functional currency map (ISO 4217)
 COUNTRY_CURRENCY_MAP: dict[str, str] = {
@@ -276,6 +321,7 @@ async def _log_event(
 async def signup(
     data: SignupRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     """
@@ -419,6 +465,7 @@ async def signup(
         metadata={"account_type": data.account_type},
     )
 
+    _set_refresh_cookie(response, raw_token)
     return AuthResponse(
         access_token=access_token,
         refresh_token=raw_token,
@@ -438,6 +485,7 @@ async def signup(
 async def login(
     data: LoginRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     """
@@ -550,9 +598,10 @@ async def login(
 
     await _log_event("login.success", db, request, user=user, tenant_id=user_tenant.tenant_id)
 
+    _set_refresh_cookie(response, raw_token)
     return AuthResponse(
         access_token=access_token,
-        refresh_token=raw_token,
+        refresh_token=raw_token,  # kept during transition period; cookie is the primary transport
         must_change_password=getattr(user_tenant, "must_change_password", False),
         user=UserResponse.from_orm_pair(
             user, user_tenant.tenant_id,
@@ -569,16 +618,26 @@ async def login(
 async def refresh_token(
     data: RefreshTokenRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    cookie_token: str | None = Cookie(None, alias=REFRESH_COOKIE_NAME),
 ) -> AuthResponse:
     """
     Rotate the refresh token and issue a new access token.
+
+    Phase 2: accepts the token from the httpOnly cookie ``ziva_rt`` OR from
+    the request body (backward compat). Cookie takes precedence. Raises 401
+    if neither is present.
 
     The old refresh token is marked as used and linked to the new one.
     If a token that has already been used is presented (replay attack),
     all sessions for that user_tenant are revoked.
     """
-    token_hash = hash_refresh_token(data.refresh_token)
+    # Resolve token: cookie first (Phase 2 path), body as fallback (transition).
+    raw_token_in = cookie_token or data.refresh_token
+    if not raw_token_in:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token required.")
+    token_hash = hash_refresh_token(raw_token_in)
 
     rt_result = await db.execute(
         select(RefreshToken).where(RefreshToken.token_hash == token_hash)
@@ -668,7 +727,8 @@ async def refresh_token(
     )
     await _log_event("token.refreshed", db, request, user=user, tenant_id=user_tenant.tenant_id)
 
-    return AuthResponse(access_token=access_token, refresh_token=raw_new)
+    _set_refresh_cookie(response, raw_new)
+    return AuthResponse(access_token=access_token, refresh_token=raw_new)  # body kept during transition
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────
@@ -677,15 +737,23 @@ async def refresh_token(
 async def logout(
     data: LogoutRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    cookie_token: str | None = Cookie(None, alias=REFRESH_COOKIE_NAME),
 ) -> MessageResponse:
     """
     Revoke the refresh token and mark the session as ended.
 
-    Silent success even if the token is already invalid — prevents
-    information leakage about token validity.
+    Phase 2: reads token from httpOnly cookie ``ziva_rt`` OR request body.
+    Always clears the cookie. Silent success even if the token is already
+    invalid — prevents information leakage about token validity.
     """
-    token_hash = hash_refresh_token(data.refresh_token)
+    raw_token_in = cookie_token or data.refresh_token
+    _clear_refresh_cookie(response)
+    if not raw_token_in:
+        # Nothing to revoke — cookie already gone, respond OK.
+        return MessageResponse(message="Logged out successfully.")
+    token_hash = hash_refresh_token(raw_token_in)
 
     rt_result = await db.execute(
         select(RefreshToken).where(RefreshToken.token_hash == token_hash)
