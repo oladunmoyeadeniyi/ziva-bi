@@ -65,12 +65,18 @@ The user cannot stay at the keyboard during a review. CC must:
 ```
 ziva-bi/                       ← monorepo root (Turborepo workspace)
 ├── apps/
-│   └── ziva-bi/               ← Next.js 15 (App Router) + TailwindCSS + ShadCN UI
-│       ├── src/app/           ← pages and layouts (App Router)
-│       ├── src/components/    ← shared UI components
-│       ├── src/lib/           ← utility functions
-│       ├── Dockerfile         ← multi-stage build for Render
-│       └── .env.example       ← required env vars for local dev
+│   ├── ziva-bi/               ← Next.js 15 (App Router) + TailwindCSS + ShadCN UI (the PRAD platform)
+│   │   ├── src/app/           ← pages and layouts (App Router)
+│   │   ├── src/components/    ← shared UI components
+│   │   ├── src/lib/           ← utility functions
+│   │   ├── Dockerfile         ← multi-stage build for Render
+│   │   └── .env.example       ← required env vars for local dev
+│   └── prad-website/          ← PRAD marketing website (Next.js 15 standalone, Tailwind v4, Framer Motion)
+│       ├── src/app/           ← pages (App Router — homepage + product/pricing/about/contact/blog/legal)
+│       ├── src/components/    ← layout (Nav, Footer) + 11 homepage section components
+│       ├── src/lib/           ← site.config.ts — single source of truth for pricing/FAQ/copy
+│       ├── public/            ← static assets (.gitkeep placeholder until real assets added)
+│       └── Dockerfile         ← multi-stage build for Render (same pattern as ziva-bi)
 ├── packages/                  ← shared packages (stubs — code extracted in Phase 5)
 │   ├── api-client/            ← @ziva/api-client
 │   ├── ui/                    ← @ziva/ui
@@ -157,9 +163,9 @@ ruff check app/
 
 ## Milestone Status
 
-> **Authoritative as of 2026-07-29.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
+> **Authoritative as of 2026-07-31.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: ~68% of full product vision. 100% of MVP-for-first-customer (all TIER 0 + TIER 1 + TIER 2–4 modules shipped; product is live on Render at head `k9l0m1n2o3p4`). M17b + ICE AI Categorisation Engine pending CC commit — migrations `l0m1n2o3p4q5` (FIFO/Standard) and `p9q0r1s2t3u4` (ICE).**
+> **Overall completion: ~70% of full product vision. 100% of MVP-for-first-customer (all TIER 0 + TIER 1 + TIER 2–4 modules shipped; product is live on Render). Phase 2 (httpOnly cookies `0e07df6`) + Phase 3 (WebAuthn + Web Push `b2c5e9a`) + PRAD marketing website (`8961398`) shipped. M17b + ICE pending CC commit — migrations `l0m1n2o3p4q5` (FIFO/Standard) and `p9q0r1s2t3u4` (ICE).**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -234,6 +240,9 @@ ruff check app/
 | M20 | AI Intelligence Layer (ai_insights table, anomaly detection, spending pattern analysis, cash flow forecast, GL auto-classify; extended /api/ai router; migration `k9l0m1n2o3p4`) | `9ffd9e0` |
 | M17b | Inventory FIFO + Standard Costing (inventory_cost_layers table; FIFO lot tracking with SELECT FOR UPDATE; Standard costing + PPV journals; GL pickers; /api/config/coa fix; migration `l0m1n2o3p4q5`) | pending CC commit |
 | ICE | AI Categorisation Engine (ice_tenant_config, ice_predictions, ice_feedback, ice_audit_log, vendor/employee behavior profiles; predict/feedback/config/analytics endpoints; AI Config page; IceSuggestionBadge component; migration `p9q0r1s2t3u4`) | pending CC commit |
+| Phase 2 | Security — httpOnly cookie migration: refresh token moved from localStorage to httpOnly `refresh_token` cookie; `AuthContext` stops reading/writing localStorage for refresh; `/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout` updated | `0e07df6` |
+| Phase 3 | Security — WebAuthn passkey + Web Push: `user_credentials` + `push_subscriptions` tables (migration `q0r1s2t3u4v5`); passkey register/authenticate endpoints; push subscription + send endpoints; VAPID config; `py-webauthn` + `pywebpush` dependencies | `b2c5e9a` |
+| PRAD-site | PRAD marketing website — `apps/prad-website/` added to monorepo; Next.js 15 standalone Docker; Tailwind v4; Framer Motion; 11 homepage sections; `site.config.ts` single source of truth for pricing/FAQ/copy; deployed on Render | `8961398` |
 
 ---
 

@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-29 — M17b + ICE AI Categorisation Engine pending CC commit (migrations `l0m1n2o3p4q5`, `p9q0r1s2t3u4`). Last committed head: `k9l0m1n2o3p4` (M20 AI Intelligence). Product functionally complete; first customer ready. Open items: Inter-Company Eliminations (no PRD yet), Performance & Security Audit, FX dedicated-tables decision.
+> Last updated: 2026-07-31 — Phase 2 (httpOnly cookies `0e07df6`), Phase 3 (WebAuthn + Web Push `b2c5e9a`), and PRAD marketing website (`8961398`) shipped. M17b + ICE pending CC commit (migrations `l0m1n2o3p4q5`, `p9q0r1s2t3u4`). Last committed head: `8961398` (PRAD website). Product functionally complete; first customer ready. Open items: Inter-Company Eliminations (no PRD yet), Performance & Security Audit, FX dedicated-tables decision.
 
 ---
 
@@ -1310,6 +1310,69 @@ Persistent AI insight system with anomaly detection, spending pattern analysis, 
 **Frontend (2 new pages):**
 - `/dashboard/business/ai-insights/` — insight browser with type/status filter chips, review/dismiss actions per card, link to run anomaly scan. Gated on `postingMode === 'full_erp'` (not a licensed module — included for all Full ERP tenants).
 - `/dashboard/business/ai-insights/anomalies/` — anomaly scan trigger with lookback selector (30/60/90/180/365 days); shows findings_created count and link to insights list.
+
+---
+
+### Phase 2 — httpOnly Cookie Migration (2026-07-31, commit `0e07df6`)
+
+Refresh token security hardening. The refresh token was previously stored in `localStorage` on the frontend, which is readable by any JavaScript on the page. Moved it to an httpOnly `SameSite=Lax` cookie set by the backend — the browser stores and sends it automatically, but JavaScript cannot read it.
+
+**Backend changes:**
+- `/api/auth/login` — sets `Set-Cookie: ziva_rt=<token>; HttpOnly; SameSite=Lax; Path=/api/auth` in addition to returning the access token in the JSON body. (Cookie name is `ziva_rt`, defined as `REFRESH_COOKIE_NAME` in `routers/auth.py`; path covers all `/api/auth` sub-routes.)
+- `/api/auth/refresh` — reads `refresh_token` from the cookie instead of the request body.
+- `/api/auth/logout` — clears the cookie by setting `Max-Age=0`.
+
+**Frontend changes:**
+- `AuthContext` — removed all `localStorage.getItem/setItem/removeItem` calls for the refresh token. Token refresh now calls `/api/auth/refresh` with `credentials: "include"` and relies on the cookie being sent automatically. The access token (short-lived, 30 min) is still held in React state only — never persisted.
+
+No migration required — no DB schema changes.
+
+---
+
+### Phase 3 — WebAuthn Passkey + Web Push (2026-07-31, commit `b2c5e9a`)
+
+Passkey (FIDO2/WebAuthn) registration and authentication, plus Web Push notification subscriptions. Both features are additive — existing JWT auth remains unchanged; passkeys are an additional login method.
+
+**New migration** (`q0r1s2t3u4v5`) — two tables:
+- `user_credentials` — stores registered passkey public keys per user (`credential_id`, `public_key`, `sign_count`, `aaguid`, `device_name`, `last_used_at`).
+- `push_subscriptions` — stores browser push subscription objects per user (`endpoint`, `p256dh_key`, `auth_key`, `user_agent`, `is_active`).
+
+**Backend dependencies added** (`requirements.txt`): `py-webauthn`, `pywebpush`.
+
+**New config vars** (`app/config.py`): `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGIN`, `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_MAILTO`.
+
+**New routers:**
+- `routers/webauthn.py` — `POST /api/auth/webauthn/register/begin`, `POST /api/auth/webauthn/register/complete`, `POST /api/auth/webauthn/authenticate/begin`, `POST /api/auth/webauthn/authenticate/complete`, `GET /api/auth/webauthn/credentials`, `DELETE /api/auth/webauthn/credentials/{id}`.
+- `routers/push.py` — `GET /api/push/vapid-public-key`, `POST /api/push/subscribe`, `DELETE /api/push/subscribe`. Push delivery is handled by `services/push_service.py` → `send_push()`, an internal Python function called fire-and-forget from other routers — **not an HTTP endpoint**. It is a silent no-op when VAPID vars are not configured.
+
+**Security invariant (permanent):** VAPID keys must NEVER be committed to the repository. They live in Render dashboard env vars only. `docs/VAPID.json` and `docs/VAPID KEY.png` (which previously contained a real private key in plaintext) were deleted from the working tree before this commit.
+
+---
+
+### PRAD Marketing Website (2026-07-31, commit `8961398`)
+
+New `apps/prad-website/` app added to the Turborepo monorepo — the public-facing marketing site for the PRAD brand at `prad.finance`. Deployed as a third Docker service on Render (alongside `ziva-bi-backend` and `ziva-bi-frontend`).
+
+**Brand:** PRAD = Precision-driven Reporting, Analytics & Decision-making. Navy `#0A0F1E`, indigo `#4F46E5`, amber `#F59E0B`.
+
+**Stack:** Next.js 15 (App Router) + Tailwind v4 (`@theme` block, no JS config) + Framer Motion (`useInView` scroll animations, `AnimatePresence` accordion). Output: `standalone`. `outputFileTracingRoot: path.join(__dirname)` is set in `next.config.ts` — required to prevent Next.js from nesting `server.js` under `apps/prad-website/` inside the standalone output when no `package-lock.json` is committed.
+
+**Single source of truth:** `src/lib/site.config.ts` — all pricing (`PRICING_PLANS`), FAQ (`FAQ_ITEMS`), app family descriptions (`APP_FAMILY`), trust signals, and site-wide copy. `price: null` renders "Contact us for pricing"; `price: "₦150,000"` renders the price. No component files need editing for copy or pricing changes.
+
+**CTA flow:** "Request a demo" / "Join the waitlist" / "Start free trial" → `SITE_CONFIG.APP_URL/signup` → existing `POST /api/auth/signup` with `account_type="business"` → creates `lifecycle_status="trial"` tenant → appears in SA portal Trials & Signups queue. No new backend endpoints needed.
+
+**Homepage sections (11):** Hero (animated grid + dashboard mockup) → Pain → Solution → Features → App Family → How It Works → Founder → Trust Signals → Pricing Preview → FAQ → Final CTA.
+
+**Inner pages:** `/product`, `/pricing`, `/about`, `/contact`, `/blog`, `/legal` — stubs ready for content.
+
+**render.yaml:** new `prad-website` Docker web service, `rootDir: apps/prad-website`, no env vars (fully static site).
+
+**Post-ship to-do:**
+- Add `prad.finance` as custom domain in Render dashboard once acquired.
+- Update `SITE_CONFIG.APP_URL` to `"https://app.prad.finance"` in `site.config.ts` after DNS cutover.
+- Replace `FounderSection.tsx` photo placeholder with `/public/images/adeniyi.webp`.
+- Replace `FeaturesSection.tsx` CSS mockups with real product screenshots.
+- Commit `apps/prad-website/package-lock.json` for deterministic Render builds.
 
 ---
 
