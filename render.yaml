@@ -83,6 +83,22 @@ services:
       - key: NEXT_PUBLIC_API_URL
         value: https://ziva-bi-backend.onrender.com
 
+  - type: web
+    name: prad-website
+    runtime: docker
+    rootDir: apps/prad-website
+    region: oregon
+    # Marketing website for PRAD (prad.finance). Static Next.js app — no backend calls.
+    # Built via apps/prad-website/Dockerfile (same multi-stage pattern as ziva-bi-frontend).
+    # All site copy, pricing, and FAQ live in apps/prad-website/src/lib/site.config.ts.
+    #
+    # To add this domain once acquired:
+    #   Render dashboard → prad-website service → Custom Domains → add prad.finance
+    #   Update SITE_CONFIG.APP_URL in site.config.ts to "https://app.prad.finance"
+    plan: starter
+    # No env vars required — this website is fully static.
+    # Add NEXT_PUBLIC_POSTHOG_KEY here if PostHog analytics is enabled.
+
 databases:
   - name: ziva-bi-db
     databaseName: ziva_bi

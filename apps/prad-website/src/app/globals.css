@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* ── PRAD Design Tokens ──────────────────────────────────────────────────────
+ * Tailwind v4 @theme block: all custom colours and values become Tailwind
+ * utilities automatically (e.g. bg-prad-navy, text-prad-indigo, etc.)
+ * ──────────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Core brand colours */
+  --color-prad-navy:      #0A0F1E;
+  --color-prad-navy-deep: #060912;
+  --color-prad-indigo:    #4F46E5;
+  --color-prad-indigo-light: #6366F1;
+  --color-prad-amber:     #F59E0B;
+  --color-prad-text-dark: #1A1A2E;
+
+  /* Neutral greys */
+  --color-prad-grey-100:  #F3F4F6;
+  --color-prad-grey-200:  #E5E7EB;
+  --color-prad-grey-400:  #9CA3AF;
+  --color-prad-grey-600:  #6B7280;
+  --color-prad-grey-800:  #1F2937;
+
+  /* Font family */
+  --font-family-display: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-family-body:    "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Border radius */
+  --radius-card: 12px;
+  --radius-btn:  8px;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-family-body);
+  color: var(--color-prad-text-dark);
+  background: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Animated grid background (hero) ────────────────────────────────────────── */
+.prad-grid-bg {
+  background-image:
+    linear-gradient(rgba(79, 70, 229, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79, 70, 229, 0.06) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: grid-pan 20s linear infinite;
+}
+
+@keyframes grid-pan {
+  0%   { background-position: 0 0; }
+  100% { background-position: 60px 60px; }
+}
+
+/* ── Floating animation (hero mockup) ───────────────────────────────────────── */
+.prad-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-12px); }
+}
+
+/* ── Glassmorphism card ──────────────────────────────────────────────────────── */
+.prad-glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ── Gradient text ───────────────────────────────────────────────────────────── */
+.prad-gradient-text {
+  background: linear-gradient(135deg, #4F46E5 0%, #F59E0B 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Indigo glow (behind hero mockup) ──────────────────────────────────────── */
+.prad-glow {
+  background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(79,70,229,0.35) 0%, transparent 70%);
+}
+
+/* ── Reduce motion ───────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .prad-grid-bg { animation: none; }
+  .prad-float   { animation: none; }
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
