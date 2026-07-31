@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Reset-password page — ZivaBI.
+ * Reset-password page — PRAD.
  *
  * Loaded from the link in the password reset email:
  *   /auth/reset-password?token=<raw-token>

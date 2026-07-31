@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Dashboard root — ZivaBI.
+ * Dashboard root — PRAD.
  *
  * Dispatches authenticated users to the correct portal:
  *   super admin  → /platform

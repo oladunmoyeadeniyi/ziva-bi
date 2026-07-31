@@ -1,5 +1,5 @@
 """
-ZivaBI — AI Engine ORM models (M10+).
+PRAD — AI Engine ORM models (M10+).
 
 Defines the ai_predictions and ai_learning_overrides tables that form the
 audit and learning backbone for the AI Engine Module (AI_Engine_Module_PRD.md).

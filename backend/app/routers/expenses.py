@@ -1,5 +1,5 @@
 """
-ZivaBI — expense management router (Milestone 3).
+PRAD — expense management router (Milestone 3).
 
 All routes require authentication (require_auth dependency).
 All queries are scoped to the current user's tenant_id.

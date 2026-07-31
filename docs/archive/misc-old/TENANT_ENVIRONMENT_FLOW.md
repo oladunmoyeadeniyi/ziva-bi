@@ -1,4 +1,4 @@
-# Ziva BI — Tenant Environment Flow: Full Design History & Current State
+# PRAD — Tenant Environment Flow: Full Design History & Current State
 *Written June 28 2026. Share this in the new chat when discussing the tenant environment architecture.*
 
 ---

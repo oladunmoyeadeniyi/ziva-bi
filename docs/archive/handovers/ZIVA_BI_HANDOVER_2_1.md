@@ -37,9 +37,9 @@ claude
 
 ## 2. PROJECT OVERVIEW
 
-**Adeniyi Oladunmoye** — Chartered Accountant (ICAN 2019), Chief Accountant → Controller at Red Bull Nigeria Limited, Lagos. Non-technical founder of Ziva BI. Prior 2 years at Ernst & Young.
+**Adeniyi Oladunmoye** — Chartered Accountant (ICAN 2019), Chief Accountant → Controller at Red Bull Nigeria Limited, Lagos. Non-technical founder of PRAD. Prior 2 years at Ernst & Young.
 
-**Ziva BI** — enterprise multi-tenant SaaS finance automation platform competing with Sage X3, Oracle, Microsoft Dynamics. Multi-tenant, serves individual and business accounts from one codebase. Goal: sell as SaaS, fund early retirement, support UK relocation Q4 2026.
+**PRAD** — enterprise multi-tenant SaaS finance automation platform competing with Sage X3, Oracle, Microsoft Dynamics. Multi-tenant, serves individual and business accounts from one codebase. Goal: sell as SaaS, fund early retirement, support UK relocation Q4 2026.
 
 **Stack:** Next.js 15 · React · TailwindCSS · ShadCN UI · Python 3.14 · FastAPI · Alembic · PostgreSQL 17 · Supabase Storage (bucket: `documents`)
 
@@ -72,8 +72,8 @@ When a new tenant is created or signs up, **only a test/shadow environment** is 
 
 ### User impersonation (locked)
 - **Access**: clicking a user in the tenant user list OR employee list (People → Employees) in the Super Admin/Consultant portal opens that user's session — one click, visible "You are viewing as [Name]" banner + Exit button
-- **Ziva BI Super Admin owner (Adeniyi)**: full unrestricted access everywhere, both test and live, including sensitive financial data
-- **Ziva BI team (consultants/support)**: test = full transact; live = view-only, sensitive personal financial data hidden (salary, bank details, employee TIN, payroll)
+- **PRAD Super Admin owner (Adeniyi)**: full unrestricted access everywhere, both test and live, including sensitive financial data
+- **PRAD team (consultants/support)**: test = full transact; live = view-only, sensitive personal financial data hidden (salary, bank details, employee TIN, payroll)
 - **Impersonation = diagnostic only**: no support actions from within impersonated session
 - **Support actions** (password reset, unlock, ticket) done from Super Admin portal on user's profile — clean audit trail. Mirrors Intercom/Zendesk pattern.
 
@@ -273,10 +273,10 @@ Update docs/MASTER_CONTEXT.md and docs/PROJECT_STATE.md to reflect the current s
 - **Design not yet finalized — scope in a dedicated session before building**
 
 ### User impersonation — full detail (locked)
-- **Access method:** clicking a user in the tenant user list OR the employee list (People → Employees sidebar) in Super Admin / Ziva BI Admin / Consultant portal — one click opens that user's session
+- **Access method:** clicking a user in the tenant user list OR the employee list (People → Employees sidebar) in Super Admin / PRAD Admin / Consultant portal — one click opens that user's session
 - **Visible banner:** "You are viewing as [Name]" + Exit button — always shown during impersonation
-- **Ziva BI Super Admin owner (Adeniyi):** full unrestricted access in both test and live, including all sensitive financial data
-- **Ziva BI team members (consultants/support):**
+- **PRAD Super Admin owner (Adeniyi):** full unrestricted access in both test and live, including all sensitive financial data
+- **PRAD team members (consultants/support):**
   - Test environment: full transact access (submit, approve, post)
   - Live environment: view-only; sensitive personal financial data hidden (individual salary, personal bank details, employee TIN, payroll figures)
 - **Impersonation = diagnostic only.** No support actions from within an impersonated session

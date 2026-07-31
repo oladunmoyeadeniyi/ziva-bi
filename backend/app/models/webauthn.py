@@ -1,5 +1,5 @@
 """
-ZivaBI — WebAuthn credential and Push subscription ORM models.
+PRAD — WebAuthn credential and Push subscription ORM models.
 
 Tables:
     user_credentials    — passkey / biometric credential store; one row per
@@ -53,7 +53,7 @@ class UserCredential(Base):
                     against this value during authentication.
 
     sign_count      Monotonically increasing use counter maintained by the
-                    authenticator. ZivaBI checks that each authentication
+                    authenticator. PRAD checks that each authentication
                     presents a count strictly greater than the stored value.
                     A lower or equal count indicates a cloned credential and
                     triggers revocation of all active sessions.

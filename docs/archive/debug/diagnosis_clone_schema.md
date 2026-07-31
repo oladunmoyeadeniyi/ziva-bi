@@ -95,7 +95,7 @@ class Employee(Base):
 
 ### Critical: Employee does NOT link to `users`
 
-The `employees` table has **zero FK references to `users.id`**. An employee record (name, email, cost center, manager chain) is not linked to a Ziva BI login account. The `head_user_id` FK exists on `CostCenterConfig` (not on `Employee`). Employee master data can be cloned without any awareness of the `users` table.
+The `employees` table has **zero FK references to `users.id`**. An employee record (name, email, cost center, manager chain) is not linked to a PRAD login account. The `head_user_id` FK exists on `CostCenterConfig` (not on `Employee`). Employee master data can be cloned without any awareness of the `users` table.
 
 ### Unique constraints (from DB)
 
@@ -150,7 +150,7 @@ class CostCenterConfig(Base):
 ### head_user_id vs head_employee_id — purpose
 
 - **`head_employee_id`** → `employees.id`: the **employee master data record** of the cost center head (HR data).
-- **`head_user_id`** → `users.id`: the **Ziva BI login account** of the cost center head. This is used to grant the person approval-routing authority and portal access in their capacity as cost center head. `User` is a **global table** (not tenant-scoped), and the same `user_id` is valid in both the live tenant and the test shadow tenant. After `create_test_environment` mirrors `UserTenant` rows, both tenants share the same `user_id` values — so `head_user_id` can be copied verbatim during clone with no remapping.
+- **`head_user_id`** → `users.id`: the **PRAD login account** of the cost center head. This is used to grant the person approval-routing authority and portal access in their capacity as cost center head. `User` is a **global table** (not tenant-scoped), and the same `user_id` is valid in both the live tenant and the test shadow tenant. After `create_test_environment` mirrors `UserTenant` rows, both tenants share the same `user_id` values — so `head_user_id` can be copied verbatim during clone with no remapping.
 
 ### Unique constraint
 
@@ -214,7 +214,7 @@ Yes (all fields nullable except `cost_center_id`), but the preferred approach is
 
 ## 5. The `users` / `user_id` question
 
-**Employee has NO link to `users` whatsoever.** Employee master data is purely HR configuration (name, code, cost center, manager chain) and does not require a Ziva BI login account.
+**Employee has NO link to `users` whatsoever.** Employee master data is purely HR configuration (name, code, cost center, manager chain) and does not require a PRAD login account.
 
 **`create_test_environment` already mirrors all `UserTenant` rows** (lines 222–235 of `tenant.py`):
 ```python

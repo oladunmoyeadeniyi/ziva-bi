@@ -25,11 +25,11 @@ async function fetchAppName(): Promise<string> {
     const res = await fetch(`${API_URL}/api/app-config`, {
       next: { revalidate: 300 }, // 5 minutes
     });
-    if (!res.ok) return "Ziva BI";
+    if (!res.ok) return "PRAD";
     const data = await res.json();
-    return data.app_name ?? "Ziva BI";
+    return data.app_name ?? "PRAD";
   } catch {
-    return "Ziva BI";
+    return "PRAD";
   }
 }
 

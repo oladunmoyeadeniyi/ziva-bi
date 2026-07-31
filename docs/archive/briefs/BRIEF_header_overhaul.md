@@ -8,7 +8,7 @@ Read docs/ZIVA_BI_ROADMAP.md and docs/MASTER_CONTEXT.md first, then follow this 
 
 ## STEP 0 — Read before changing anything (mandatory)
 Read and report exact lines BEFORE editing:
-- `frontend/src/app/platform/layout.tsx` — platform header (lines ~46–73: "Ziva BI — Platform", email, Home, Sign out).
+- `frontend/src/app/platform/layout.tsx` — platform header (lines ~46–73: "PRAD — Platform", email, Home, Sign out).
 - `frontend/src/app/dashboard/business/layout.tsx` — business header (~272–335: ZivaBI label, user dropdown with full_name/companyName, Profile, Platform link, Sign out) + ImpersonationBanner (~76–118).
 - `frontend/src/contexts/AuthContext.tsx` — `user` fields (full_name, email, is_super_admin, role_tier), `impersonation`, `logout`, `exitImpersonation`.
 - The `Icon` component used in business layout.

@@ -35,7 +35,7 @@ All require super-admin (the JWT already carries `is_super_admin`).
 ### 1. Route + access guard
 - New area at `frontend/src/app/platform/` with its own minimal `layout.tsx` (NOT the business/tenant layout — no tenant sidebar).
 - Guard: if `!user.is_super_admin`, redirect to `/dashboard` (or show "Not authorized"). Only super admins see `/platform`.
-- The layout: simple header ("Ziva BI — Platform") + a logout/back control. Minimal.
+- The layout: simple header ("PRAD — Platform") + a logout/back control. Minimal.
 
 ### 2. Tenant list page — `/platform` (or `/platform/tenants`)
 - On mount, `GET /api/platform/tenants` (default live). 

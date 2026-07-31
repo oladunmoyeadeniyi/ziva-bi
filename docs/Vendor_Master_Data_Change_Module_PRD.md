@@ -1,6 +1,6 @@
 # Vendor Master Data Change Request Module — Product Requirements Document (PRD)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Vendor Master Data Change Request (critical & complementary to Vendor Onboarding)
 **Version:** 1.0
 **Document status:** Merged and converted from three source Word documents to Markdown

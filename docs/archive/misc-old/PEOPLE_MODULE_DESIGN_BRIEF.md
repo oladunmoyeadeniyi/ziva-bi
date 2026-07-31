@@ -3,14 +3,14 @@
 **Document type:** Design brief / pre-build consultation  
 **Scope:** Employees, Positions, Org Roles, Transfers, Role Hierarchy  
 **Status:** Proposed — requires sign-off before build  
-**Author:** Ziva BI Architecture Review  
+**Author:** PRAD Architecture Review  
 **Date:** 2026-07-06
 
 ---
 
 ## 1. The Core Problem with the Current Model
 
-Ziva BI currently uses a **person-based HR model**: an `Employee` row has a direct `cost_center_id` FK and an `approval_role_id` FK. This is simple but creates serious gaps:
+PRAD currently uses a **person-based HR model**: an `Employee` row has a direct `cost_center_id` FK and an `approval_role_id` FK. This is simple but creates serious gaps:
 
 | Gap | Consequence |
 |-----|------------|
@@ -174,7 +174,7 @@ Add `position_id FK → positions` to OrgRole (nullable — existing roles keep 
 - Effective date = a past date
 - **High risk** — affects reporting, GL, budget variances
 - Use cases: correcting a hire date error; backfill a missed transfer
-- Ziva BI approach:
+- PRAD approach:
   - Allow retrospective with **approval gate** (at least one admin must confirm)
   - Flag all transactions between the backdated date and today for **review** (not auto-recode)
   - Write audit log entry with `is_retrospective=true` and reason
@@ -381,7 +381,7 @@ Before building Phase 2, the following decisions need to be locked:
 
 The right architecture is clear: **position-based model**. Every major ERP converges here because it solves the right problem — the role/slot is the durable entity, not the person.
 
-The pragmatic path for Ziva BI:
+The pragmatic path for PRAD:
 
 1. **Fix now:** Template download bug (done), transfer effective dates, retrospective flag
 2. **Build next:** Positions table, position history, employee→position assignment

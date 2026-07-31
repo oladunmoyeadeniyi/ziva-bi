@@ -7,13 +7,13 @@
 
 ## 1. Decision Summary
 
-Ziva BI operates in three distinct modes. Every module supports all three modes from day one.
+PRAD operates in three distinct modes. Every module supports all three modes from day one.
 
 | Mode | What it is | GL posting |
 |---|---|---|
 | **Lite** | Workflow-only. No GL coding required. Basic CSV export of approved transactions. | None |
-| **Connected** | Full GL coding + dimensions in Ziva BI, but posts to an external ERP (download or API sync). | Export to external ERP |
-| **Full ERP** | Everything in Ziva BI. GL posting to internal journal_entries. Financial statements in-app. | Internal GL |
+| **Connected** | Full GL coding + dimensions in PRAD, but posts to an external ERP (download or API sync). | Export to external ERP |
+| **Full ERP** | Everything in PRAD. GL posting to internal journal_entries. Financial statements in-app. | Internal GL |
 
 **Key principle:** The employee/user experience is identical across all modes. GL coding fields appear when the tenant needs them. The difference is invisible at the transaction level — it only surfaces at the posting/export step.
 
@@ -159,7 +159,7 @@ Signup page
 
 **Trial tenant limitations:**
 - Can explore all features against demo data
-- Cannot go live (go-live button locked with "Contact your Ziva BI consultant")
+- Cannot go live (go-live button locked with "Contact your PRAD consultant")
 - Posting to external ERP disabled
 - Email notifications suppressed (or redirect to demo email)
 

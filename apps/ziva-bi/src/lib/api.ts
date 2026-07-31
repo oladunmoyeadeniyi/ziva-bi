@@ -1,5 +1,5 @@
 /**
- * ZivaBI API client.
+ * PRAD API client.
  *
  * Thin wrapper around fetch that:
  *   - Uses relative paths (e.g. /api/auth/login) so every request goes

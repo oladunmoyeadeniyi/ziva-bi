@@ -4,7 +4,7 @@
 
 ---
 
-# PROJECT_STATE.md — Ziva BI Authoritative Codebase Snapshot
+# PROJECT_STATE.md — PRAD Authoritative Codebase Snapshot
 
 **Generated:** 2026-06-28 (refreshed 2026-06-29, 2026-06-30, 2026-07-11 ×5, 2026-07-13, 2026-07-15, 2026-07-20 ×3, 2026-07-21, 2026-07-25 ×4, 2026-07-27, 2026-07-28, 2026-07-29 ×2)  
 **Git commit:** Last CC-committed head: `k9l0m1n2o3p4` (M20 AI Intelligence, committed `9ffd9e0`). **PENDING CC COMMIT (2026-07-29):** M17b (FIFO/Standard costing, migration `l0m1n2o3p4q5`) + ICE AI Categorisation Engine (migration `p9q0r1s2t3u4`). PENDING_COMMIT.md ready for `/review-commit`.  
@@ -14,7 +14,7 @@
 
 ## Summary
 
-Ziva BI is a multi-tenant, enterprise-grade finance automation SaaS platform. Stack: Next.js 15 (App Router) + TailwindCSS frontend, Python 3.12 + FastAPI backend, PostgreSQL via async SQLAlchemy + Alembic, Supabase Storage for files. Auth via JWT (access + refresh tokens) with session tracking, TOTP 2FA, and role-based access. All data is tenant-scoped; the test/live environment model uses shadow tenants linked via `parent_tenant_id` on the `tenants` table. Since M9.0.1 (2026-06-29), signup creates ONLY a test tenant — live is born second, via an explicit super-admin promotion, and `parent_tenant_id` runs test→live (the inverse of the original live-first design; see §3). The platform supports a full implementation lifecycle: Trial → In Implementation → Live → Suspended.
+PRAD is a multi-tenant, enterprise-grade finance automation SaaS platform. Stack: Next.js 15 (App Router) + TailwindCSS frontend, Python 3.12 + FastAPI backend, PostgreSQL via async SQLAlchemy + Alembic, Supabase Storage for files. Auth via JWT (access + refresh tokens) with session tracking, TOTP 2FA, and role-based access. All data is tenant-scoped; the test/live environment model uses shadow tenants linked via `parent_tenant_id` on the `tenants` table. Since M9.0.1 (2026-06-29), signup creates ONLY a test tenant — live is born second, via an explicit super-admin promotion, and `parent_tenant_id` runs test→live (the inverse of the original live-first design; see §3). The platform supports a full implementation lifecycle: Trial → In Implementation → Live → Suspended.
 
 ---
 
@@ -851,7 +851,7 @@ All endpoints require JWT auth except: `/api/auth/*`, `/api/invitations/*`, `/on
 | POST | /api/platform/tenants/{tenant_id}/promotion/apply | Apply accepted diff items. M9.0.1: on first promotion, creates the live tenant (`_create_live_from_test`), mirrors every UserTenant row test→live (auto-grants access), and copies org_config/tax/fx (`_copy_flat_config`) unconditionally on every call — repeat or first. |
 | GET | /api/platform/tenants/{tenant_id}/system-config | Returns `SystemConfigResponse`: `posting_mode` + all 13 module license rows. SA-only. Committed `803618e`. |
 | PATCH | /api/platform/tenants/{tenant_id}/system-config | Upserts `posting_mode` and/or module `is_licensed` flags. Revoking license auto-sets `is_active=False`. Writes audit log. SA-only. **Posting mode guard (pending commit):** returns 409 if tenant has any posted `journal_entries` and mode is being changed. |
-| POST | /api/platform/tenants | SA-only: create a new tenant directly. Body: `company_name`, `company_country`, `admin_email`, `posting_mode`, `is_internal` (bool, default false), `initial_modules[]`. **No `admin_password` in request** — backend auto-generates a secure 14-char temporary password via `secrets.choice()` and returns it in `CreateTenantResponse.temp_password` (shown once in modal, then gone). Auto-creates test tenant + `TenantOrgConfig` + `power_admin` UserTenant with `must_change_password=True`. Audit-logged. `is_internal` flag marks Ziva BI internal sandboxes vs real clients. |
+| POST | /api/platform/tenants | SA-only: create a new tenant directly. Body: `company_name`, `company_country`, `admin_email`, `posting_mode`, `is_internal` (bool, default false), `initial_modules[]`. **No `admin_password` in request** — backend auto-generates a secure 14-char temporary password via `secrets.choice()` and returns it in `CreateTenantResponse.temp_password` (shown once in modal, then gone). Auto-creates test tenant + `TenantOrgConfig` + `power_admin` UserTenant with `must_change_password=True`. Audit-logged. `is_internal` flag marks PRAD internal sandboxes vs real clients. |
 | DELETE | /api/platform/tenants/{tenant_id} | SA-only: hard-delete tenant and ALL child data. Resolves paired environment and deletes both test+live if paired. Requires `?confirm=true`. Guards: cannot delete a `'live'` lifecycle tenant. Committed `946aa16` (single), extended `c6d05ee` (paired). |
 | GET | /api/platform/trials | List all `lifecycle_status='trial'` tenants (?search=, ?lead_status=). SA-only. Committed `8dc89be`. |
 | PATCH | /api/platform/trials/{tenant_id} | Update `lead_status` and/or `implementation_notes` on a trial tenant. SA-only. Committed `8dc89be`. |

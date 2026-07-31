@@ -1,5 +1,5 @@
 """
-ZivaBI — Pydantic schemas for the AI Engine (M10+).
+PRAD — Pydantic schemas for the AI Engine (M10+).
 
 Used by routers/ai.py to validate request bodies and shape API responses.
 

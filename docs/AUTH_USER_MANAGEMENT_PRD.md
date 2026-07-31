@@ -1,13 +1,13 @@
 # Authentication & User Management — PRD
 
-> Part of Ziva BI. This PRD wins over any older version.
+> Part of PRAD. This PRD wins over any older version.
 > Last updated: May 2026
 
 ---
 
 ## 1. Purpose
 
-This module is the security gateway for Ziva BI. It controls:
+This module is the security gateway for PRAD. It controls:
 
 - How users register and log in
 - How sessions and tokens are managed
@@ -21,7 +21,7 @@ Every other module depends on this one. Nothing works without it.
 
 ## 2. Account Types
 
-Ziva BI has two top-level account types. Auth behaviour adapts to each.
+PRAD has two top-level account types. Auth behaviour adapts to each.
 
 | Account Type | Who it's for | Key difference |
 |---|---|---|
@@ -113,7 +113,7 @@ No roles needed. Single user, single account. Sees personal modules only.
 
 ### 6.2 Business Account — Global Roles
 
-**1. Super Admin (Ziva BI Global)**
+**1. Super Admin (PRAD Global)**
 - Creates new tenants
 - Enables/disables modules per tenant
 - Manages global templates (tax rules, vendor categories, notifications)
@@ -402,7 +402,7 @@ Device fingerprint stored as a hash (not raw PII).
 | Tax Officer | Tax Engine Portal |
 | Asset Manager | Asset Management Portal |
 | Tenant Admin | Tenant Admin Portal |
-| Super Admin | Ziva BI Global Admin Portal |
+| Super Admin | PRAD Global Admin Portal |
 
 Multi-role users are redirected to their primary portal; they can switch between permitted portals.
 

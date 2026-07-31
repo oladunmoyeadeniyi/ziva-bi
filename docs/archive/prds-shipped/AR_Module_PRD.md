@@ -1,6 +1,6 @@
 # Accounts Receivable (AR) Module — Product Requirements Document (PRD)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Accounts Receivable (AR)
 **Document status:** Converted from source Word document to Markdown
 **Converted on:** July 25, 2026

@@ -1,4 +1,4 @@
-# Ziva BI — Platform Evaluation
+# PRAD — Platform Evaluation
 **Date:** 2026-07-20  
 **Prepared by:** Cowork (against live codebase + git log + PROJECT_STATE.md)  
 **Purpose:** Authoritative state-of-platform report. Reviewed by CC before use. Supersedes any prior milestone summaries.
@@ -7,11 +7,11 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-Ziva BI has a **production-grade, enterprise-quality foundation**. The core finance automation stack — multi-tenant infrastructure, expense management (end-to-end), the GL engine, approval workflows, people management, and the full implementation/SA portal — is working and well-tested. That is roughly **40% of the full product vision by feature weight**.
+PRAD has a **production-grade, enterprise-quality foundation**. The core finance automation stack — multi-tenant infrastructure, expense management (end-to-end), the GL engine, approval workflows, people management, and the full implementation/SA portal — is working and well-tested. That is roughly **40% of the full product vision by feature weight**.
 
 What this means practically:
 
-- A small-to-medium company could use Ziva BI **today** for expense management with full GL coding and audit trail — it is commercially usable.
+- A small-to-medium company could use PRAD **today** for expense management with full GL coding and audit trail — it is commercially usable.
 - A finance team using Full ERP mode has a real, live accounting system: CoA → expense → approve → GL post → trial balance.
 - The platform is **not yet deployed on Render** (still localhost). Production deployment is the single highest-priority action before any commercial conversation.
 

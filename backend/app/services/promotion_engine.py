@@ -1,5 +1,5 @@
 """
-ZivaBI — CoA / Dimensions promotion engine (Phase 3a).
+PRAD — CoA / Dimensions promotion engine (Phase 3a).
 
 Implements repeatable test→live promotion for:
     TenantDimension          (natural key: dimension.code)

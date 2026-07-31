@@ -19,7 +19,7 @@ If anything conflicts, STOP and report.
 ---
 
 ## Context
-The owner portal lets Ziva BI (super admin) manage all tenants across the platform. This brief is the backend: a super-admin-guarded router for listing/viewing tenants and driving their lifecycle. UI is a later brief.
+The owner portal lets PRAD (super admin) manage all tenants across the platform. This brief is the backend: a super-admin-guarded router for listing/viewing tenants and driving their lifecycle. UI is a later brief.
 
 **Lifecycle states (on Tenant.lifecycle_status):** `trial` | `in_implementation` | `live` | `suspended`.
 

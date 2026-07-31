@@ -1,7 +1,7 @@
 """
 app/constants/modules.py
 ========================
-Single source of truth for all Ziva BI module definitions.
+Single source of truth for all PRAD module definitions.
 
 Every router, schema, migration, or frontend API that references module keys or
 labels must import from here. Do NOT define module lists elsewhere in the codebase.

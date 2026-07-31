@@ -70,7 +70,7 @@ Do NOT: touch Phase 3a's diff/apply logic (reuse helpers, don't modify behavior)
 
 ---
 
-## Acceptance / test steps (state pass/fail each — use the dedicated Ziva BI Test Tenant or a disposable test scenario, NOT live Red Bull, per the standing test-isolation rule)
+## Acceptance / test steps (state pass/fail each — use the dedicated PRAD Test Tenant or a disposable test scenario, NOT live Red Bull, per the standing test-isolation rule)
 1. Create a test environment with clone_data=True (default) on a tenant with real CoA/dimensions/employees/cost centers/bank accounts → test shadow ends up with matching active rows across all 9 steps.
 2. DimensionValue cascade_value_id correctly wired in test (2-pass verified, no FK violation).
 3. Employee line_manager_id correctly wired in test (2-pass verified).

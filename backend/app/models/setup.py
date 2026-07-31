@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.2/M8.3 Implementation Portal ORM models.
+PRAD — M8.2/M8.3 Implementation Portal ORM models.
 
 Tables:
     implementation_locks         — consultant-locked sections per tenant
@@ -65,7 +65,7 @@ class ImplementationLock(Base):
 
     Each row represents one locked section. The frontend checks this table
     to decide whether to show a field as editable or locked (with the
-    "Contact your Ziva BI consultant" message).
+    "Contact your PRAD consultant" message).
 
     section examples: 'organisation', 'coa', 'dimensions', 'employees'
     """
@@ -323,9 +323,9 @@ class TenantOrgConfig(Base):
     # Three-Mode Architecture (2026-07-11) — consultant-set posting mode.
     # Values: 'lite' | 'connected' | 'full_erp'
     #   lite       — workflow only; no GL coding required; no posting to any ledger
-    #   connected  — GL coding captured in Ziva BI; journal lines exported to external ERP
-    #   full_erp   — GL coding in Ziva BI; posts synchronously to journal_entries (default)
-    # Set by the Ziva BI consultant in the SA portal. Never exposed to tenant users.
+    #   connected  — GL coding captured in PRAD; journal lines exported to external ERP
+    #   full_erp   — GL coding in PRAD; posts synchronously to journal_entries (default)
+    # Set by the PRAD consultant in the SA portal. Never exposed to tenant users.
     posting_mode: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="full_erp", default="full_erp"
     )
@@ -729,7 +729,7 @@ class SystemFunctionMapping(Base):
     that represents that function within a tenant's org structure.
 
     Why this exists:
-        Ziva BI needs to know *which* cost center IS the Finance department so it can
+        PRAD needs to know *which* cost center IS the Finance department so it can
         auto-populate the Finance Review Chain assignee dropdown, restrict journal-entry
         approvals to Finance staff, and so on. The same logic applies for HR, Procurement,
         Sales, and Operations when those modules are active.

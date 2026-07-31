@@ -1,5 +1,5 @@
 """
-ZivaBI — approval workflow ORM models (Milestones 4–5 + Approval Engine).
+PRAD — approval workflow ORM models (Milestones 4–5 + Approval Engine).
 
 Tables:
     approval_matrix          Legacy per-tenant fixed-level config (kept for backward compat).

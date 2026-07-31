@@ -1,5 +1,5 @@
 """
-ZivaBI — GL engine Pydantic schemas.
+PRAD — GL engine Pydantic schemas.
 
 Posting (Brief 1):
     JournalLineInput   — input for each line passed to post_journal().

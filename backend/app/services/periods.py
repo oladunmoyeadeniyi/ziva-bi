@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.3 Period Engine service module (Briefs 1–4 of 4).
+PRAD — M8.3 Period Engine service module (Briefs 1–4 of 4).
 
 Provides:
     is_date_postable      — reusable postability check for any posting engine to call.

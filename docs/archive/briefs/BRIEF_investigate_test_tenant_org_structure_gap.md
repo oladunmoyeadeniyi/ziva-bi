@@ -4,7 +4,7 @@ Read docs/ZIVA_BI_ROADMAP.md and docs/MASTER_CONTEXT.md first, then follow this 
 
 ## Context
 
-Test tenant `f2aecfab-025f-410f-a7f6-df923172c8a1` ("Ziva BI — Test Tenant") currently shows "No org structure yet" on the Organisation → Structure page, while live Red Bull Nigeria Limited has a full org tree (GMBH → Red Bull Nigeria Limited → Administration/Finance/HR/IT/Legal/Marketing → Brand Marketing, etc.) — confirmed by screenshot. Org structure existed on live BEFORE this test tenant was created.
+Test tenant `f2aecfab-025f-410f-a7f6-df923172c8a1` ("PRAD — Test Tenant") currently shows "No org structure yet" on the Organisation → Structure page, while live Red Bull Nigeria Limited has a full org tree (GMBH → Red Bull Nigeria Limited → Administration/Finance/HR/IT/Legal/Marketing → Brand Marketing, etc.) — confirmed by screenshot. Org structure existed on live BEFORE this test tenant was created.
 
 A clone-on-create engine was previously built (Phase 4) that is supposed to copy live tenant data — including org structure/dimensions — into a new test shadow at creation time, with `clone_data=True` as the default. This brief is to find out why this specific test tenant doesn't have that data. **This is investigation only. Do not modify any code, data, or run any clone/create operation. Do not fix anything yet.**
 

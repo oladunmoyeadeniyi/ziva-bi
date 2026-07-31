@@ -1,5 +1,5 @@
 # M8.2 — Fixes & Enhancements
-> Ziva BI | Written: May 2026
+> PRAD | Written: May 2026
 > Status: Ready for Claude Code execution
 
 ---
@@ -295,7 +295,7 @@ When a module is selected, show:
 - "What you'll configure" section: bullet list of setup items required
 - "Dependencies" note: what must be set up first
 - For subscribed modules: "Activate" / "Deactivate" toggle button at bottom
-- For non-subscribed modules: amber alert box — "This module is not included in your current subscription. Contact your Ziva BI consultant or account manager to add it." No activate button.
+- For non-subscribed modules: amber alert box — "This module is not included in your current subscription. Contact your PRAD consultant or account manager to add it." No activate button.
 
 ### Backend: tenant_modules table
 Add `is_licensed` boolean column:

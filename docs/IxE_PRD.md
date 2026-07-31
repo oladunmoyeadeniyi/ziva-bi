@@ -19,7 +19,7 @@ When a group of companies files consolidated financial statements, any transacti
 
 IxE automates this: it identifies intercompany GL lines across entities, matches counterparty positions, generates elimination journals, and produces a consolidated P&L and balance sheet that presents the group as if it were a single economic entity.
 
-**Why Full ERP only:** IxE requires in-app double-entry journals. Lite and Connected tenants export their GL to external systems; group consolidation across those systems is not Ziva BI's responsibility.
+**Why Full ERP only:** IxE requires in-app double-entry journals. Lite and Connected tenants export their GL to external systems; group consolidation across those systems is not PRAD's responsibility.
 
 ---
 

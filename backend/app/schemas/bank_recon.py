@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Reconciliation Pydantic schemas (M11c).
+PRAD — Bank Reconciliation Pydantic schemas (M11c).
 
 Covers:
     BankStatement  — CRUD + status transitions

@@ -1,5 +1,5 @@
 # Milestone 8.2 — Implementation Portal Redesign
-> Ziva BI | Written: May 2026
+> PRAD | Written: May 2026
 > Status: Ready for Claude Code execution
 
 ---
@@ -20,7 +20,7 @@ Before writing a single line of code:
 
 M8.2 redesigns the Tenant Portal admin experience from a flat "Settings" page into a properly structured Implementation Portal. It introduces the three-tier role system, a guided setup dashboard, and all missing configuration pages.
 
-After M8.2, a Ziva BI consultant can onboard a new tenant end-to-end using the portal.
+After M8.2, a PRAD consultant can onboard a new tenant end-to-end using the portal.
 
 ---
 
@@ -121,7 +121,7 @@ When role_tier === 'consultant', show a banner at the top of every admin page:
 ### Locked field component
 Create a reusable `<LockedField>` component:
 - Shows a dashed border box with lock icon
-- Text: "Locked by implementation. Contact your Ziva BI consultant to modify."
+- Text: "Locked by implementation. Contact your PRAD consultant to modify."
 - Used wherever a field is implementation-locked for non-consultant users
 - Consultant users see the field as editable (no lock shown)
 
@@ -245,7 +245,7 @@ Shows the org hierarchy as a tree view.
 - "Upload structure" — accepts .xlsx or .csv
 
 **Locked note (post go-live):**
-"Structure is locked after go-live. Contact your Ziva BI consultant to restructure."
+"Structure is locked after go-live. Contact your PRAD consultant to restructure."
 
 #### Tab 3 — Branding
 - Company logo upload (drag-drop zone, accepts PNG/SVG/JPG, max 2MB)
@@ -396,11 +396,11 @@ Table showing the three tiers (read-only structure, consultant-locked):
 
 | Role tier | Who holds it | Granted by | Override power |
 |---|---|---|---|
-| Consultant (amber badge) | Ziva BI implementation team | Super admin only | Full — can override everything |
+| Consultant (amber badge) | PRAD implementation team | Super admin only | Full — can override everything |
 | Power Admin (blue badge) | Finance Director / CFO | Consultant | Within unlocked sections only |
 | Functional Admin (green badge) | HR, Procurement, etc. | Power Admin | Within delegated scope only |
 
-Locked note: "Role tier structure is defined by Ziva BI. Contact your consultant to modify."
+Locked note: "Role tier structure is defined by PRAD. Contact your consultant to modify."
 
 #### Tab 2 — Permission matrix
 Grid showing: Rows = modules/sections, Columns = role tiers

@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.1 / M8.2 HR module router.
+PRAD — M8.1 / M8.2 HR module router.
 
 Registered at prefix /api/hr.
 
@@ -317,7 +317,7 @@ async def download_employee_template(
         cell.font = hdr_font
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
         ws.column_dimensions[get_column_letter(ci)].width = max(18, len(h) + 2)
-        comment = XLComment(example_text, "Ziva BI")
+        comment = XLComment(example_text, "PRAD")
         comment.width = 220; comment.height = 70
         cell.comment = comment
     ws.row_dimensions[1].height = 30

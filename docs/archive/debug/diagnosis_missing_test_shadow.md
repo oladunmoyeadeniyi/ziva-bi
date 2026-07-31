@@ -17,7 +17,7 @@ Zero `user_tenants` rows reference it. The entire DB has zero `environment='test
 ```sql
 SELECT id, name, environment FROM tenants;
 -- bd2c8a25  Red Bull Nigeria Limited  live
--- f2aecfab  Ziva BI — Test Tenant     live   ← standalone fixture, not a shadow
+-- f2aecfab  PRAD — Test Tenant     live   ← standalone fixture, not a shadow
 ```
 
 ---

@@ -21,7 +21,7 @@ Usage:
     name = await get_app_name(db)
 
     # In the SA PATCH endpoint:
-    await set_config(db, key="app_name", value="Finara", updated_by=user_id)
+    await set_config(db, key="app_name", value="PRAD", updated_by=user_id)
 """
 
 import time
@@ -65,7 +65,7 @@ async def get_platform_config(db: AsyncSession) -> dict[str, str]:
 
     Example:
         config = await get_platform_config(db)
-        print(config["app_name"])  # → "Ziva BI"
+        print(config["app_name"])  # → "PRAD"
     """
     global _CACHE, _CACHE_LOADED_AT
 
@@ -81,16 +81,16 @@ async def get_platform_config(db: AsyncSession) -> dict[str, str]:
 
 async def get_app_name(db: AsyncSession) -> str:
     """
-    Return the current app name, falling back to 'Ziva BI' if not set.
+    Return the current app name, falling back to 'PRAD' if not set.
 
     Parameters:
         db: SQLAlchemy async session.
 
     Returns:
-        The value of platform_config['app_name'], or 'Ziva BI' as fallback.
+        The value of platform_config['app_name'], or 'PRAD' as fallback.
     """
     config = await get_platform_config(db)
-    return config.get("app_name", "Ziva BI")
+    return config.get("app_name", "PRAD")
 
 
 async def set_config(
@@ -113,7 +113,7 @@ async def set_config(
         The updated PlatformConfig row (not yet committed — caller must commit).
 
     Example:
-        row = await set_config(db, key="app_name", value="Finara", updated_by=user.id)
+        row = await set_config(db, key="app_name", value="PRAD", updated_by=user.id)
         await db.commit()
     """
     row = await db.get(PlatformConfig, key)

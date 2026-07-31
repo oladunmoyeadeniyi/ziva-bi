@@ -1,5 +1,5 @@
 """
-ZivaBI — Account Determination ORM models (redesigned in catalogue-redesign brief).
+PRAD — Account Determination ORM models (redesigned in catalogue-redesign brief).
 
 Tables:
     posting_roles                — System-level catalogue with 2-level taxonomy.

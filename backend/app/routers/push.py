@@ -1,5 +1,5 @@
 """
-ZivaBI — Push subscription router.
+PRAD — Push subscription router.
 
 Endpoints:
     GET    /api/push/vapid-public-key   Serve VAPID public key (unauthenticated)

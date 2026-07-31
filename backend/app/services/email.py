@@ -1,5 +1,5 @@
 """
-ZivaBI — centralised email service (P2 milestone).
+PRAD — centralised email service (P2 milestone).
 
 All outbound email for the platform goes through this module.  The transport
 is Resend (https://resend.com) called via its REST API using the httpx async
@@ -129,7 +129,7 @@ async def send_invitation_email(
     invited_by_name: str,
     role: str,
     accept_url: str,
-    app_name: str = "Ziva BI",
+    app_name: str = "PRAD",
     suppress: bool = False,
 ) -> bool:
     """Send a tenant invitation email with an accept link."""
@@ -162,7 +162,7 @@ async def send_password_reset_email(
     to_email: str,
     full_name: str,
     reset_url: str,
-    app_name: str = "Ziva BI",
+    app_name: str = "PRAD",
 ) -> bool:
     """Send a password reset link. Never suppressed — always a real-user action."""
     subject = f"Reset your {app_name} password"
@@ -194,7 +194,7 @@ async def send_live_promotion_email(
     full_name: str,
     tenant_name: str,
     login_url: str,
-    app_name: str = "Ziva BI",
+    app_name: str = "PRAD",
 ) -> bool:
     """Notify a user that their live environment is now ready."""
     subject = f"Your {app_name} live account for {tenant_name} is ready"
@@ -225,7 +225,7 @@ async def send_onboarding_invite_email(
     full_name: str,
     tenant_name: str,
     onboarding_url: str,
-    app_name: str = "Ziva BI",
+    app_name: str = "PRAD",
     suppress: bool = False,
 ) -> bool:
     """Send an employee self-onboarding invitation."""
@@ -257,7 +257,7 @@ async def send_approval_notification_email(
     subject: str,
     body_html: str,
     body_text: str,
-    app_name: str = "Ziva BI",
+    app_name: str = "PRAD",
 ) -> bool:
     """
     Generic approval-workflow notification.

@@ -1,5 +1,5 @@
 """
-ZivaBI — users router (Milestones 2 + 5 + profile backend).
+PRAD — users router (Milestones 2 + 5 + profile backend).
 
 Endpoints:
     GET   /api/users/me                          Current user's full profile

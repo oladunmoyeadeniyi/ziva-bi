@@ -1,5 +1,5 @@
 """
-ZivaBI — Pydantic schemas for M7/M8/M9 expense configuration and categories.
+PRAD — Pydantic schemas for M7/M8/M9 expense configuration and categories.
 
 Used by the expense_config router to validate request bodies and shape API responses.
 All category endpoints return ExpenseCategoryResponse which embeds subcategories so

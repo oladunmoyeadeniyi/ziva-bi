@@ -1,5 +1,5 @@
 """
-ZivaBI — auth router.
+PRAD — auth router.
 
 Endpoints:
     POST /api/auth/signup          Register individual or business account

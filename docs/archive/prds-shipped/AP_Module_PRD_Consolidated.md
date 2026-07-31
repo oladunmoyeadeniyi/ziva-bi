@@ -1,6 +1,6 @@
 # Accounts Payable (AP) Module — Product Requirements Document (PRD)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Accounts Payable (AP)
 **Document status:** Consolidated PRD (merged from two source drafts)
 **Consolidated on:** July 25, 2026

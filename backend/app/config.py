@@ -1,5 +1,5 @@
 """
-ZivaBI API — application settings.
+PRAD API — application settings.
 
 All configuration is read from environment variables (or a .env file for local dev).
 In production (Render), environment variables are injected via the Render dashboard —
@@ -71,9 +71,9 @@ class Settings(BaseSettings):
     # safe for local dev without any additional configuration.
     resend_api_key: str = ""
     # "From" header used in all outbound emails.
-    # Production: use a verified Resend domain, e.g. "Ziva BI <noreply@mail.zivafinance.com>".
+    # Production: use a verified Resend domain, e.g. "PRAD <noreply@mail.zivafinance.com>".
     # Default works immediately via Resend's shared domain (limits: 100 emails/day).
-    email_from: str = "Ziva BI <onboarding@resend.dev>"
+    email_from: str = "PRAD <onboarding@resend.dev>"
 
     # ── Anthropic AI (M10 — OCR & AI Engine) ─────────────────────────────────
     # Set ANTHROPIC_API_KEY in Render dashboard or backend/.env.
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
 
     # ── App ───────────────────────────────────────────────────────────────────
-    app_name: str = "ZivaBI"
+    app_name: str = "PRAD"
     debug: bool = False
 
     # ── Environment ───────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     vapid_mailto: str = ""         # e.g. "mailto:admin@zivabi.com"
 
     # ── Platform owner ────────────────────────────────────────────────────────
-    # UUID of the Ziva BI platform owner. When set, this user's impersonation
+    # UUID of the PRAD platform owner. When set, this user's impersonation
     # sessions in live environments are unrestricted (no sensitive field masking).
     # If unset, all super admins are treated as non-owner (restricted in live).
     owner_user_id: str | None = None

@@ -19,7 +19,7 @@ Report findings before editing.
 
 ## Context — two issues
 1. **Tenant staff still have config access.** `_require_admin` passes for `is_tenant_admin`, so Adeniyi@redbull still reaches all setup pages. Per design: until role-based access (RBAC) exists, tenant staff get NO config access — configuration is done by the consultant (super admin via impersonation). So `is_tenant_admin` must no longer grant config admin.
-2. **Consultant can't license modules.** The modules page tells the consultant "contact your Ziva BI consultant" when a module isn't licensed — but the super admin IS the consultant. They need controls to set `is_licensed` (subscribe/unsubscribe the tenant to a module) directly. The backend endpoint already exists and is super-admin-only.
+2. **Consultant can't license modules.** The modules page tells the consultant "contact your PRAD consultant" when a module isn't licensed — but the super admin IS the consultant. They need controls to set `is_licensed` (subscribe/unsubscribe the tenant to a module) directly. The backend endpoint already exists and is super-admin-only.
 
 ---
 
@@ -39,7 +39,7 @@ In `_require_admin` (setup.py):
 
 ### 3. Frontend — consultant module licensing controls
 On the modules page, when the current session is a super admin (impersonating in implementation mode — `user?.is_super_admin` true):
-- Where an unlicensed module currently shows "This module is not included in your current subscription. Contact your Ziva BI consultant…", REPLACE that (for super admin only) with a control: a **"Add to subscription"** (set `is_licensed=true`) button. For a licensed module, show **"Remove from subscription"** (set `is_licensed=false`).
+- Where an unlicensed module currently shows "This module is not included in your current subscription. Contact your PRAD consultant…", REPLACE that (for super admin only) with a control: a **"Add to subscription"** (set `is_licensed=true`) button. For a licensed module, show **"Remove from subscription"** (set `is_licensed=false`).
 - Wire these to the existing `PATCH /api/setup/modules/license` endpoint (confirm the exact path/payload from `patch_module_license` — read it; it may be `/modules/{key}/license` or similar). State the real path.
 - After a license change, refresh the module list so activate/deactivate availability updates.
 - For non-super-admin users, keep the existing tenant-facing message (they genuinely must contact the consultant).

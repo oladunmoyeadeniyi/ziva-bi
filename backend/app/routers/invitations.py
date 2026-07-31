@@ -1,5 +1,5 @@
 """
-ZivaBI — public invitation acceptance router (Milestone 5).
+PRAD — public invitation acceptance router (Milestone 5).
 
 These endpoints require no authentication — they are the entry point for
 new users joining a tenant via an invitation link.

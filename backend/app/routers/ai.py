@@ -1,5 +1,5 @@
 """
-ZivaBI — AI Engine router (M10 + M20).
+PRAD — AI Engine router (M10 + M20).
 
 Registered at prefix /api/ai.
 

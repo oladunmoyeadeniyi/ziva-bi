@@ -204,7 +204,7 @@ Body:
    dated {report_date} for ₦{total_amount} requiring your 
    approval as {role_label}.
    
-   Please log in to Ziva BI to review and action."
+   Please log in to PRAD to review and action."
 
 APPROVER NOTIFICATION — when referred back to them:
 Subject: "Referred to you: Expense Report {report_number}"
@@ -214,7 +214,7 @@ Body:
    
    Query: {referral_comment}
    
-   Please log in to Ziva BI to respond."
+   Please log in to PRAD to respond."
 
 REQUESTOR NOTIFICATION — when fully approved:
 Subject: "Approved: Expense Report {report_number}"
@@ -222,7 +222,7 @@ Body:
   "Your expense report {report_number} dated {report_date} 
    for ₦{total_amount} has been fully approved.
    
-   Please log in to Ziva BI to view the approved report."
+   Please log in to PRAD to view the approved report."
 
 REQUESTOR NOTIFICATION — when referred back with 
 visible_to_requestor = true:
@@ -232,7 +232,7 @@ Body:
    
    Query: {referral_comment}
    
-   Please log in to Ziva BI to view the details."
+   Please log in to PRAD to view the details."
 
 All emails: if SMTP not configured, log to console.
 Reuse the existing SMTP config pattern from rejection emails.

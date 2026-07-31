@@ -6,7 +6,7 @@ clients.  Used by the frontend to display the correct app name on the login
 page, signup page, and PWA manifest before a user has authenticated.
 
 Endpoint:
-    GET /api/app-config   → { "app_name": "Ziva BI" }
+    GET /api/app-config   → { "app_name": "PRAD" }
 
 This endpoint is intentionally thin and public.  It must never expose
 sensitive platform settings — only values that are safe to show to anyone

@@ -142,7 +142,7 @@ interface ModeNotAvailableProps {
 - Grey/neutral — not an error, not a warning; just informational
 - Icon: lock or info circle (Tabler outline)
 - Heading: `"[Page Name] is not available in [Mode Label] mode"`
-- Body: `"This section is available in [Available In] mode. Your posting mode is set by your Ziva BI consultant in the system configuration."`
+- Body: `"This section is available in [Available In] mode. Your posting mode is set by your PRAD consultant in the system configuration."`
 - Single button: `"Back to setup dashboard"` → navigates to `/dashboard/business/setup`
 
 Mode display labels:

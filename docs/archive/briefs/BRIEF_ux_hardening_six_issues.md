@@ -67,7 +67,7 @@ Step 2 (new, optional):
   - Job title
   - Company size (select)
   - "What would you like to manage?" — module checkboxes using MODULE_CATALOGUE labels
-  - "How do you intend to use Ziva BI?" — radio:
+  - "How do you intend to use PRAD?" — radio:
       ○ Approval-only (Lite)  ○ Connect to existing ERP (Connected)  ○ Full finance system (Full ERP)
 ```
 
@@ -146,7 +146,7 @@ but cannot PATCH it.
 On `frontend/src/app/dashboard/business/setup/modules/page.tsx`:
 - Hide or disable the Activate/Deactivate button if `user.is_super_admin` is false
   (or if the session is not an impersonation session by an SA).
-- Replace the button with a message: "Contact your Ziva BI account manager to
+- Replace the button with a message: "Contact your PRAD account manager to
   activate this module."
 - The module detail panel can still render normally (description, features) — just
   without the toggle.
@@ -169,13 +169,13 @@ This is visible to any tenant user who opens Settings → Roles → Tiers.
 
 **Gap:**
 The `consultant` role tier was removed in M9.3c (super admin impersonation replaces
-it). The table row is stale and leaks internal Ziva BI team structure to customers.
+it). The table row is stale and leaks internal PRAD team structure to customers.
 The "Granted by: ZivaBI Consultant" entry on the Power Admin row is also stale.
 
 **Fix — frontend:**
 - Delete the entire "ZivaBI Consultant" `<tr>` (3 lines: ~line 391–395).
 - On the Power Admin row, change "Granted by: ZivaBI Consultant" to
-  "Granted by: Ziva BI".
+  "Granted by: PRAD".
 - On the Functional Admin row, "Consultant or Power Admin" → "Power Admin".
 - Update the banner text: "Role tier structure is defined by ZivaBI. Contact your
   account manager to modify."

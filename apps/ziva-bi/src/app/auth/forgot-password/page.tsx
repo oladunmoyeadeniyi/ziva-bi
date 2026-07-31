@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Forgot-password page — ZivaBI.
+ * Forgot-password page — PRAD.
  *
  * The user enters their email address. The backend sends a reset link if the
  * account exists. We always show a success message to prevent email enumeration.

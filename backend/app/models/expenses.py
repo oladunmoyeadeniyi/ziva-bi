@@ -1,5 +1,5 @@
 """
-ZivaBI — expense management ORM models (Milestones 3–9).
+PRAD — expense management ORM models (Milestones 3–9).
 
 Tables:
     expense_reports          parent-level expense retirement submission per employee

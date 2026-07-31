@@ -1,5 +1,5 @@
 """
-ZivaBI — General Ledger ORM models (GL Engine #1).
+PRAD — General Ledger ORM models (GL Engine #1).
 
 Tables:
     journal_entries   — GL journal header: date, description, source, status.

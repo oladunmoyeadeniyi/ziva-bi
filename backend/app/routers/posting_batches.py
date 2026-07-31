@@ -1,5 +1,5 @@
 """
-ZivaBI — Posting Batches router.
+PRAD — Posting Batches router.
 
 Available when tenant_org_config.posting_mode = 'connected'.
 Provides list, detail, export (CSV/Excel), and mark-exported endpoints.

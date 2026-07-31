@@ -1,5 +1,5 @@
 /**
- * ZivaBI — ISO 4217 currency catalogue.
+ * PRAD — ISO 4217 currency catalogue.
  *
  * Shared between the Currencies & FX setup page and any other page that
  * needs to display or select from the tenant's enabled currencies.

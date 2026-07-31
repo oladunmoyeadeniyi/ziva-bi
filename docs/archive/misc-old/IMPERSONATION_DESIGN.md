@@ -1,11 +1,11 @@
-# Ziva BI — User Impersonation: Full Design Specification
+# PRAD — User Impersonation: Full Design Specification
 *Written June 28 2026. Share this in the new chat when implementing impersonation.*
 
 ---
 
 ## 1. WHAT IT IS
 
-Impersonation allows Ziva BI staff (Super Admin owner, consultants, support) to enter any tenant user's session directly — seeing exactly what that user sees — without knowing their password. It is a **diagnostic tool**, not an action tool. Its purpose is to understand a user's problem from their perspective.
+Impersonation allows PRAD staff (Super Admin owner, consultants, support) to enter any tenant user's session directly — seeing exactly what that user sees — without knowing their password. It is a **diagnostic tool**, not an action tool. Its purpose is to understand a user's problem from their perspective.
 
 This is distinct from the environment toggle (switching between test/live environments). Impersonation is switching to a different *user's identity* within an environment.
 
@@ -13,7 +13,7 @@ This is distinct from the environment toggle (switching between test/live enviro
 
 ## 2. HOW IT IS ACCESSED (entry points)
 
-Two entry points, both in the Super Admin / Ziva BI Admin / Consultant portal:
+Two entry points, both in the Super Admin / PRAD Admin / Consultant portal:
 
 **Entry point 1 — Tenant user list:**
 On the tenant detail page in the Super Admin portal, there is a list of all users belonging to that tenant. Clicking on any user in that list opens that user's session directly.
@@ -39,7 +39,7 @@ When impersonation is active:
 
 ## 4. ACCESS LEVELS BY ROLE
 
-### Ziva BI Super Admin Owner (Adeniyi — the platform owner)
+### PRAD Super Admin Owner (Adeniyi — the platform owner)
 - **Full unrestricted access** in both test and live environments
 - Can see everything the impersonated user sees including all sensitive financial data:
   - Individual salary figures
@@ -49,7 +49,7 @@ When impersonation is active:
   - Any other sensitive personal financial information
 - No restrictions whatsoever
 
-### Ziva BI Team Members (consultants, support staff — NOT the owner)
+### PRAD Team Members (consultants, support staff — NOT the owner)
 **In the test environment:**
 - Full transact access — can do everything the impersonated user can do:
   - Submit expense reports
@@ -134,7 +134,7 @@ A clean pattern:
 
 ### Access control check
 Before opening an impersonation session, verify:
-1. The impersonator has the right to impersonate (is a Ziva BI staff member, not a tenant user)
+1. The impersonator has the right to impersonate (is a PRAD staff member, not a tenant user)
 2. The target user belongs to a tenant the impersonator has access to
 3. Log the session start immediately
 

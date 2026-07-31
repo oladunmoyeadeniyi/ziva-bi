@@ -1,5 +1,5 @@
 """
-ZivaBI models package.
+PRAD models package.
 
 Import every model module here so that Alembic's autogenerate can detect
 all tables when it inspects Base.metadata. The alembic/env.py file imports

@@ -1,5 +1,5 @@
 # Milestone 8.1 — Advanced CoA, Dimensions & Employee Foundation
-> Ziva BI | Written: May 2026
+> PRAD | Written: May 2026
 > Status: Ready for Claude Code execution
 
 ---
@@ -374,7 +374,7 @@ CREATE TABLE cost_center_config (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     cost_center_id UUID NOT NULL REFERENCES dimension_values(id) ON DELETE CASCADE,
     head_employee_id UUID REFERENCES employees(id),
-    head_user_id UUID REFERENCES users(id),  -- if head has a Ziva BI account
+    head_user_id UUID REFERENCES users(id),  -- if head has a PRAD account
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE(tenant_id, cost_center_id)
@@ -403,7 +403,7 @@ CREATE TABLE finance_review_config (
 UI:
 - Table: Cost Center Code, Cost Center Name, Head (employee name), Actions
 - "Set Head" button per row → modal to search and assign an employee as head
-- Head assignment links to both the employee record and their Ziva BI user account
+- Head assignment links to both the employee record and their PRAD user account
   (if they have one)
 
 ### Finance Review Config Page

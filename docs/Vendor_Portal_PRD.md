@@ -1,6 +1,6 @@
 # Vendor Portal (Supplier Self-Service) — Product Requirements Document (PRD)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Vendor Portal (Supplier Self-Service)
 **Version:** 1.0
 **Document status:** Merged and converted from three source Word documents to Markdown

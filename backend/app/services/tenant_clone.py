@@ -1,5 +1,5 @@
 """
-ZivaBI — Live→test tenant clone engine (Phase 4).
+PRAD — Live→test tenant clone engine (Phase 4).
 
 Copies all active configuration and master data from a live tenant into a
 freshly-created empty test shadow. Called from create_test_environment AFTER

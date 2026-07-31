@@ -1,5 +1,5 @@
 """
-ZivaBI — auth Pydantic schemas.
+PRAD — auth Pydantic schemas.
 
 Request and response shapes for the auth and users routers.
 Validation is enforced here at the API boundary — nothing downstream

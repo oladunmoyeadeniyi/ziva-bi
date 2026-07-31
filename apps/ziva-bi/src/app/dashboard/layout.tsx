@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Dashboard layout — ZivaBI.
+ * Dashboard layout — PRAD.
  *
  * Guards all /dashboard/* routes. If the user is not authenticated,
  * redirects to /auth/login. Shows a loading state while the auth

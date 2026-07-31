@@ -1,5 +1,5 @@
 """
-Ziva BI — Intelligent Categorization Engine (ICE) router.
+PRAD — Intelligent Categorization Engine (ICE) router.
 
 Registered at prefix /api/ai/ice (nested under the /api/ai namespace).
 

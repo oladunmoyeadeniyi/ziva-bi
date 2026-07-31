@@ -1,5 +1,5 @@
 """
-ZivaBI API — database engine and session factory.
+PRAD API — database engine and session factory.
 
 Provides:
   - `engine`            async SQLAlchemy engine (asyncpg dialect)
@@ -74,7 +74,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 class Base(DeclarativeBase):
     """
-    Declarative base for all ZivaBI ORM models.
+    Declarative base for all PRAD ORM models.
 
     Import this in every models/*.py file and subclass it:
 

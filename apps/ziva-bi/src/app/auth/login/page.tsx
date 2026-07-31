@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Login page — ZivaBI.
+ * Login page — PRAD.
  *
  * Email + password login form. On success, redirects the user to the
  * appropriate dashboard based on their account_type.

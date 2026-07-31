@@ -1,5 +1,5 @@
 """
-ZivaBI — WebAuthn service.
+PRAD — WebAuthn service.
 
 Wraps the `webauthn` (py_webauthn) library to provide:
 
@@ -18,11 +18,11 @@ RP configuration:
     rpId is env-aware:
         ENVIRONMENT=production  → "zivabi.com"
         ENVIRONMENT=development → "localhost"
-    rpName is always "Ziva BI".
+    rpName is always "PRAD".
 
 Sign count policy:
     RFC 8809 recommends rejecting credentials where the presented sign_count
-    is ≤ the stored value (possible cloning). ZivaBI enforces this strictly:
+    is ≤ the stored value (possible cloning). PRAD enforces this strictly:
     if the authenticator returns 0 we skip the check (some software
     authenticators always return 0); otherwise we require strictly greater.
 
@@ -88,7 +88,7 @@ def _rp_id() -> str:
 
 
 def _rp_name() -> str:
-    return "Ziva BI"
+    return "PRAD"
 
 
 # ── Registration ──────────────────────────────────────────────────────────────

@@ -1,13 +1,13 @@
 # Intelligent Categorization Engine (ICE) — PRD
 
-> Part of Ziva BI. This PRD wins over any older version.  
+> Part of PRAD. This PRD wins over any older version.  
 > Last updated: May 2026
 
 ---
 
 ## 1. Purpose
 
-ICE is Ziva BI's AI brain for financial classification. It reduces the manual work of selecting GL accounts, dimensions, and expense categories by learning from historical data and suggesting accurate classifications in real time.
+ICE is PRAD's AI brain for financial classification. It reduces the manual work of selecting GL accounts, dimensions, and expense categories by learning from historical data and suggesting accurate classifications in real time.
 
 ICE **never posts, never approves, never overrides humans.** It only suggests. Humans always decide.
 

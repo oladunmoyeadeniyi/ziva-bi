@@ -102,7 +102,7 @@ New table: `document_access_log` (all columns above in §2.7).
 
 **Current:** Supabase Storage (S3-compatible, $0.021/GB/month, egress billed at $0.09/GB)
 
-**Problem:** As Ziva BI grows to hundreds of tenants with thousands of documents each, the egress cost dominates. An ERP with active daily document viewing creates continuous outbound traffic.
+**Problem:** As PRAD grows to hundreds of tenants with thousands of documents each, the egress cost dominates. An ERP with active daily document viewing creates continuous outbound traffic.
 
 **Decision:** Migrate to Cloudflare R2 once tenants > 5 (or storage exceeds 5 GB).
 

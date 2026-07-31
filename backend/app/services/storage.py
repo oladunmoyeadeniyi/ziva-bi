@@ -1,5 +1,5 @@
 """
-ZivaBI — Supabase Storage service (Milestone 6).
+PRAD — Supabase Storage service (Milestone 6).
 
 Thin wrapper around the supabase-py client for the three operations the
 documents router needs: upload, signed-URL generation, and deletion.

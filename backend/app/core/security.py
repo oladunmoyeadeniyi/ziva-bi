@@ -1,5 +1,5 @@
 """
-ZivaBI — security utilities.
+PRAD — security utilities.
 
 Handles password hashing (bcrypt) and JWT token creation/verification.
 Refresh tokens are cryptographically random strings stored as SHA-256 hashes

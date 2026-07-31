@@ -1,5 +1,5 @@
 """
-ZivaBI — M7/M8/M9 expense configuration and category management router.
+PRAD — M7/M8/M9 expense configuration and category management router.
 
 Registered at prefix /api/expense-config.
 

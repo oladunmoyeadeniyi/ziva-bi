@@ -1,5 +1,5 @@
 """
-ZivaBI — authentication dependency.
+PRAD — authentication dependency.
 
 Provides the `require_auth` FastAPI dependency that any protected route
 can declare. It extracts and validates the JWT from the Authorization header

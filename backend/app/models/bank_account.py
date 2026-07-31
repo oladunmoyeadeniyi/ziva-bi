@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Account register model.
+PRAD — Bank Account register model.
 
 Replaces the removed default_bank/cash posting roles with a proper per-tenant
 master-data register of bank and cash accounts (multiple per currency).

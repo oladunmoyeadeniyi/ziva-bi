@@ -1,5 +1,5 @@
 """
-ZivaBI — tenant management ORM models (Milestone 5).
+PRAD — tenant management ORM models (Milestone 5).
 
 Tables:
     tenant_invitations  One row per outstanding invitation sent by a Tenant Admin.

@@ -70,7 +70,7 @@ for col_idx, (header, instruction) in enumerate(all_cols, 1):
     cell = ws1.cell(row=1, column=col_idx)
     example = examples.get(header.replace("*", "").strip(), "")
     if example:
-        comment = Comment(example, "Ziva BI")
+        comment = Comment(example, "PRAD")
         comment.width = 200
         comment.height = 60
         cell.comment = comment

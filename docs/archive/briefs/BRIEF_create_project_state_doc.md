@@ -14,7 +14,7 @@ Claude (who writes the briefs) and Claude Code (who implements them) drift out o
 
 ### 1. Header
 - Generated date/time, current git commit hash (`git rev-parse HEAD`), current branch.
-- One-paragraph project summary (Ziva BI: multi-tenant finance automation SaaS; stack: Next.js 15 frontend, FastAPI/Python backend, PostgreSQL).
+- One-paragraph project summary (PRAD: multi-tenant finance automation SaaS; stack: Next.js 15 frontend, FastAPI/Python backend, PostgreSQL).
 
 ### 2. Repository structure (file tree with purpose)
 - A directory tree of `backend/app/` and `frontend/src/` (and other top-level dirs that matter), each meaningful file annotated with a one-line purpose.

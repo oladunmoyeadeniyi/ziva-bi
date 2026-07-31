@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Reconciliation Match Engine (M11c).
+PRAD — Bank Reconciliation Match Engine (M11c).
 
 Provides:
     auto_match_statement()  — mode-aware auto-matcher for a whole statement

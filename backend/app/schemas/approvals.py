@@ -1,5 +1,5 @@
 """
-ZivaBI — approval workflow Pydantic schemas (Milestones 4–5 + Approval Engine).
+PRAD — approval workflow Pydantic schemas (Milestones 4–5 + Approval Engine).
 
 Request/response shapes for the approvals router.
 Covers: approval roles, approval policies, role thresholds, delegations,

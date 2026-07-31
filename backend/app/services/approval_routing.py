@@ -1,5 +1,5 @@
 """
-ZivaBI — Approval Routing Engine.
+PRAD — Approval Routing Engine.
 
 Computes the ordered approval chain for a given submission (expense report, AP invoice, etc.)
 based on the tenant's ApprovalPolicy for that module. Returns a list of ChainStep objects

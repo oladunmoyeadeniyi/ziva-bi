@@ -1,5 +1,5 @@
 """
-ZivaBI — Account Mapping router (updated for catalogue redesign).
+PRAD — Account Mapping router (updated for catalogue redesign).
 
 Prefix:  /api/setup/account-mapping
 Tags:    account-mapping

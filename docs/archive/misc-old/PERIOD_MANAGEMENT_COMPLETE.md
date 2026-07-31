@@ -1,11 +1,11 @@
-# Ziva BI — Period Management: Complete Design & Implementation State
+# PRAD — Period Management: Complete Design & Implementation State
 *Written June 28 2026. Share this in any new chat to get full context on Period Management.*
 
 ---
 
 ## 1. WHAT IT IS
 
-Period Management is the fiscal calendar and period-close workflow for Ziva BI. It controls:
+Period Management is the fiscal calendar and period-close workflow for PRAD. It controls:
 - When the system's accounting periods are (months/quarters per fiscal year)
 - What status each period is in (open, soft-closed, hard-closed, etc.)
 - Who can post transactions into which periods

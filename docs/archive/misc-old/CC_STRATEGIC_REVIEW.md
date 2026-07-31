@@ -6,13 +6,13 @@
 
 This is NOT a /review-commit request. No code to commit.
 
-You are being asked to evaluate whether the proposed Ziva BI milestone roadmap is correctly ordered, comprehensive, and realistic — and to flag anything that is misplaced, missing, or structurally wrong. Read this entire document before responding.
+You are being asked to evaluate whether the proposed PRAD milestone roadmap is correctly ordered, comprehensive, and realistic — and to flag anything that is misplaced, missing, or structurally wrong. Read this entire document before responding.
 
 ---
 
 ## 1. PRODUCT CONTEXT
 
-Ziva BI is a multi-tenant SaaS finance automation platform. Stack: Next.js 15 / FastAPI / PostgreSQL / Supabase Storage. Deployed via Render (not yet deployed to production — this is the first live deployment).
+PRAD is a multi-tenant SaaS finance automation platform. Stack: Next.js 15 / FastAPI / PostgreSQL / Supabase Storage. Deployed via Render (not yet deployed to production — this is the first live deployment).
 
 ### Three-mode architecture (core invariant)
 Every transaction module must support three posting modes from its first commit. The mode is set per tenant in the SA Portal; tenants never change it.
@@ -20,7 +20,7 @@ Every transaction module must support three posting modes from its first commit.
 | Mode | Behaviour |
 |---|---|
 | **Lite** | Workflow + approve + CSV export only. No GL coding. No internal GL. |
-| **Connected** | Full GL coding + dimensions in Ziva BI. Posts to external ERP via `posting_batches` export queue. |
+| **Connected** | Full GL coding + dimensions in PRAD. Posts to external ERP via `posting_batches` export queue. |
 | **Full ERP** | Full GL coding. Posts to internal `journal_entries`. Financial statements generated in-app. |
 
 The user experience is identical across modes. The difference is only in the posting service layer (`expense_posting.py` is the reference pattern).

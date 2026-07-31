@@ -1,5 +1,5 @@
 """
-ZivaBI — Account Determination Pydantic schemas (updated for catalogue redesign).
+PRAD — Account Determination Pydantic schemas (updated for catalogue redesign).
 """
 
 from typing import Optional

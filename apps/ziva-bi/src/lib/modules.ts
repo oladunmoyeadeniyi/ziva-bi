@@ -1,7 +1,7 @@
 /**
  * frontend/src/lib/modules.ts
  * ===========================
- * Frontend single source of truth for all Ziva BI module definitions.
+ * Frontend single source of truth for all PRAD module definitions.
  *
  * Mirrors backend/app/constants/modules.py — keep in sync when adding
  * or removing modules. Both files must be updated together.

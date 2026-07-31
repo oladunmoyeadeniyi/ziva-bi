@@ -1,7 +1,7 @@
 """
-Ziva BI — Intelligent Categorization Engine (ICE) ORM models.
+PRAD — Intelligent Categorization Engine (ICE) ORM models.
 
-ICE is Ziva BI's AI brain for financial classification. It learns from
+ICE is PRAD's AI brain for financial classification. It learns from
 historical GL selections, vendor patterns, and employee behaviour to suggest
 GL accounts, dimensions, and expense categories with confidence scores.
 

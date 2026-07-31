@@ -1,6 +1,6 @@
-# Ziva BI — Audit & Compliance Module PRD
+# PRAD — Audit & Compliance Module PRD
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Audit & Compliance (Functional Module)
 **Version:** 1.0
 **Deployable:** Stand-alone or combined with any other module
@@ -36,7 +36,7 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-The Audit & Compliance Module in Ziva BI provides companies,
+The Audit & Compliance Module in PRAD provides companies,
 internal/external auditors, regulatory bodies, and finance managers a
 centralized, automated, highly traceable audit environment.
 
@@ -98,14 +98,14 @@ Finance, accounting, and audit teams face:
 
 -   Missing or broken audit trails
 
-Ziva BI fixes all of these with a zero-manual-effort, fully automated,
+PRAD fixes all of these with a zero-manual-effort, fully automated,
 workflow-driven audit system.
 
 ## 3. GOALS & NON-GOALS
 
 ### Goals
 
--   Allow auditors to perform audits end-to-end inside Ziva BI.
+-   Allow auditors to perform audits end-to-end inside PRAD.
 
 -   Provide full traceability for every action.
 
@@ -710,7 +710,7 @@ Tenant admin can configure:
 
 A module is "complete" when:
 
--   Auditor can initiate and complete an audit fully inside Ziva BI
+-   Auditor can initiate and complete an audit fully inside PRAD
 
 -   Queries flow through the workflow without email
 

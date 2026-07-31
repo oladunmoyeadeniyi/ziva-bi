@@ -144,7 +144,7 @@ ENVIRONMENT=development →  rpId = "localhost"
 
 ### 3g. WebAuthn RP configuration
 - `rpId`: `"zivabi.com"` — single enrollment, works across all 5 apps
-- `rpName`: `"Ziva BI"`
+- `rpName`: `"PRAD"`
 - `expectedOrigins`: per-request origin validation against the calling app's origin (`expense.zivabi.com`, `approve.zivabi.com`, etc.) — `py_webauthn` supports a list of expected origins
 - Challenge storage: server-side in-memory cache (Redis later; `{}` dict for now keyed by `user_id`) — 5-minute TTL, single-use
 
@@ -173,7 +173,7 @@ Each PWA app must include a **Manage Devices** page (`/settings/devices`) where 
 
 | App | `name` | `short_name` | `theme_color` | `start_url` | `display` |
 |---|---|---|---|---|---|
-| ziva-bi | Ziva BI | Ziva BI | `#1a1a2e` | `/` | `browser` (desktop — NOT a PWA) |
+| ziva-bi | PRAD | PRAD | `#1a1a2e` | `/` | `browser` (desktop — NOT a PWA) |
 | ziva-expense | Ziva Expense | Expense | `#4f46e5` | `/` | `standalone` |
 | ziva-approve | Ziva Approve | Approve | `#0ea5e9` | `/inbox` | `standalone` |
 | ziva-procure | Ziva Procure | Procure | `#10b981` | `/` | `standalone` |
@@ -335,7 +335,7 @@ No 6th PWA. The SA portal stays inside `apps/ziva-bi`. Instead, a **SA mobile re
 
 Complex SA config (consultant panel, billing, nuke) stays desktop-only by design.
 
-### Ziva BI Desktop — Mobile Accessibility
+### PRAD Desktop — Mobile Accessibility
 The desktop app is not being rebuilt mobile-first, but a **mobile accessibility pass** is added as a Phase 8+ item for:
 - Login page and auth flows
 - Dashboard overview
@@ -364,7 +364,7 @@ This sequence minimises risk by building infrastructure before features, and ens
 | **Phase 10** | Ziva Procure feature pages | |
 | **Phase 11** | Ziva Insights feature pages | |
 | **Phase 12** | SA portal mobile responsiveness pass (within `apps/ziva-bi`) | |
-| **Phase 13** | Ziva BI desktop mobile accessibility pass (sidebar hamburger, dashboards, key reports) | |
+| **Phase 13** | PRAD desktop mobile accessibility pass (sidebar hamburger, dashboards, key reports) | |
 
 ---
 

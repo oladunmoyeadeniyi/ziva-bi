@@ -1,7 +1,7 @@
 """
-ZivaBI — platform (owner portal) router — M9.1.
+PRAD — platform (owner portal) router — M9.1.
 
-All endpoints are super-admin only. This is the Ziva BI internal management
+All endpoints are super-admin only. This is the PRAD internal management
 surface — it crosses all tenant boundaries and must never be exposed to
 tenant-scoped users.
 

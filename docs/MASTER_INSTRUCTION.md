@@ -1,4 +1,4 @@
-# MASTER INSTRUCTION DOCUMENT — Ziva BI
+# MASTER INSTRUCTION DOCUMENT — PRAD
 
 > The rulebook. Every Cowork and Claude Code (CC) session must follow these.
 > If anything conflicts with `MASTER_CONTEXT.md`, that document wins (it's the deepest source of truth).

@@ -1,5 +1,5 @@
 """
-ZivaBI — Account Determination resolver service.
+PRAD — Account Determination resolver service.
 
 Modules call resolve_account() (or resolve_many()) before building journal lines.
 The resolver looks up the tenant's TenantAccountMapping for the requested role and

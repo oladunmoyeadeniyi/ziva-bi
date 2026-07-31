@@ -1,5 +1,5 @@
 """
-ZivaBI schemas package.
+PRAD schemas package.
 
 Import all schema modules here for convenient re-export.
 """

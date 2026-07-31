@@ -1,5 +1,5 @@
 """
-ZivaBI — approval workflow router (Milestones 4–5 + Approval Engine).
+PRAD — approval workflow router (Milestones 4–5 + Approval Engine).
 
 Implements the full expense approval chain with audit trail, snapshots,
 refer-back enhancements, separation of duties, full email coverage, and the

@@ -121,7 +121,7 @@ Body:
    
    Reason: {rejection_comment}
    
-   Please log in to Ziva BI to review and resubmit."
+   Please log in to PRAD to review and resubmit."
 
 ---
 

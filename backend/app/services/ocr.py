@@ -1,5 +1,5 @@
 """
-ZivaBI — OCR service (M10 AI Engine).
+PRAD — OCR service (M10 AI Engine).
 
 Wraps the Anthropic Vision/Documents API to extract structured financial data
 from receipt and invoice images.  Called by routers/ai.py.

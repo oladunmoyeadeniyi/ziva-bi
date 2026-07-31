@@ -1,5 +1,5 @@
 """
-ZivaBI — platform (owner portal) Pydantic schemas.
+PRAD — platform (owner portal) Pydantic schemas.
 
 Used exclusively by routers/platform.py — super-admin-only endpoints for
 tenant lifecycle management. No tenant-scoped user should ever see these.
@@ -344,7 +344,7 @@ class CreateTenantRequest(BaseModel):
     admin_email: str
     admin_full_name: str
     posting_mode: Literal["lite", "connected", "full_erp"] = "full_erp"
-    is_internal: bool = False  # True = Ziva BI internal sandbox, not a real client
+    is_internal: bool = False  # True = PRAD internal sandbox, not a real client
     # Optional trial lead fields
     company_size: Optional[str] = None
     interested_modules: Optional[list[str]] = None

@@ -1,5 +1,5 @@
 """
-ZivaBI — WebAuthn router.
+PRAD — WebAuthn router.
 
 Endpoints:
     POST /api/auth/webauthn/register/begin          Generate registration options

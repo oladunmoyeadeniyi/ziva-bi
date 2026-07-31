@@ -14,7 +14,7 @@ Always read all three before coding anything. Update `MASTER_CONTEXT.md` after e
 
 ## Cowork ↔ Claude Code Workflow
 
-Ziva BI uses two AI agents with distinct roles:
+PRAD uses two AI agents with distinct roles:
 
 | Agent | Role |
 |---|---|

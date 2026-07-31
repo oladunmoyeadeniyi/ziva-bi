@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Account Pydantic schemas.
+PRAD — Bank Account Pydantic schemas.
 """
 
 from datetime import datetime

@@ -1,7 +1,7 @@
 """
 Platform-level configuration model.
 
-Stores key/value pairs that apply globally across the entire Ziva BI
+Stores key/value pairs that apply globally across the entire PRAD
 installation — not scoped to any tenant.  Editable only by super-admins via
 the SA Portal → Platform Settings page.
 
@@ -36,7 +36,7 @@ class PlatformConfig(Base):
 
     Example usage:
         row = await db.get(PlatformConfig, "app_name")
-        print(row.value)   # → "Ziva BI"
+        print(row.value)   # → "PRAD"
     """
 
     __tablename__ = "platform_config"

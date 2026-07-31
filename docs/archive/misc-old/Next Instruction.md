@@ -10,7 +10,7 @@ with full GL coding, modelled on a real enterprise expense form.
 
 Here is the exact specification. Build this instead:
 
-We are building Milestone 3 of Ziva BI: Business Expense Retirement submission.
+We are building Milestone 3 of PRAD: Business Expense Retirement submission.
 
 Read MASTER_CONTEXT.md and EXPENSE_MANAGEMENT_PRD.md in the docs/ folder before writing any code.
 

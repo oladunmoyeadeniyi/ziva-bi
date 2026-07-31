@@ -1,6 +1,6 @@
 # Bank Reconciliation Module — Product Requirements Document (PRD)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Bank Reconciliation
 **Document status:** Converted from source Word document to Markdown
 **Converted on:** July 25, 2026

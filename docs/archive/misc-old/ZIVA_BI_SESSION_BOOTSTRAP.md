@@ -29,11 +29,11 @@ This document is a complete handover from a prior Claude session — covering BO
 
 ## 2. PROJECT OVERVIEW
 
-**Ziva BI** is an enterprise-grade multi-tenant SaaS finance automation platform Adeniyi is building to compete with Sage X3 and Oracle. It serves both individual and business account types from one codebase (business tier is what's been built so far).
+**PRAD** is an enterprise-grade multi-tenant SaaS finance automation platform Adeniyi is building to compete with Sage X3 and Oracle. It serves both individual and business account types from one codebase (business tier is what's been built so far).
 
 **Adeniyi Oladunmoye** — Chartered Accountant (ICAN, 2019), graduated Osun State University 2015 (Accounting, 2:1). Worked at Ernst & Young ~2 years. Currently **Chief Accountant at Red Bull Nigeria Limited**, transitioning to **Controller**. His Sage X3 experience at Red Bull directly shapes product/architecture decisions (he frequently compares Ziva's design choices to how Sage X3 or Oracle handle the same problem). Non-technical — does not write code. Plans UK relocation in Q4 2026.
 
-**His broader personal goals** (for context on tone/register, not to be injected into unrelated technical answers): building Ziva BI toward financial independence/early retirement, remote work in foreign currency, raising his son Nathan to be multilingual/musical/sporty/spiritually grounded, improving public speaking and retentive memory, general self-improvement and discipline.
+**His broader personal goals** (for context on tone/register, not to be injected into unrelated technical answers): building PRAD toward financial independence/early retirement, remote work in foreign currency, raising his son Nathan to be multilingual/musical/sporty/spiritually grounded, improving public speaking and retentive memory, general self-improvement and discipline.
 
 **Stack:**
 - Frontend: Next.js 15, React, TailwindCSS
@@ -268,7 +268,7 @@ This chat's work (Sections 7-11) builds on top of substantial prior work. Read t
 
 **Test Data Hygiene (process fix):**
 - 3a's acceptance tests had run directly against LIVE Red Bull (creating 28 real expense reports + 6 real posted journals as pollution). Cleaned up (verified: 0 expense_reports, 0 journal_entries left on Red Bull after cleanup, cascades clean, audit log preserved as historical record, other tenants untouched).
-- **Standing rule now in force:** ALL future acceptance/script tests that perform real writes MUST use the dedicated test tenant `f2aecfab-025f-410f-a7f6-df923172c8a1` ("Ziva BI — Test Tenant"), documented in `docs/TEST_TENANT.md`. This is a Ziva-INTERNAL engineering fixture, distinct from per-CLIENT test shadows (Red Bull's own `environment=test` shadow under Phase 1-4 above) — they serve different audiences and Adeniyi explicitly confirmed both should coexist.
+- **Standing rule now in force:** ALL future acceptance/script tests that perform real writes MUST use the dedicated test tenant `f2aecfab-025f-410f-a7f6-df923172c8a1` ("PRAD — Test Tenant"), documented in `docs/TEST_TENANT.md`. This is a Ziva-INTERNAL engineering fixture, distinct from per-CLIENT test shadows (Red Bull's own `environment=test` shadow under Phase 1-4 above) — they serve different audiences and Adeniyi explicitly confirmed both should coexist.
 
 ### 🟡 IN PROGRESS (where we stopped — see Section 11 for exact next step)
 
@@ -299,7 +299,7 @@ This chat's work (Sections 7-11) builds on top of substantial prior work. Read t
 10. **Matching strategy for promotion = natural keys, NOT a persistent ID-mapping table.** Confirmed safe via direct schema investigation (gl_number, dimension codes, etc. are reliably unique per tenant via partial-unique indexes on active rows).
 11. **Promotion requires a review/diff screen before any write — never a blind "promote" button** for CoA/Dimensions (unlike the simpler org/tax/fx promote, which IS a blind copy). Adeniyi: "I would expect a confirmation page... where the current state of live and the new update... will be side by side and individually can be accepted/confirmed... and accept all button for all to be confirmed." Deactivations in test DO propagate to live on next promotion, but only via this reviewed path, never silently.
 12. **Deactivation propagates on promotion** (if deactivated in test, next promote deactivates in live too) — but ONLY through the reviewed diff, per #11.
-13. **Two distinct "test tenant" concepts coexist, deliberately:** (a) Ziva-internal engineering/QA fixture (the standalone "Ziva BI — Test Tenant") for CC's own script tests — never client-facing; (b) per-CLIENT implementation/rehearsal shadow (Red Bull's own `environment=test` tenant via `parent_tenant_id`) — for the CLIENT's own implementation team to rehearse. Adeniyi confirmed explicitly both should exist for different audiences.
+13. **Two distinct "test tenant" concepts coexist, deliberately:** (a) Ziva-internal engineering/QA fixture (the standalone "PRAD — Test Tenant") for CC's own script tests — never client-facing; (b) per-CLIENT implementation/rehearsal shadow (Red Bull's own `environment=test` tenant via `parent_tenant_id`) — for the CLIENT's own implementation team to rehearse. Adeniyi confirmed explicitly both should exist for different audiences.
 14. **Clone-on-create defaults to ON, with an opt-out toggle.** Adeniyi: "let there be a toggle button to disable/enable snapshot/clone on click of create test environment. Let snapshot/clone be as default." (UI toggle not yet built — backend param exists.)
 15. **Clone scope = EVERYTHING, not just accounting config.** Adeniyi explicitly expanded scope beyond CoA/dimensions to include Bank Accounts, Employees, Cost Centers ("Everything including bank accounts, employees, cost centers too") — this is why Phase 4 became a 9-step engine instead of reusing Phase 3a's 5 entities directly.
 16. **`FinanceReviewConfig` included in the clone** (Adeniyi: "Include FinanceReviewConfig in Phase 4, one more simple step").

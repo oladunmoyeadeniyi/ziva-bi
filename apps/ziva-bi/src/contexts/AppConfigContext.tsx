@@ -21,7 +21,7 @@ interface AppConfig {
   appName: string;
 }
 
-const AppConfigContext = createContext<AppConfig>({ appName: "Ziva BI" });
+const AppConfigContext = createContext<AppConfig>({ appName: "PRAD" });
 
 export function AppConfigProvider({
   appName,
@@ -37,7 +37,7 @@ export function AppConfigProvider({
   );
 }
 
-/** Return the platform config. Falls back to "Ziva BI" if provider is absent. */
+/** Return the platform config. Falls back to "PRAD" if provider is absent. */
 export function useAppConfig(): AppConfig {
   return useContext(AppConfigContext);
 }

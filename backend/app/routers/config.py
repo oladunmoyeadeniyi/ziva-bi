@@ -1,5 +1,5 @@
 """
-ZivaBI — M8 master data configuration router.
+PRAD — M8 master data configuration router.
 
 Registered at prefix /api/config.
 
@@ -1564,7 +1564,7 @@ async def download_coa_template(
         cell = ws1.cell(row=1, column=col_idx)
         example = examples.get(header.replace("*", "").strip(), "")
         if example:
-            comment = Comment(example, "Ziva BI")
+            comment = Comment(example, "PRAD")
             comment.width = 200
             comment.height = 60
             cell.comment = comment
@@ -1581,7 +1581,7 @@ async def download_coa_template(
             "         (SOFP — Statement of Financial Position)\n\n"
             "Both PL/BS and SOCI/SOFP are accepted on upload."
         ),
-        author="Ziva BI"
+        author="PRAD"
     )
     at_comment.width = 280
     at_comment.height = 120
@@ -2963,7 +2963,7 @@ async def download_remap_template(
         cell.fill = hdr_fill; cell.font = hdr_font
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
         ws.column_dimensions[get_column_letter(ci)].width = w
-        comment = XLComment(comment_text, "Ziva BI")
+        comment = XLComment(comment_text, "PRAD")
         comment.width = 200; comment.height = 60
         cell.comment = comment
     ws.row_dimensions[1].height = 28

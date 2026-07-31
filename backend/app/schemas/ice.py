@@ -1,5 +1,5 @@
 """
-Ziva BI — Intelligent Categorization Engine (ICE) Pydantic schemas.
+PRAD — Intelligent Categorization Engine (ICE) Pydantic schemas.
 
 Request/response schemas for all ICE API endpoints:
     POST /api/ai/ice/predict       — get GL + category + dimension suggestions

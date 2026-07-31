@@ -1,6 +1,6 @@
 # Vendor Onboarding Module — Product Requirements Document (PRD)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** Vendor Onboarding
 **Document status:** Merged and converted from two source Word documents to Markdown
 **Converted on:** July 25, 2026

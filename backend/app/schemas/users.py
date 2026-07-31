@@ -1,5 +1,5 @@
 """
-ZivaBI — user management Pydantic schemas (Milestone 5 + profile backend).
+PRAD — user management Pydantic schemas (Milestone 5 + profile backend).
 
 Covers: profile updates, password changes, tenant user management, invitations,
 active-session listing/revocation, and TOTP 2FA enrollment/verify/disable.

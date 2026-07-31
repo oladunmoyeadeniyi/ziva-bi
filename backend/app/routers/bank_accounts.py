@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Accounts register router.
+PRAD — Bank Accounts register router.
 
 Prefix:  /api/setup/bank-accounts
 Tags:    bank-accounts

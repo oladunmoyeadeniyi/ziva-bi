@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.2/M8.3 Implementation Portal router.
+PRAD — M8.2/M8.3 Implementation Portal router.
 
 Registered at prefix /api/setup.
 
@@ -1005,7 +1005,7 @@ async def download_org_structure_template(
         ("Name *",           "Required. Full display name. Examples: Finance, Sales, Operations"),
         ("Code *",           "Required. Unique short code, no spaces. Examples: LEG001, FIN-NG"),
         ("Parent Code",      "Code of this node's parent. Leave blank only for the top-level Legal entity.\nMust exactly match a Code in this file or already in the system."),
-        ("Cost Center Code", "Required when Node Type = Cost center. Must match the dimension value code in Ziva BI.\nLeave blank for Legal entity, Division, and Department nodes.\nConditional formatting flags missing values in red."),
+        ("Cost Center Code", "Required when Node Type = Cost center. Must match the dimension value code in PRAD.\nLeave blank for Legal entity, Division, and Department nodes.\nConditional formatting flags missing values in red."),
         ("Entity Code",      "Optional. Legal entity nodes only. Stores the ERP profit centre / entity code.\nExample: ENT001 (your ERP profit centre or entity code)."),
         ("Description",      "Optional. Any notes about this node."),
     ]
@@ -1102,12 +1102,12 @@ async def download_org_structure_template(
         "Full display name.\nExamples: Finance, Sales, Operations",
         "Unique short code, no spaces.\nExamples: LEG001, FIN-NG",
         "Code of this node\'s parent.\nLeave blank only for the top-level node.\nMust exactly match a Code in this file or already in the system.",
-        "Required when Node Type = Cost center.\nMust match the dimension value code in Ziva BI.\nLeave blank for Legal entity, Division, Department nodes.",
+        "Required when Node Type = Cost center.\nMust match the dimension value code in PRAD.\nLeave blank for Legal entity, Division, Department nodes.",
         "Optional. Legal entity nodes only.\nYour ERP profit centre or entity code.\nExample: ENT001",
         "Optional. Any notes about this node.",
     ]
     for ci, tip in enumerate(header_tips, 1):
-        comment = XlComment(tip, "Ziva BI")
+        comment = XlComment(tip, "PRAD")
         comment.width = 260
         comment.height = 100
         ws.cell(row=1, column=ci).comment = comment
@@ -3286,7 +3286,7 @@ async def patch_roles_matrix(
 ) -> PermissionMatrixResponse:
     """Upsert permission matrix cells. Super admin (consultant) only."""
     if not current_user.is_super_admin:
-        raise HTTPException(status_code=403, detail="Only ZivaBI Consultants can modify the permission matrix.")
+        raise HTTPException(status_code=403, detail="Only PRAD Consultants can modify the permission matrix.")
     tenant_id = _require_tenant(current_user)
 
     for cell in data.cells:

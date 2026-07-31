@@ -1,5 +1,5 @@
 """
-ZivaBI — Central GL posting service (GL Engine #1).
+PRAD — Central GL posting service (GL Engine #1).
 
 ONE function that every module calls to post a balanced journal entry:
     post_journal(db, tenant_id, *, entry_date, description, source, lines, ...) -> JournalEntry

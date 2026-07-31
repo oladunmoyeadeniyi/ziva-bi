@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Statement CSV/Excel Parser (M11c).
+PRAD — Bank Statement CSV/Excel Parser (M11c).
 
 Parses uploaded bank statement files into a list of BankStatementLineCreate
 objects that the router then bulk-inserts into bank_statement_lines.

@@ -1,5 +1,5 @@
 """
-ZivaBI — supporting documents router (Milestone 6 + tasks #53, #54, #55).
+PRAD — supporting documents router (Milestone 6 + tasks #53, #54, #55).
 
 Handles file attachments for expense reports. Files are stored in Supabase
 Storage; this router manages metadata in the expense_documents table and

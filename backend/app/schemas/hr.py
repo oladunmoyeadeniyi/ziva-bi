@@ -1,5 +1,5 @@
 """
-ZivaBI — Pydantic schemas for M8.1 HR module (employees, cost center config, finance review).
+PRAD — Pydantic schemas for M8.1 HR module (employees, cost center config, finance review).
 
 Used by /api/hr/ router for:
   - Employee CRUD, bulk upload, transfer, code history

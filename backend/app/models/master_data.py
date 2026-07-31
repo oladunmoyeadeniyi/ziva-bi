@@ -1,5 +1,5 @@
 """
-ZivaBI — M8 / M8.1 master data ORM models.
+PRAD — M8 / M8.1 master data ORM models.
 
 Tables:
     tenant_dimensions           — financial dimensions a tenant has configured
@@ -693,7 +693,7 @@ class CostCenterConfig(Base):
     Cost center head assignment.
 
     Links a cost center (dimension value) to a head employee and optionally
-    to a Ziva BI user account.
+    to a PRAD user account.
     Unique per (tenant_id, cost_center_id).
     """
 
@@ -837,7 +837,7 @@ class FinanceReviewConfig(Base):
     """
     Finance reviewer configuration per module.
 
-    reviewer_user_id: the Ziva BI user assigned as finance reviewer.
+    reviewer_user_id: the PRAD user assigned as finance reviewer.
     module: 'expense_retirement' or 'accounts_payable'.
     cost_center_id: NULL means applies to all cost centers.
     review_level: integer ordering of the review queue (1 = first).

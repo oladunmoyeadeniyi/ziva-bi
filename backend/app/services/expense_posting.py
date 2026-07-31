@@ -1,5 +1,5 @@
 """
-ZivaBI — Expense GL posting service.
+PRAD — Expense GL posting service.
 
 Three-mode routing (docs/BRIEF_three_mode_architecture.md):
 

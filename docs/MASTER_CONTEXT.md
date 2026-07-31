@@ -1,4 +1,4 @@
-# MASTER CONTEXT — Ziva BI
+# MASTER CONTEXT — PRAD
 > **Role of this document:** Durable decisions and rationale (the "why") — locked principles, architectural choices, milestone intent, and process guidance. This does NOT contain volatile facts.
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
@@ -9,7 +9,7 @@
 
 ## 1. PRODUCT VISION
 
-Ziva BI is an intelligent, fully automated, end-to-end business operations platform for companies of every size and industry. It is a world-class, enterprise-grade SaaS product — not a demo, not a prototype.
+PRAD is an intelligent, fully automated, end-to-end business operations platform for companies of every size and industry. It is a world-class, enterprise-grade SaaS product — not a demo, not a prototype.
 
 **Mission:** Zero manual work. 100% automation. Intelligent decision-making.
 
@@ -39,10 +39,10 @@ Ziva BI is an intelligent, fully automated, end-to-end business operations platf
 
 ## 3. PORTAL ARCHITECTURE
 
-Ziva BI has **two portals**, not one:
+PRAD has **two portals**, not one:
 
 ### 3.1 Super Admin Portal (Owner Portal)
-- Used exclusively by the Ziva BI internal team
+- Used exclusively by the PRAD internal team
 **Built so far:**
 - Tenant lifecycle management: list/detail, lifecycle transitions, suspend/reactivate, impersonation ("enter" tenant), full test↔live promotion engine (diff + apply). Routes under `/api/platform/*`, frontend at `/platform/tenants*`.
 - "Trials & signups" lead management page (`/platform/trials`): lists all `lifecycle_status='trial'` tenants, lead-status tabs (new/contacted/qualified/disqualified), inline notes, search, one-click activation to `'in_implementation'`.
@@ -55,7 +55,7 @@ Ziva BI has **two portals**, not one:
 
 This is the main portal. It serves both implementation consultants and the company's own staff. Role tier determines what each person sees and can do.
 
-#### Role Tier 1 — Consultant (Ziva BI implementation team)
+#### Role Tier 1 — Consultant (PRAD implementation team)
 - Assigned by Super Admin only
 - Full access to everything in the tenant
 - Can override any configuration
@@ -63,7 +63,7 @@ This is the main portal. It serves both implementation consultants and the compa
 - Can impersonate any user for testing
 - Every action logged against consultant account
 - Sees "Implementation mode" banner
-- Locked settings show lock icon + "Contact your Ziva BI consultant to modify"
+- Locked settings show lock icon + "Contact your PRAD consultant to modify"
 
 #### Role Tier 2 — Power Admin (e.g. Finance Director / CFO)
 - Assigned by Consultant
@@ -89,8 +89,8 @@ Every module supports all three modes from day one. The mode is set by the consu
 | Mode | Description | GL posting |
 |---|---|---|
 | **Lite** | Workflow-only. No GL coding. Basic CSV export of approved transactions. | None |
-| **Connected** | Full GL coding + dimensions in Ziva BI, posts to an **external ERP** (download or API sync). | Export queue (`posting_batches`) |
-| **Full ERP** | Everything inside Ziva BI. GL posts to `journal_entries`. Financial statements in-app. | Internal GL |
+| **Connected** | Full GL coding + dimensions in PRAD, posts to an **external ERP** (download or API sync). | Export queue (`posting_batches`) |
+| **Full ERP** | Everything inside PRAD. GL posts to `journal_entries`. Financial statements in-app. | Internal GL |
 
 ### Nomenclature (locked — do not rename)
 - **Lite** — not "Standalone", not "Basic", not "Simple"
@@ -439,7 +439,7 @@ Eliminated the `positions` / `position_history` tables as a separate concept. Ro
 - **`/api/approvals/roles`** extended — returns `code`, `grade`, `occupant_count` per role.
 - **Positions frontend page** — updated for `approval_roles` field names; Import from Role Hierarchy button generates positions from the current role hierarchy.
 
-**Key architectural decision:** "Position" and "Role" are the same concept in Ziva BI — defined by `(name, area, sub_area)` on `approval_roles`. `code` and `grade` on `approval_roles` carry the job-grading information. No separate positions table needed.
+**Key architectural decision:** "Position" and "Role" are the same concept in PRAD — defined by `(name, area, sub_area)` on `approval_roles`. `code` and `grade` on `approval_roles` carry the job-grading information. No separate positions table needed.
 
 ---
 
@@ -741,7 +741,7 @@ Three improvements bundled in one commit (migration `p4q5r6s7t8u9`, all 7 files 
 - **`TenantListItem` schema** — `is_internal: bool` added to the list-endpoint response shape.
 - **`CreateTenantRequest` schema** — `is_internal: bool = False` (SA-settable at creation; defaults false).
 - **`platform.py`** `list_tenants()` and `create_tenant()` wired through.
-- Use: Ziva BI internal sandbox/demo tenants (e.g. the Red Bull build-verification company) are marked `is_internal=True` so they can be excluded from commercial reporting and clearly distinguished in the SA portal.
+- Use: PRAD internal sandbox/demo tenants (e.g. the Red Bull build-verification company) are marked `is_internal=True` so they can be excluded from commercial reporting and clearly distinguished in the SA portal.
 
 **2. `MODULE_MODE_AVAILABILITY` centralised to `lib/modules.ts`:**
 - Moved from an inline constant in `setup/modules/page.tsx` to `apps/ziva-bi/src/lib/modules.ts` as a named export.
@@ -902,10 +902,10 @@ Extended the approval-matrix system with three major capabilities:
 
 ### Dynamic App Name — platform_config single source of truth (2026-07-21, pending CC commit `u3v4w5x6y7z8`)
 
-All hardcoded product name strings (`"Ziva BI"` / `"ZivaBI"`) removed from frontend, emails, and TOTP issuer. The name now lives in `platform_config` and propagates everywhere with no code redeploy.
+All hardcoded product name strings (`"PRAD"` / `"ZivaBI"`) removed from frontend, emails, and TOTP issuer. The name now lives in `platform_config` and propagates everywhere with no code redeploy.
 
 **Migration `u3v4w5x6y7z8` (`platform_config_table`):**
-- Creates `platform_config` table: `key VARCHAR(100) PK`, `value TEXT NOT NULL`, `description TEXT`, `updated_at`, `updated_by FK→users nullable`. Seeded with `app_name = 'Ziva BI'`.
+- Creates `platform_config` table: `key VARCHAR(100) PK`, `value TEXT NOT NULL`, `description TEXT`, `updated_at`, `updated_by FK→users nullable`. Seeded with `app_name = 'PRAD'`.
 
 **Backend — new files:**
 - `app/models/platform_config.py` — `PlatformConfig` ORM model.
@@ -916,7 +916,7 @@ All hardcoded product name strings (`"Ziva BI"` / `"ZivaBI"`) removed from front
 - `app/routers/platform.py` — two new SA-only endpoints:
   - `GET /api/platform/config` → list all `platform_config` rows.
   - `PATCH /api/platform/config/{key}` → update a key's value; 404 for unknown keys; 422 for blank values; writes audit log entry `platform.config.updated`.
-- `app/routers/tenant.py` — `_send_invitation_email()` now takes `app_name: str` param (default `"Ziva BI"`); call site resolves `await get_app_name(db)`.
+- `app/routers/tenant.py` — `_send_invitation_email()` now takes `app_name: str` param (default `"PRAD"`); call site resolves `await get_app_name(db)`.
 - `app/routers/users.py` — TOTP provisioning URI `issuer_name` now reads `await get_app_name(db)` instead of `"ZivaBI"`.
 - `app/main.py` — registers `app_config_router`.
 - `app/models/__init__.py` — imports `PlatformConfig`.
@@ -941,7 +941,7 @@ Replaced all SMTP stubs with a production-ready Resend-backed email service. Eve
 - `alembic/versions/w5x6y7z8a9b0_password_reset_tokens.py` — migration creating `password_reset_tokens` table (down_revision: `v4w5x6y7z8a9`).
 
 **Backend — modified files:**
-- `config.py` — removed `smtp_host/smtp_port/smtp_user/smtp_password/smtp_from_email`; added `resend_api_key: str = ""` and `email_from: str = "Ziva BI <onboarding@resend.dev>"`.
+- `config.py` — removed `smtp_host/smtp_port/smtp_user/smtp_password/smtp_from_email`; added `resend_api_key: str = ""` and `email_from: str = "PRAD <onboarding@resend.dev>"`.
 - `render.yaml` — replaced `SMTP_*` env vars with `RESEND_API_KEY` (sync: false) + `EMAIL_FROM`.
 - `models/auth.py` — added `PasswordResetToken` ORM model (SHA-256 token_hash, expires_at, used_at, one-use + 1hr TTL). FK → users CASCADE.
 - `schemas/auth.py` — added `ForgotPasswordRequest` (normalises email lowercase) + `ResetPasswordRequest`.

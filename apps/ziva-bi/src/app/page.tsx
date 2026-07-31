@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Root landing page — ZivaBI.
+ * Root landing page — PRAD.
  *
  * Redirects authenticated users to their dashboard and unauthenticated
  * users to the login page. The AuthContext handles session restoration

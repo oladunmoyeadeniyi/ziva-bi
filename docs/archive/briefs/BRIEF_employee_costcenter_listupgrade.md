@@ -95,7 +95,7 @@ No change — Adeniyi confirmed it stays standalone. Do not touch navigation for
 9. Upload a file where the head is a brand-new employee in the SAME file (two-pass resolution) → head correctly resolved after both employees are created.
 10. Employee List delete/replace/update/filter/sort all confirmed working and matching CoA's actual pattern (not a guessed pattern) — CC must explicitly state in the completion summary how each maps to what CoA does.
 11. No regression: existing single Add Employee, existing Transfer, existing Code Update, existing bulk activate/deactivate, existing search all still work.
-12. All real-write tests run against test tenant `f2aecfab-025f-410f-a7f6-df923172c8a1` ("Ziva BI — Test Tenant") — NEVER live Red Bull.
+12. All real-write tests run against test tenant `f2aecfab-025f-410f-a7f6-df923172c8a1` ("PRAD — Test Tenant") — NEVER live Red Bull.
 13. `alembic current` confirmed equal to head if any migration was written, before declaring done.
 14. CORS (`http://localhost:3000` hardcoded) and DB name (`ziva_dev`) in `config.py` unchanged — confirm explicitly.
 

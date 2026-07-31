@@ -1,4 +1,4 @@
-# Ziva BI — Test Shadow Tenant
+# PRAD — Test Shadow Tenant
 
 All acceptance tests and script-based integration tests that perform real DB writes
 **must** use this tenant. Never write to the live Red Bull tenant.
@@ -64,7 +64,7 @@ the endpoint again.
 
 ## Retired tenant (deleted 2026-06-21)
 
-`f2aecfab-025f-410f-a7f6-df923172c8a1` — "Ziva BI — Test Tenant"
+`f2aecfab-025f-410f-a7f6-df923172c8a1` — "PRAD — Test Tenant"
 
 This was a standalone live tenant (`environment="live"`, no parent) created through
 the normal signup path, not a test shadow. It had no real data — only 2 dimension

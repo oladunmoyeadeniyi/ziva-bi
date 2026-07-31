@@ -1,4 +1,4 @@
-# Ziva BI — Expense Management Module PRD
+# PRAD — Expense Management Module PRD
 
 > **Version:** 2.0 (Unified — Individual + Business)
 > **Status:** Active — Build reference for Milestone 3 onward
@@ -32,7 +32,7 @@
 
 ## 1. Overview
 
-The Ziva BI Expense Management Module serves **two distinct user groups** on the same codebase:
+The PRAD Expense Management Module serves **two distinct user groups** on the same codebase:
 
 - **Individual users** — personal spending tracking, budgeting, bank statement analysis, and personal tax prep.
 - **Business users (SMB to Enterprise)** — employee expense submissions, multi-level approvals, GL/dimension mapping, automated posting, travel advances, and full audit compliance.
@@ -56,7 +56,7 @@ Most individuals:
 - Have no system that connects spending, income, and financial goals in one place.
 - Do not prepare for personal taxes until it is too late.
 
-Ziva BI solves this by giving individuals a clean, intelligent personal finance tracker that starts with manual entry and evolves into a bank-connected, AI-powered money management tool.
+PRAD solves this by giving individuals a clean, intelligent personal finance tracker that starts with manual entry and evolves into a bank-connected, AI-powered money management tool.
 
 ### 2.2 Business Users
 
@@ -71,7 +71,7 @@ Most organisations — particularly in Africa and emerging markets — still man
 - Employee fills Excel template → emails manager for approval → forwards to Finance with scanned receipts → Finance saves to structured folders → manually reviews and posts to Sage X3 → emails queries back and forth → compiles summary schedule → line manager approves → uploads to bank.
 - Pain: Power Query crashing at scale, manual duplicate checking, no real-time status visibility.
 
-Ziva BI replaces this entirely with a structured, automated, auditable workflow.
+PRAD replaces this entirely with a structured, automated, auditable workflow.
 
 ---
 
@@ -96,7 +96,7 @@ Ziva BI replaces this entirely with a structured, automated, auditable workflow.
 | CFO / Executive | Dashboard visibility. Optional high-value approver. |
 | Internal / External Auditor | Read-only. Downloads evidence bundles. |
 | Tenant Admin | Configures the module for the company. Manages COA, dimensions, workflows, users. |
-| Ziva BI Super Admin | Platform-level. Manages all tenants and modules. |
+| PRAD Super Admin | Platform-level. Manages all tenants and modules. |
 
 ---
 
@@ -199,7 +199,7 @@ This module is built incrementally. Each milestone is independently deployable a
 
 ### 6.2 M4-I: Bank Statement Upload + AI Categorisation
 
-**Done definition:** Individual can upload a bank statement (PDF or CSV), and Ziva BI extracts and categorises transactions automatically.
+**Done definition:** Individual can upload a bank statement (PDF or CSV), and PRAD extracts and categorises transactions automatically.
 
 **Supported formats:** PDF (text-based), CSV, Excel.
 
@@ -212,7 +212,7 @@ This module is built incrementally. Each milestone is independently deployable a
 
 **User flow:**
 1. Upload statement.
-2. Ziva BI parses transactions.
+2. PRAD parses transactions.
 3. Preview screen shows all transactions with suggested categories.
 4. User reviews, confirms, or overrides.
 5. On confirm: all transactions saved as expenses.
@@ -1214,7 +1214,7 @@ Integration modes: direct API push, manual export, scheduled bulk transfer.
 
 | Term | Definition |
 |---|---|
-| Tenant | A company using Ziva BI. Has its own isolated data, config, and workflow. |
+| Tenant | A company using PRAD. Has its own isolated data, config, and workflow. |
 | Request | Parent-level expense submission (contains one or more lines). |
 | Expense Line | A single expense entry inside a request. |
 | GL Account | General Ledger account from the tenant's Chart of Accounts. |

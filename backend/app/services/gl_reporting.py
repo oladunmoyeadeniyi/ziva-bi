@@ -1,5 +1,5 @@
 """
-ZivaBI — GL reporting service (GL Engine #2).
+PRAD — GL reporting service (GL Engine #2).
 
 Financial Statements (Q1a):
     profit_and_loss(db, tenant_id, *, date_from, date_to)

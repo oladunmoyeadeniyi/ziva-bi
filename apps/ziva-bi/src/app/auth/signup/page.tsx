@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Signup page — ZivaBI.
+ * Signup page — PRAD.
  *
  * Two-step form for business accounts.
  *   Step 1 — Account basics: name, email, company, country, password

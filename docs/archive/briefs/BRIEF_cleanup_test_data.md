@@ -27,7 +27,7 @@ Report the exact final row counts/ids before deleting anything.
 
 ## Establish a dedicated TEST TENANT for future script/acceptance tests (standing infrastructure)
 Going forward, ALL acceptance/script tests that perform real writes must run against a dedicated test tenant, never live Red Bull.
-- Create (or confirm if one already exists from earlier "open period" testing — the GL re-test session mentioned testing via Jan 2027 against the real tenant too, so check if a separate test tenant already exists anywhere) ONE reusable test tenant (e.g. name "Ziva BI — Test Tenant", clearly marked, environment can stay whatever the schema supports, but name/slug must be unmistakably a test fixture).
+- Create (or confirm if one already exists from earlier "open period" testing — the GL re-test session mentioned testing via Jan 2027 against the real tenant too, so check if a separate test tenant already exists anywhere) ONE reusable test tenant (e.g. name "PRAD — Test Tenant", clearly marked, environment can stay whatever the schema supports, but name/slug must be unmistakably a test fixture).
 - Document its tenant_id somewhere durable test scripts can reference (e.g. a constant in a shared test-utils file, or `docs/TEST_TENANT.md`) so future briefs/scripts use it instead of hardcoding or guessing Red Bull's id.
 - This test tenant needs minimal setup to be useful for GL/expense tests going forward: state what minimal setup it has (or needs) — e.g. at least one mapped employee_payable role + one BS GL + an open period — note as a follow-up if not done now (don't over-build this in the same brief; just create the tenant + a short note of what it still needs).
 

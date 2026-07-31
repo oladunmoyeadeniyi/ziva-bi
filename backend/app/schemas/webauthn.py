@@ -1,5 +1,5 @@
 """
-ZivaBI — WebAuthn and Push Pydantic schemas.
+PRAD — WebAuthn and Push Pydantic schemas.
 
 Covers:
     WebAuthn registration ceremony  (begin → complete)
@@ -48,7 +48,7 @@ class RegistrationOptionsResponse(BaseModel):
     serialised to JSON-compatible types for transport.
     """
     challenge: str
-    rp: dict[str, str]                  # {"id": "...", "name": "Ziva BI"}
+    rp: dict[str, str]                  # {"id": "...", "name": "PRAD"}
     user: dict[str, str]                # {"id": base64url(user_id), "name": email, "displayName": full_name}
     pubKeyCredParams: list[dict[str, Any]]
     timeout: int

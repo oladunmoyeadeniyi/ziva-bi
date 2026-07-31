@@ -1,5 +1,5 @@
 """
-ZivaBI — M8 Pydantic schemas for the master data configuration API.
+PRAD — M8 Pydantic schemas for the master data configuration API.
 
 Used by the /api/config/ router for dimensions, dimension values, chart of accounts,
 GL dimension requirements, category GL mappings, and expense form config.

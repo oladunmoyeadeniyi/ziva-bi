@@ -72,7 +72,7 @@ Do NOT: touch the existing org_config/tax/fx promote logic (Phase 2, working), C
 
 ---
 
-## Acceptance / test steps (state pass/fail each — use the dedicated Ziva BI Test Tenant's own test shadow if one can be created, or clearly state how you isolated this test from any real tenant data)
+## Acceptance / test steps (state pass/fail each — use the dedicated PRAD Test Tenant's own test shadow if one can be created, or clearly state how you isolated this test from any real tenant data)
 1. Diff on a live tenant with NO existing CoA/dimensions, test tenant with several active accounts/dimensions/values → all show as CREATE; correct dependency order in output.
 2. Apply that diff (accept all) → live now has matching rows; re-running diff afterward shows UNCHANGED (no diff) for those items.
 3. Modify a field on a test CoA row (e.g. gl_name) → diff shows UPDATE with correct before/after; apply updates only that field on the matched live row (same live id preserved).

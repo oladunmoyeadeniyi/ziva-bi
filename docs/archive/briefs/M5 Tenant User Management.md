@@ -90,10 +90,10 @@ POST /api/tenant/invitations
 - Generate secure token (secrets.token_urlsafe(32))
 - Set expires_at = now + 48 hours
 - Send invitation email:
-  Subject: "You've been invited to join [Tenant Name] on Ziva BI"
+  Subject: "You've been invited to join [Tenant Name] on PRAD"
   Body:
     "[Invited By Name] has invited you to join [Tenant Name] 
-     on Ziva BI as [Role].
+     on PRAD as [Role].
      
      Click the link below to accept your invitation:
      {FRONTEND_URL}/invite/accept?token={token}

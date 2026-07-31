@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Force-change-password page — ZivaBI.
+ * Force-change-password page — PRAD.
  *
  * Shown immediately after login when must_change_password=true (e.g. after a
  * Super Admin creates a tenant and sets a temporary password). The user cannot

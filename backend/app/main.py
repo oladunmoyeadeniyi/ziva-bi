@@ -1,5 +1,5 @@
 """
-ZivaBI API — application entry point.
+PRAD API — application entry point.
 
 Boots FastAPI, registers middleware, and exposes the /api/health endpoint.
 Every other module's router is registered here as features are built.
@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ZivaBI API",
+    title="PRAD API",
     version="0.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",

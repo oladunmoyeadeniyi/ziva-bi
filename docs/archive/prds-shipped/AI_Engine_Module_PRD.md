@@ -1,6 +1,6 @@
-# Ziva BI — AI Engine Module PRD (Version 1.0)
+# PRAD — AI Engine Module PRD (Version 1.0)
 
-**Product:** Ziva BI — Accounting Automation Platform
+**Product:** PRAD — Accounting Automation Platform
 **Module:** AI Engine (Cross-Platform Infrastructure)
 **Document status:** Converted from source Word document to Markdown
 **Converted on:** July 25, 2026
@@ -26,13 +26,13 @@
 
 ---
 
-**Prepared for:** Ziva BI Core Platform
+**Prepared for:** PRAD Core Platform
 **Module Type:** Cross-Platform Infrastructure Module
 **Audience:** PM, Tech Leads, Backend, AI/ML Engineers, UI/UX, QA, Compliance
 
 ## 1. EXECUTIVE SUMMARY
 
-The AI Engine Module is a core Ziva BI infrastructure component designed
+The AI Engine Module is a core PRAD infrastructure component designed
 to intelligently automate manually intensive accounting and operational
 workflows.
 
@@ -627,7 +627,7 @@ Auditors must be able to regenerate:
 
 ## 14. CONCLUSION
 
-The AI Engine is a critical accelerator for Ziva BI's mission:
+The AI Engine is a critical accelerator for PRAD's mission:
 
 ### "Zero Manual Work. Maximum Intelligence."
 

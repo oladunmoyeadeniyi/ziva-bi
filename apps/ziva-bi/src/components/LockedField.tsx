@@ -4,7 +4,7 @@
  * LockedField — M8.2 Implementation Portal component.
  *
  * Renders a locked field indicator for non-consultant users when a field
- * has been locked by the Ziva BI implementation team.
+ * has been locked by the PRAD implementation team.
  *
  * Consultant users (role_tier === 'consultant') see the normal editable field
  * passed as children — no lock UI is shown to them.

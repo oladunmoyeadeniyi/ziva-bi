@@ -47,10 +47,10 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
-        value: "Ziva BI <onboarding@resend.dev>"
+        value: "PRAD <onboarding@resend.dev>"
 
       # ── Platform owner ───────────────────────────────────────────────────────
-      # Set to the UUID of the Ziva BI owner account after first deploy + signup.
+      # Set to the UUID of the PRAD owner account after first deploy + signup.
       - key: OWNER_USER_ID
         sync: false
 

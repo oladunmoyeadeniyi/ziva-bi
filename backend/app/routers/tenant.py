@@ -1,5 +1,5 @@
 """
-ZivaBI — tenant admin management router (Milestone 5 + M9.0).
+PRAD — tenant admin management router (Milestone 5 + M9.0).
 
 All endpoints require Tenant Admin role. They allow the admin to view and
 manage all users within their tenant and send invitations for new members.
@@ -102,7 +102,7 @@ async def _send_invitation_email(
     invited_by_name: str,
     role: str,
     accept_url: str,
-    app_name: str = "Ziva BI",
+    app_name: str = "PRAD",
     suppress: bool = False,
 ) -> None:
     """Send invitation email via Resend; suppressed for test tenants."""

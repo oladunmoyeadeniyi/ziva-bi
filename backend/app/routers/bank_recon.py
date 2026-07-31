@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Reconciliation router (M11c).
+PRAD — Bank Reconciliation router (M11c).
 
 Prefix:  /api/bank-recon
 Tags:    bank-reconciliation

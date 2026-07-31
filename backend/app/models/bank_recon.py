@@ -1,5 +1,5 @@
 """
-ZivaBI — Bank Reconciliation ORM models (M11c).
+PRAD — Bank Reconciliation ORM models (M11c).
 
 Tables:
     bank_statements       — Header for one imported bank statement.

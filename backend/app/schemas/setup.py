@@ -1,5 +1,5 @@
 """
-ZivaBI — M8.2/M8.3 Implementation Portal Pydantic schemas.
+PRAD — M8.2/M8.3 Implementation Portal Pydantic schemas.
 
 Request and response shapes for all /api/setup/* endpoints.
 Covers: progress, organisation, org structure, accounting periods, modules,

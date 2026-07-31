@@ -401,7 +401,7 @@ The platform tenants LIST page (`/platform/tenants`) shows `lifecycle_status` ba
 | `platform/tenants/[id]/page.tsx:210` | `isConfigurable = ["trial", "in_implementation"].includes(...)` | Real: controls entry buttons |
 | `platform/tenants/page.tsx:34,118` | Lifecycle badge + filter dropdown for "in implementation" | UI label only — no logic |
 | `platform/trials/page.tsx:27` | `"Conversion pipeline — trial → in implementation → live"` | **Stub/placeholder only** — this page has no real data |
-| `components/LockedField.tsx` | "Locked by implementation. Contact your Ziva BI consultant to modify." | Real UI component, used for consultant-locked fields |
+| `components/LockedField.tsx` | "Locked by implementation. Contact your PRAD consultant to modify." | Real UI component, used for consultant-locked fields |
 | `setup/organisation/page.tsx:1381` | "locked after go-live" (text in form helper) | UI label only |
 | `setup/currencies/page.tsx:597` | "Cannot be changed after go-live." | UI label only |
 | `layout.tsx:90` | `"Implementation · edit · TEST"` banner label | Real: displays during impersonation |
@@ -426,7 +426,7 @@ The platform tenants LIST page (`/platform/tenants`) shows `lifecycle_status` ba
 
 **Why `lifecycle_status = "in_implementation"` with `environment = "live"`:** This is the current genuine state — the tenant is being configured by Adeniyi via the implementation portal. These two fields are entirely independent. A tenant can be `environment=live` (it's not a test shadow) while `lifecycle_status=in_implementation` (it hasn't been marked as ready for production). The "Implementation" banner in the UI appears because the super admin entered the tenant while its lifecycle was `in_implementation`, which maps to mode=`implementation` in the `enter_tenant` logic.
 
-### Ziva BI — Test Tenant (`f2aecfab-025f-410f-a7f6-df923172c8a1`)
+### PRAD — Test Tenant (`f2aecfab-025f-410f-a7f6-df923172c8a1`)
 
 | Field | Value |
 |---|---|
@@ -437,7 +437,7 @@ The platform tenants LIST page (`/platform/tenants`) shows `lifecycle_status` ba
 | `pre_suspension_status` | `null` |
 | `is_active` | `true` |
 
-**Note:** The "Ziva BI — Test Tenant" created for acceptance tests has `environment="live"` and `parent_tenant_id=null`. It is NOT a proper M9.0 test shadow. It's just a standalone tenant with no live parent. It was created manually for script isolation, not via `POST /api/tenant/create-test-environment`.
+**Note:** The "PRAD — Test Tenant" created for acceptance tests has `environment="live"` and `parent_tenant_id=null`. It is NOT a proper M9.0 test shadow. It's just a standalone tenant with no live parent. It was created manually for script isolation, not via `POST /api/tenant/create-test-environment`.
 
 ---
 

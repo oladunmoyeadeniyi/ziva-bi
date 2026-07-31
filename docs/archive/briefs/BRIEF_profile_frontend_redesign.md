@@ -34,7 +34,7 @@ Two-column layout in a card with a thin banner strip on top:
 
 **Left identity rail:** avatar (initials from full_name), full_name, email, role pills, and a small meta block (member since / cost center / context). Role-aware:
 - Tenant staff: pills like role + company name; meta shows tenant context.
-- Super admin (is_super_admin, no tenant): pills "Super admin" / "Platform owner"; meta "Ziva BI internal · no tenant".
+- Super admin (is_super_admin, no tenant): pills "Super admin" / "Platform owner"; meta "PRAD internal · no tenant".
 
 **Right column — sectioned cards:**
 1. **Personal info** — full_name (editable), email (read-only), phone (editable). Save → PATCH /me + refreshUser.

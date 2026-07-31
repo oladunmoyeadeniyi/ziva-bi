@@ -192,7 +192,7 @@ No actual field masking is needed yet — payroll/HR (M15) hasn't been built. Th
 Add one optional setting:
 
 ```python
-owner_user_id: str | None = None  # UUID of the Ziva BI platform owner (Adeniyi)
+owner_user_id: str | None = None  # UUID of the PRAD platform owner (Adeniyi)
 ```
 
 Add to `.env.example`:

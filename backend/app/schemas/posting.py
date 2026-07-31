@@ -1,5 +1,5 @@
 """
-ZivaBI — Posting Batch Pydantic schemas.
+PRAD — Posting Batch Pydantic schemas.
 
 Used by: backend/app/routers/posting_batches.py
 

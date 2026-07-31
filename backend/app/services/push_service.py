@@ -1,5 +1,5 @@
 """
-ZivaBI — Web Push notification service.
+PRAD — Web Push notification service.
 
 Provides a single public function:
 

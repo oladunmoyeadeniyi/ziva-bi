@@ -1,5 +1,5 @@
 """
-Ziva BI — Intelligent Categorization Engine (ICE) service.
+PRAD — Intelligent Categorization Engine (ICE) service.
 
 This module implements the core ICE inference and feedback loop:
 

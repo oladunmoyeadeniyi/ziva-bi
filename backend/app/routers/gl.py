@@ -1,5 +1,5 @@
 """
-ZivaBI — GL endpoints (GL Engine #2).
+PRAD — GL endpoints (GL Engine #2).
 
 Prefix:  /api/gl
 Tags:    gl

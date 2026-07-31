@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * ZivaBI — Auth context.
+ * PRAD — Auth context.
  *
  * Provides authentication state and actions to every client component.
  * Wrap the app root with <AuthProvider> (done in app/layout.tsx).

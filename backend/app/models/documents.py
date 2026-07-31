@@ -1,5 +1,5 @@
 """
-ZivaBI — expense document ORM model (Milestone 6 + document security hardening).
+PRAD — expense document ORM model (Milestone 6 + document security hardening).
 
 Stores metadata for files attached to expense reports or individual lines.
 Actual file bytes live in Supabase Storage; this table only holds the path

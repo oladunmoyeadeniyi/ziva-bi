@@ -1,4 +1,4 @@
-# MASTER SYSTEM SUMMARY — Ziva BI
+# MASTER SYSTEM SUMMARY — PRAD
 
 > Architecture overview — the "how it's built" reference.
 > If anything here conflicts with `MASTER_CONTEXT.md`, that document wins.
@@ -9,7 +9,7 @@
 
 ## 1. Product Vision
 
-Ziva BI is an intelligent, multi-tenant, end-to-end finance automation SaaS platform for businesses of every size. The platform is live on Render; the product is functionally complete for a first customer.
+PRAD is an intelligent, multi-tenant, end-to-end finance automation SaaS platform for businesses of every size. The platform is live on Render; the product is functionally complete for a first customer.
 
 **Mission:** Zero manual work. 100% automation. Intelligent decision-making.
 
@@ -55,7 +55,7 @@ Ziva BI is an intelligent, multi-tenant, end-to-end finance automation SaaS plat
 |---|---|---|
 | **Lite** | None — workflow only, CSV/XLSX export | Simple companies with an external accounting system |
 | **Connected** | Export queue (`posting_batches` table) → external ERP | GL coding in Ziva, posts to SAP/Oracle/etc. |
-| **Full ERP** | In-app double-entry (`journal_entries`) | Full GL + financial statements in Ziva BI |
+| **Full ERP** | In-app double-entry (`journal_entries`) | Full GL + financial statements in PRAD |
 
 `posting_mode` lives on `tenant_org_config`. Set by consultant in SA portal — tenants never see or change it. Every module must support all three modes from first commit.
 

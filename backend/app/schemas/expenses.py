@@ -1,5 +1,5 @@
 """
-ZivaBI — expense management Pydantic schemas.
+PRAD — expense management Pydantic schemas.
 
 Request/response shapes for the expenses router (Milestones 3–9).
 All monetary amounts are Decimal to avoid floating-point drift.
