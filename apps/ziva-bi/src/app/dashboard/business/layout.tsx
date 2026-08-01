@@ -506,7 +506,7 @@ export default function BusinessLayout({
               {/* AI INSIGHTS — Full ERP only */}
               {postingMode === 'full_erp' && (
                 <div className="px-2">
-                  <SectionLabel label="AI Insights" />
+                  <SectionLabel label="Insights" />
                   <NavLink href="/dashboard/business/ai-insights" label="Insights" icon="brain" />
                   <NavLink href="/dashboard/business/ai-insights/anomalies" label="Run anomaly scan" icon="alert-triangle" />
                 </div>
@@ -544,9 +544,9 @@ export default function BusinessLayout({
 
               {/* AI CONFIGURATION */}
               <div className="px-2">
-                <SectionLabel label="AI &amp; Intelligence" />
-                <NavLink href="/dashboard/business/settings/ai-config" label="AI categorisation" icon="brain" />
-                <NavLink href="/dashboard/business/ai-insights" label="AI insights" icon="sparkles" />
+                <SectionLabel label="Intelligence" />
+                <NavLink href="/dashboard/business/settings/ai-config" label="Smart categorisation" icon="brain" />
+                <NavLink href="/dashboard/business/ai-insights" label="Insights" icon="sparkles" />
               </div>
 
               {/* MODULE SETUP */}

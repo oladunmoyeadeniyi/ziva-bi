@@ -11,7 +11,7 @@ import { SITE_CONFIG } from "@/lib/site.config";
 export const metadata: Metadata = {
   title: `Product — ${SITE_CONFIG.name}`,
   description:
-    "Explore everything PRAD does — GL, period management, expense automation, approvals, AI intelligence, and more.",
+    "Explore everything PRAD does — GL, period management, expense automation, approvals, financial intelligence, and more.",
 };
 
 export default function ProductPage() {

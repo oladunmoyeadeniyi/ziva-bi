@@ -50,10 +50,10 @@ export const SITE_CONFIG = {
   seo: {
     title: "PRAD — Finance that thinks ahead | prad.finance",
     description:
-      "PRAD is an AI-powered enterprise finance platform built for African companies. Chart of accounts, period management, expense automation, approval workflows, and financial intelligence — all in one platform.",
+      "PRAD is an intelligent enterprise finance platform built for African companies. Chart of accounts, period management, expense automation, approval workflows, and financial intelligence — all in one platform.",
     ogTitle: "PRAD — Finance that thinks ahead",
     ogDescription:
-      "Enterprise finance for Africa. AI-powered. Built by a Chartered Accountant.",
+      "Enterprise finance for Africa. Intelligence-powered. Built by a Chartered Accountant.",
     ogImage: "/og-image.png",
   },
 } as const;
@@ -94,7 +94,7 @@ export const PRICING_PLANS: PricingPlan[] = [
       "Test environment included",
     ],
     cta: "Request a demo",
-    ctaHref: `${SITE_CONFIG.APP_URL}/signup`,
+    ctaHref: `${SITE_CONFIG.APP_URL}/auth/signup`,
   },
   {
     name: "Business",
@@ -106,11 +106,11 @@ export const PRICING_PLANS: PricingPlan[] = [
       "Up to 500 employees",
       "Everything in Starter",
       "PRAD Procure + PRAD Insights",
-      "AI features (OCR, GL coding, narratives)",
+      "Intelligent features (OCR, GL coding, narratives)",
       "Priority support + dedicated consultant",
     ],
     cta: "Request a demo",
-    ctaHref: `${SITE_CONFIG.APP_URL}/signup`,
+    ctaHref: `${SITE_CONFIG.APP_URL}/auth/signup`,
   },
   {
     name: "Enterprise",
@@ -142,7 +142,7 @@ export const FAQ_ITEMS: FAQItem[] = [
   {
     question: "How is PRAD different from QuickBooks or Sage?",
     answer:
-      "QuickBooks was designed for small Western businesses — it doesn't handle multi-currency, multi-dimension Nigerian accounting at scale. Sage X3 is powerful but costs a fortune and takes months to configure with specialist consultants. PRAD was built specifically for African companies by a Chartered Accountant who worked with both systems. It combines enterprise-grade GL rigour with AI automation at a price point accessible to growing businesses — not just multinationals.",
+      "QuickBooks was designed for small Western businesses — it doesn't handle multi-currency, multi-dimension Nigerian accounting at scale. Sage X3 is powerful but costs a fortune and takes months to configure with specialist consultants. PRAD was built specifically for African companies by a Chartered Accountant who worked with both systems. It combines enterprise-grade GL rigour with intelligent automation at a price point accessible to growing businesses — not just multinationals.",
   },
   {
     question: "Is PRAD suitable for my company size?",
@@ -224,7 +224,7 @@ export const APP_FAMILY = [
   },
   {
     name: "PRAD Insights",
-    description: "Executive dashboards and AI financial intelligence",
+    description: "Executive dashboards and financial intelligence",
     badge: "PWA" as string | null,
     accentColor: "#F59E0B",
     bgClass: "from-amber-500 to-orange-600",
@@ -243,8 +243,8 @@ export const TRUST_SIGNALS = [
     body: "WHT, VAT, FIRS, IFRS. Built for Nigerian and African regulations from day one.",
   },
   {
-    title: "AI-powered intelligence",
-    body: "Receipt OCR, GL auto-coding, anomaly detection, and month-end narratives — built in.",
+    title: "Built-in intelligence",
+    body: "Receipt scanning, GL auto-coding, anomaly detection, and month-end narratives — built in.",
   },
   {
     title: "ERP-grade standards",

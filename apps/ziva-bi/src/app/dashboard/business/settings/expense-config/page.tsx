@@ -292,7 +292,7 @@ export default function ExpenseConfigPage() {
       {/* ── Section 4: AI & OCR (M10) ─────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
         <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-4">
-          AI &amp; Receipt Scanning
+          Intelligent Receipt Scanning
         </h2>
 
         <div className="flex items-center justify-between">
@@ -300,7 +300,7 @@ export default function ExpenseConfigPage() {
             <p className="text-sm font-medium text-gray-800">Enable OCR receipt scanning</p>
             <p className="text-xs text-gray-500 mt-0.5 max-w-sm">
               When enabled, employees can photograph or upload a receipt from the expense form.
-              Anthropic AI extracts vendor, date, amount, and line items automatically.
+              Automatically extracts vendor, date, amount, and line items from uploaded receipts.
             </p>
           </div>
           <Toggle checked={ocrEnabled} onChange={() => setOcrEnabled((v) => !v)} />

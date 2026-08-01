@@ -64,7 +64,7 @@ export default function IceSuggestionBadge({
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-gray-500">AI suggests:</span>
+            <span className="text-xs text-gray-500">Suggested:</span>
             <span className="text-xs font-medium text-gray-800 truncate">{suggestedLabel}</span>
             <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${styles.badge}`}>
               {styles.icon} {BAND_LABEL[confidenceBand]} {confidence}%

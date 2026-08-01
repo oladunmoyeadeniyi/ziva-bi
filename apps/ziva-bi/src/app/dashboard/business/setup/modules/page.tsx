@@ -54,12 +54,12 @@ interface ModuleDetail {
 
 const MODULE_DETAILS: Record<string, ModuleDetail> = {
   expense: {
-    description: "End-to-end employee expense retirement with multi-level approvals and AI-powered GL coding.",
+    description: "End-to-end employee expense retirement with multi-level approvals and intelligent GL coding.",
     features: [
       "Multi-line expense submission",
       "GL coding with dimension mapping",
       "Approval matrix (LM → Finance)",
-      "AI-powered GL suggestions",
+      "intelligent GL suggestions",
       "Receipt OCR auto-fill (coming soon)",
       "Split lines per invoice",
       "Budget checking (coming soon)",

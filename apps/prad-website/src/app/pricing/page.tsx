@@ -20,7 +20,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: `Pricing — ${SITE_CONFIG.name}`,
   description:
-    "Transparent pricing for PRAD — the AI-powered finance platform built for African companies. Choose the plan that fits your company size.",
+    "Transparent pricing for PRAD — the intelligent finance platform built for African companies. Choose the plan that fits your company size.",
 };
 
 export default function PricingPage() {

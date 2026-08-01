@@ -178,7 +178,7 @@ export default function Hero() {
             <div className="inline-flex items-center gap-2 bg-[#4F46E5]/10 border border-[#4F46E5]/30 rounded-full px-4 py-1.5 mb-6">
               <div className="w-1.5 h-1.5 rounded-full bg-[#4F46E5] animate-pulse" />
               <span className="text-[#818CF8] text-xs font-semibold tracking-widest uppercase">
-                AI-Powered Finance Platform
+                Intelligent Finance Platform
               </span>
             </div>
 

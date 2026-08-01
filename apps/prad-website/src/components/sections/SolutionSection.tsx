@@ -15,7 +15,7 @@ const PILLARS = [
   {
     Icon: Brain,
     title: "Intelligent by design",
-    body: "AI reads your receipts, suggests GL codes, checks policy compliance, and flags anomalies — before your approvers see them.",
+    body: "PRAD reads your receipts, suggests GL codes, checks policy compliance, and flags anomalies — before your approvers see them.",
     accent: "#4F46E5",
   },
   {
@@ -67,7 +67,7 @@ export default function SolutionSection() {
             className="text-lg text-[#6B7280] max-w-2xl mx-auto"
           >
             An enterprise finance platform built for African companies — with
-            the intelligence of AI and the rigour of global ERP standards.
+            precision intelligence and the rigour of global ERP standards.
           </motion.p>
         </div>
 

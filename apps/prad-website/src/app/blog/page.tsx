@@ -1,7 +1,7 @@
 /**
  * PRAD Website — /blog page (stub)
  *
- * Thought leadership content — finance, ERP, AI in accounting, African
+ * Thought leadership content — finance, ERP, intelligent accounting, African
  * business. Full CMS integration to be added.
  */
 
@@ -12,7 +12,7 @@ import { SITE_CONFIG } from "@/lib/site.config";
 export const metadata: Metadata = {
   title: `Blog — ${SITE_CONFIG.name}`,
   description:
-    "Finance insights, ERP best practice, and AI in accounting — from the PRAD team.",
+    "Finance insights, ERP best practice, and intelligent accounting — from the PRAD team.",
 };
 
 export default function BlogPage() {
@@ -29,7 +29,7 @@ export default function BlogPage() {
           The PRAD blog
         </h1>
         <p className="text-lg text-white/50 mb-10 leading-relaxed">
-          Practical finance insights, ERP best practice, and AI in accounting
+          Practical finance insights, ERP best practice, and intelligent accounting
           — written for CFOs and finance teams in Africa. First articles coming
           soon.
         </p>

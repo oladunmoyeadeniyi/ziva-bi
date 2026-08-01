@@ -45,7 +45,7 @@ export default function AnomalyDetectionPage() {
         <p className="text-sm text-gray-600 mb-6">
           Scans your expense lines and AP invoices for statistical outliers (amounts ≥ 3σ above
           historical mean) and potential duplicate transactions (same vendor + amount within 7 days).
-          Each finding is saved as an AI insight for your finance team to review.
+          Each finding is saved as an insight for your finance team to review.
         </p>
 
         <div className="bg-white border rounded-lg p-5 mb-4">
@@ -76,7 +76,7 @@ export default function AnomalyDetectionPage() {
                   {result.findings_created} anomal{result.findings_created === 1 ? "y" : "ies"} detected
                 </p>
                 <p className="text-sm text-yellow-700 mb-3">
-                  Found over the last {result.lookback_days} days. Each has been saved as an AI insight.
+                  Found over the last {result.lookback_days} days. Each has been saved as an insight.
                 </p>
                 <Link href="/dashboard/business/ai-insights?status=PENDING"
                   className="text-sm font-medium text-yellow-800 underline">

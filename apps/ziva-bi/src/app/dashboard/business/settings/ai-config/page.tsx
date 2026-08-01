@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * AI Categorisation Configuration — ICE module.
+ * Intelligent Categorisation Configuration — ICE module.
  *
  * Allows Tenant Admin to enable/disable ICE, set confidence thresholds,
  * control which fields AI may suggest, and view accuracy analytics.
@@ -82,7 +82,7 @@ export default function AiConfigPage() {
       setAllowUserDisable(cfg.allow_user_disable);
       if (analytics30) setAnalytics(analytics30);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load AI configuration.");
+      setError(err instanceof Error ? err.message : "Failed to load intelligence configuration.");
     } finally {
       setLoading(false);
     }
@@ -106,7 +106,7 @@ export default function AiConfigPage() {
         }),
       });
       setConfig(updated);
-      setSuccessMsg("AI configuration saved successfully.");
+      setSuccessMsg("Configuration saved successfully.");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
@@ -121,7 +121,7 @@ export default function AiConfigPage() {
   if (loading) {
     return (
       <PageContainer>
-        <div className="text-center py-12 text-gray-400">Loading AI configuration…</div>
+        <div className="text-center py-12 text-gray-400">Loading configuration…</div>
       </PageContainer>
     );
   }
@@ -133,7 +133,7 @@ export default function AiConfigPage() {
   return (
     <PageContainer>
       <PageHeading
-        title="AI Categorisation"
+        title="Intelligent Categorisation"
         subtitle="Configure the Intelligent Categorisation Engine (ICE) for your organisation."
       />
 
@@ -152,7 +152,7 @@ export default function AiConfigPage() {
           <div className="bg-white rounded-xl border p-5">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-gray-900">AI Categorisation</h3>
+                <h3 className="font-semibold text-gray-900">Intelligent Categorisation</h3>
                 <p className="text-sm text-gray-500 mt-0.5">
                   When enabled, ICE suggests GL accounts, categories, and dimensions as employees submit expenses.
                 </p>
@@ -173,7 +173,7 @@ export default function AiConfigPage() {
 
             {!aiEnabled && (
               <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-                AI suggestions are <strong>disabled</strong>. Employees will classify all fields manually.
+                Smart suggestions are <strong>disabled</strong>. Employees will classify all fields manually.
               </div>
             )}
           </div>
@@ -286,9 +286,9 @@ export default function AiConfigPage() {
           <div className="bg-white rounded-xl border p-5">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-gray-900">Allow employees to disable AI</h3>
+                <h3 className="font-semibold text-gray-900">Allow employees to disable smart suggestions</h3>
                 <p className="text-sm text-gray-500 mt-0.5">
-                  When on, employees can turn off AI suggestions for their own account.
+                  When on, employees can turn off smart suggestions for their own account.
                 </p>
               </div>
               <button
@@ -356,7 +356,7 @@ export default function AiConfigPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-gray-400">No predictions yet — enable AI to start.</p>
+              <p className="text-sm text-gray-400">No predictions yet — enable smart suggestions to start.</p>
             )}
           </div>
 
@@ -364,7 +364,7 @@ export default function AiConfigPage() {
             <div className="bg-white rounded-xl border p-5">
               <h3 className="font-semibold text-gray-900 mb-3">Most Corrected GLs</h3>
               <p className="text-xs text-gray-500 mb-3">
-                GLs users selected instead of the AI suggestion — helps improve accuracy.
+                GLs users selected instead of the suggested code — helps improve accuracy.
               </p>
               <div className="space-y-2">
                 {analytics.top_corrected_gls.map((gl) => (

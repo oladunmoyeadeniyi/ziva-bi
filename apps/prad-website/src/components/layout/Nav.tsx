@@ -73,13 +73,13 @@ export default function Nav() {
           {/* Desktop CTA buttons */}
           <div className="hidden md:flex items-center gap-3">
             <a
-              href={`${SITE_CONFIG.APP_URL}/login`}
+              href={`${SITE_CONFIG.APP_URL}/auth/login`}
               className="text-sm font-medium text-white/80 hover:text-white px-4 py-2 rounded-lg border border-white/20 hover:border-white/40 transition-all"
             >
               Sign in
             </a>
             <a
-              href={`${SITE_CONFIG.APP_URL}/signup`}
+              href={`${SITE_CONFIG.APP_URL}/auth/signup`}
               className="text-sm font-semibold bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 rounded-lg transition-colors shadow-lg shadow-indigo-500/20"
             >
               Request demo
@@ -114,14 +114,14 @@ export default function Nav() {
           </nav>
           <div className="flex flex-col gap-3 mt-auto">
             <a
-              href={`${SITE_CONFIG.APP_URL}/login`}
+              href={`${SITE_CONFIG.APP_URL}/auth/login`}
               className="text-center text-sm font-medium text-white/80 py-3 rounded-lg border border-white/20"
               onClick={() => setMenuOpen(false)}
             >
               Sign in
             </a>
             <a
-              href={`${SITE_CONFIG.APP_URL}/signup`}
+              href={`${SITE_CONFIG.APP_URL}/auth/signup`}
               className="text-center text-sm font-semibold bg-[#4F46E5] text-white py-3 rounded-lg"
               onClick={() => setMenuOpen(false)}
             >

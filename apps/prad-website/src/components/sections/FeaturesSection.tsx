@@ -31,7 +31,7 @@ const FEATURES = [
     mockupColor: "#0EA5E9",
   },
   {
-    tag: "AI-Powered Expense Management",
+    tag: "Intelligent Expense Management",
     headline: "Expenses that submit themselves",
     body: "Employees photograph a receipt. PRAD reads it, fills the form, suggests the GL code, checks the policy, and routes it for approval — all before the approver sees it. Available as a standalone mobile app.",
     mockupLabel: "PRAD Expense PWA",
@@ -47,7 +47,7 @@ const FEATURES = [
   {
     tag: "Financial Intelligence",
     headline: "Finance that explains itself",
-    body: "Budget vs actual variance analysis, anomaly detection, and AI-generated month-end narratives. Your CFO gets a draft commentary every month-end — they edit, not write from scratch.",
+    body: "Budget vs actual variance analysis, anomaly detection, and auto-generated month-end narratives. Your CFO gets a draft commentary every month-end — they edit, not write from scratch.",
     mockupLabel: "PRAD Insights",
     mockupColor: "#8B5CF6",
   },

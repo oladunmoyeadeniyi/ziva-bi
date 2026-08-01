@@ -72,7 +72,7 @@ export default function AiInsightsPage() {
   return (
     <PageContainer>
       <PageHeading
-        title="AI Insights"
+        title="Insights"
         actions={
           <a href="/dashboard/business/ai-insights/anomalies"
             className="text-sm px-4 py-2 rounded-md text-white"

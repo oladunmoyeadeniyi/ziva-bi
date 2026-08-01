@@ -54,7 +54,7 @@ export default function FounderSection() {
               </p>
               <p>
                 I built PRAD to be the platform I always wished I had.
-                Enterprise-grade. Africa-first. AI-powered. And designed by a
+                Enterprise-grade. Africa-first. Intelligence-powered. And designed by a
                 finance professional, not just engineers who guessed what we
                 needed.
               </p>
