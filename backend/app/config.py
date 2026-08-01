@@ -120,6 +120,12 @@ class Settings(BaseSettings):
     vapid_public_key: str = ""     # base64url-encoded VAPID public key (also in frontend)
     vapid_mailto: str = ""         # e.g. "mailto:admin@zivabi.com"
 
+    # ── Redis cache (Performance Audit) ──────────────────────────────────────
+    # Optional. When set, enables Redis-backed caching of hot read paths.
+    # Set REDIS_URL in Render dashboard (e.g. rediss://...render.com:6379).
+    # When not set, all cache operations are no-ops (safe for local dev).
+    redis_url: str = ""
+
     # ── Platform owner ────────────────────────────────────────────────────────
     # UUID of the PRAD platform owner. When set, this user's impersonation
     # sessions in live environments are unrestricted (no sensitive field masking).

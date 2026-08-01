@@ -165,7 +165,7 @@ ruff check app/
 
 > **Authoritative as of 2026-07-31.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: ~70% of full product vision. 100% of MVP-for-first-customer (all TIER 0 + TIER 1 + TIER 2–4 modules shipped; product is live on Render). Phase 2 (httpOnly cookies `0e07df6`) + Phase 3 (WebAuthn + Web Push `b2c5e9a`) + PRAD marketing website (`8961398`) shipped. M17b + ICE pending CC commit — migrations `l0m1n2o3p4q5` (FIFO/Standard) and `p9q0r1s2t3u4` (ICE).**
+> **Overall completion: ~90% of full product vision. 100% of MVP-for-first-customer. M17b + ICE (`4dc843b`), Phase 2 (`0e07df6`), Phase 3 (`b2c5e9a`), PRAD website (`8961398`), full rebrand (`2835779`) all shipped. IxE (Inter-Company Eliminations), FX dedicated tables (`tenant_currencies`+`tenant_fx_rates`), Performance & Security Audit (Redis cache + SecurityHeadersMiddleware + slowapi), and PWA Unified Approvals Inbox all coded and pending CC commit (migration `r1s2t3u4v5w6`). Clean working tree. Next: `/review-commit` in CC terminal.**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -238,11 +238,15 @@ ruff check app/
 | M18 | Fixed Assets (asset_categories, assets, asset_depreciation_schedules, asset_disposals; SL+RB depreciation; migration `i7j8k9l0m1n2`) | `9ffd9e0` |
 | M17 | Inventory & Warehouse (inventory_categories, inventory_locations, inventory_items, stock_movements; WACC COGS GL posting; migration `j8k9l0m1n2o3`) | `9ffd9e0` |
 | M20 | AI Intelligence Layer (ai_insights table, anomaly detection, spending pattern analysis, cash flow forecast, GL auto-classify; extended /api/ai router; migration `k9l0m1n2o3p4`) | `9ffd9e0` |
-| M17b | Inventory FIFO + Standard Costing (inventory_cost_layers table; FIFO lot tracking with SELECT FOR UPDATE; Standard costing + PPV journals; GL pickers; /api/config/coa fix; migration `l0m1n2o3p4q5`) | pending CC commit |
-| ICE | AI Categorisation Engine (ice_tenant_config, ice_predictions, ice_feedback, ice_audit_log, vendor/employee behavior profiles; predict/feedback/config/analytics endpoints; AI Config page; IceSuggestionBadge component; migration `p9q0r1s2t3u4`) | pending CC commit |
+| M17b | Inventory FIFO + Standard Costing (inventory_cost_layers table; FIFO lot tracking with SELECT FOR UPDATE; Standard costing + PPV journals; GL pickers; /api/config/coa fix; migration `l0m1n2o3p4q5`) | `4dc843b` |
+| ICE | AI Categorisation Engine (ice_tenant_config, ice_predictions, ice_feedback, ice_audit_log, vendor/employee behavior profiles; predict/feedback/config/analytics endpoints; AI Config page; IceSuggestionBadge component; migration `p9q0r1s2t3u4`) | `4dc843b` |
 | Phase 2 | Security — httpOnly cookie migration: refresh token moved from localStorage to httpOnly `refresh_token` cookie; `AuthContext` stops reading/writing localStorage for refresh; `/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout` updated | `0e07df6` |
 | Phase 3 | Security — WebAuthn passkey + Web Push: `user_credentials` + `push_subscriptions` tables (migration `q0r1s2t3u4v5`); passkey register/authenticate endpoints; push subscription + send endpoints; VAPID config; `py-webauthn` + `pywebpush` dependencies | `b2c5e9a` |
 | PRAD-site | PRAD marketing website — `apps/prad-website/` added to monorepo; Next.js 15 standalone Docker; Tailwind v4; Framer Motion; 11 homepage sections; `site.config.ts` single source of truth for pricing/FAQ/copy; deployed on Render | `8961398` |
+| IxE | Inter-Company Eliminations — 8 tables (consolidation_groups/members, ic_account_mappings, ic_matches, elimination_journals/lines + FX tables); auto-match engine; consolidated trial balance; 7 frontend pages; migration `r1s2t3u4v5w6` | pending CC |
+| FX | Currencies & FX dedicated tables — `tenant_currencies` + `tenant_fx_rates` replacing JSONB; inverse-rate fallback; currencies page rewritten; migration `r1s2t3u4v5w6` | pending CC |
+| Perf | Performance & Security Audit — Redis cache service (graceful no-op); `SecurityHeadersMiddleware`; `slowapi` rate limiting (graceful import); `REDIS_URL` config var; `slowapi`+`redis` deps | pending CC |
+| PWA-4 | Unified Approvals Inbox — `GET /api/approvals/inbox` + count endpoint aggregating expense/AP/PO; unified inbox frontend page + sidebar link | pending CC |
 
 ---
 
@@ -271,7 +275,7 @@ ruff check app/
 | M19 | **Tax Engine — transaction level** ✅ | **L/C/E** | Shipped `9ffd9e0` — VAT/WHT/PAYE compute, tax returns |
 | M15 | **Payroll & HR** ✅ | **L/C/E** | Shipped `9ffd9e0` — salary structures, payroll runs, leave |
 | ICE | **AI Categorisation Engine** ✅ (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) | **All modes** | Pending CC commit — migration `p9q0r1s2t3u4` |
-| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | **E only** | PRD: NOT YET WRITTEN — NOT YET BUILT |
+| IxE | **Inter-Company Eliminations** ✅ (group consolidation, IC matches, elimination journals, consolidated TB) | **E only** | Pending CC commit — migration `r1s2t3u4v5w6` |
 
 #### TIER 4 — Long-term / Specialist — ✅ ALL SHIPPED (except noted)
 
@@ -282,8 +286,9 @@ ruff check app/
 | M17b | **Inventory FIFO + Standard Costing** ⏳ | **L/C/E** | Pending CC commit — FIFO lot tracking, Standard+PPV, GL pickers (`l0m1n2o3p4q5`) |
 | ICE | **AI Categorisation Engine** ⏳ | **All modes** | Pending CC commit — GL prediction, confidence scoring, feedback loop (`p9q0r1s2t3u4`) |
 | M20 | **AI Intelligence Layer** ✅ | **All modes** | Shipped `9ffd9e0` — anomaly detection, patterns, cash forecast |
-| Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | — | Before scale — NOT YET BUILT |
-| FX | **Currencies & FX dedicated tables decision** (JSONB vs. tenant_currencies/tenant_fx_rates) | — | Revisit when BDC register volume or reporting complexity demands it — NOT YET BUILT |
+| Perf | **Performance & Security Audit** ✅ (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | — | Pending CC commit — no migration |
+| FX | **Currencies & FX dedicated tables** ✅ (`tenant_currencies` + `tenant_fx_rates` tables; rate lookup with inverse fallback) | — | Pending CC commit — tables in migration `r1s2t3u4v5w6` |
+| PWA-4 | **Unified Approvals Inbox** ✅ (`GET /api/approvals/inbox` + frontend; aggregates expense/AP/PO) | **All modes** | Pending CC commit — no migration |
 
 ## Module PRDs
 

@@ -512,6 +512,20 @@ export default function BusinessLayout({
                 </div>
               )}
 
+              {/* CONSOLIDATION — Full ERP only */}
+              {postingMode === 'full_erp' && (
+                <div className="px-2">
+                  <SectionLabel label="Consolidation" />
+                  <NavLink href="/dashboard/business/consolidation" label="Groups" icon="building-community" />
+                </div>
+              )}
+
+              {/* UNIFIED APPROVALS INBOX */}
+              <div className="px-2">
+                <SectionLabel label="Approvals Inbox" />
+                <NavLink href="/dashboard/business/approvals/inbox" label="My inbox" icon="inbox" />
+              </div>
+
               {/* PEOPLE */}
               <div className="px-2">
                 <SectionLabel label="People" />

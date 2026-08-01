@@ -10,12 +10,14 @@ DATABASE_URL fails loudly at boot rather than silently at the first request.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import delete, select, text
 
 from app.config import settings
 from app.database import AsyncSessionLocal, engine
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 
 async def _ensure_system_roles() -> None:
@@ -143,6 +145,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Security headers — added after CORS so we don't overwrite CORS-set headers
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Rate limiting on auth endpoints via slowapi (if installed)
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+except ImportError:
+    # slowapi not installed — rate limiting is silently skipped (safe for dev)
+    pass
+
 
 from app.routers import auth as auth_router
 from app.routers import users as users_router
@@ -175,6 +193,9 @@ from app.routers import inventory as inventory_router
 from app.routers import ice as ice_router
 from app.routers import webauthn as webauthn_router
 from app.routers import push as push_router
+from app.routers import consolidation as consolidation_router
+from app.routers import fx as fx_router
+from app.routers import approvals_inbox as approvals_inbox_router
 
 app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
@@ -207,6 +228,9 @@ app.include_router(inventory_router.router)
 app.include_router(ice_router.router)
 app.include_router(webauthn_router.router)
 app.include_router(push_router.router)
+app.include_router(consolidation_router.router)
+app.include_router(fx_router.router)
+app.include_router(approvals_inbox_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

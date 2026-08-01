@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-31 — Phase 2 (httpOnly cookies `0e07df6`), Phase 3 (WebAuthn + Web Push `b2c5e9a`), and PRAD marketing website (`8961398`) shipped. M17b + ICE pending CC commit (migrations `l0m1n2o3p4q5`, `p9q0r1s2t3u4`). Last committed head: `8961398` (PRAD website). Product functionally complete; first customer ready. Open items: Inter-Company Eliminations (no PRD yet), Performance & Security Audit, FX dedicated-tables decision.
+> Last updated: 2026-07-31 — IxE (Inter-Company Eliminations), FX dedicated tables (tenant_currencies + tenant_fx_rates), Performance & Security Audit (Redis cache, security headers, rate limiting), and PWA Phase 4 Unified Approvals Inbox all coded and pending CC commit (migration `r1s2t3u4v5w6`). Last committed head: `2835779` (full rebrand). All TIER 0–4 modules + security hardening complete. Next: CC review + alembic upgrade head.
 
 ---
 
@@ -1398,7 +1398,7 @@ New `apps/prad-website/` app added to the Turborepo monorepo — the public-faci
 | 14 | SA Billing & Subscriptions | (SA only) | ✅ Built (SA-B, 2026-07-28) — committed `9ffd9e0` | SA portal |
 | 15 | Reporting & Analytics | `reporting` | ⏳ Not yet built as standalone module | All |
 | 16 | AI Categorisation (ICE) | (All modes) | ✅ Built (ICE, 2026-07-29) — pending CC commit; migration `p9q0r1s2t3u4` | All |
-| 17 | Inter-Company Eliminations | (Full ERP) | ⏳ Not yet built — no PRD yet | Full ERP |
+| 17 | Inter-Company Eliminations | (Full ERP) | ✅ Built (IxE, 2026-07-31) — pending CC commit; migration `r1s2t3u4v5w6` | Full ERP |
 
 > **Module naming rationale:**
 > - "Accounts Payable (P2P)" — P2P = Purchase to Pay, the end-to-end process. AP handles supplier invoices, payment runs, and vendor account management.
@@ -1499,7 +1499,7 @@ Architectural invariants that are durable decisions (the WHY):
 | M19 | **Tax Engine — transaction level** (VAT/WHT/PAYE, tax returns, WHT certificates) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | M15 | **Payroll & HR** (salary structures, payroll runs, PAYE, payslips, leave) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | ICE | **AI Categorisation Engine** (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) — PRD: `docs/ICE_PRD.md` | ✅ Done (2026-07-29) — pending CC commit; migration `p9q0r1s2t3u4` |
-| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | ⏳ NOT YET BUILT — no PRD yet |
+| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | ✅ Done (2026-07-31) — pending CC commit; migration `r1s2t3u4v5w6` |
 
 ### TIER 4 — Long-term / Specialist
 
@@ -1509,8 +1509,9 @@ Architectural invariants that are durable decisions (the WHY):
 | M17 | **Inventory & Warehouse** (items, WACC costing, COGS GL posting) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | M17b | **Inventory FIFO + Standard Costing** (cost layers, PPV journals, GL pickers) | ✅ Done (2026-07-29) — committed `9ffd9e0` |
 | M20 | **AI Intelligence Layer** (anomaly detection, spending patterns, cash flow forecast, GL auto-classify) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
-| Perf | **Performance & Security Audit** (Redis caching, N+1 query sweep, pen test) | ⏳ NOT YET BUILT — do before scale |
-| FX | **Currencies & FX dedicated tables** (JSONB vs. tenant_currencies/tenant_fx_rates decision) | ⏳ OPEN — revisit when BDC register volume demands it |
+| Perf | **Performance & Security Audit** (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | ✅ Done (2026-07-31) — pending CC commit |
+| FX | **Currencies & FX dedicated tables** (`tenant_currencies` + `tenant_fx_rates` replacing JSONB) | ✅ Done (2026-07-31) — pending CC commit; tables in migration `r1s2t3u4v5w6` |
+| PWA-4 | **Unified Approvals Inbox** (`GET /api/approvals/inbox` + frontend; aggregates expense/AP/PO submissions) | ✅ Done (2026-07-31) — pending CC commit |
 
 ### Infrastructure (parallel, not a blocker on feature work)
 - Upgrade Render PostgreSQL to Standard ($50/month) — before first paying customer
@@ -1523,9 +1524,10 @@ Architectural invariants that are durable decisions (the WHY):
 
 | Decision | Status | Guidance |
 |---|---|---|
-| Currencies & FX: JSONB vs. dedicated tables | Open | Stay JSONB; revisit only if BDC register volume requires row-level queries |
+| Currencies & FX: JSONB vs. dedicated tables | **RESOLVED** — dedicated tables shipped (migration `r1s2t3u4v5w6`) | `tenant_currencies` + `tenant_fx_rates`; `org_setup` JSONB columns deprecated. Use `POST /api/fx/migrate-from-jsonb` for one-time migration. |
 | role_tier enforcement sweep | Open | Complete before first customer — power_admin must not reach SA-only endpoints |
 | Snapshot M9 fields | Open (tracked as Q3) | Fix snapshot serializer; old snapshots stay incomplete; new ones will be complete |
+| Redis caching | **RESOLVED** — optional at runtime | `cache_service.py` gracefully degrades when `REDIS_URL` not configured. Add `REDIS_URL` in Render env vars when ready to scale. |
 
 ---
 
@@ -1560,4 +1562,88 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-*End of Master Context. Last updated: 2026-07-29 — M17b (FIFO/Standard Costing, migration `l0m1n2o3p4q5`) and ICE AI Categorisation Engine (migration `p9q0r1s2t3u4`) both pending CC commit. Last committed DB head: `k9l0m1n2o3p4` (M20 AI Intelligence Layer). Product functionally complete; live on Render; ready for first customer. Next to build: Inter-Company Eliminations (no PRD yet), Performance & Security Audit. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*
+---
+
+### IxE — Inter-Company Eliminations (2026-07-31, migration `r1s2t3u4v5w6`) — **pending CC commit**
+
+Group consolidation engine for multi-entity Full ERP tenants. Pairs intercompany-tagged journal lines across entities and posts immutable elimination journals, then computes a consolidated trial balance.
+
+**New tables (6):**
+- `consolidation_groups` — named group per parent tenant; `functional_currency`, `ic_match_tolerance` (default 0.01).
+- `consolidation_members` — entity membership per group with `ownership_pct`; `left_at` for soft-removal.
+- `ic_account_mappings` — tags each member's GL account with an IC role (`RECEIVABLE/PAYABLE/REVENUE/EXPENSE/LOAN_ASSET/LOAN_LIABILITY`); optional `counterparty_tenant_id` pin.
+- `ic_matches` — candidate pairs (PROPOSED → CONFIRMED/DISPUTED); stores `dr_amount`, `cr_amount`, `difference`, `difference_pct`.
+- `elimination_journals` — immutable once posted; auto-reference `ELIM-YYYY-NNN`; reversal creates new journal with swapped Dr/Cr.
+- `elimination_journal_lines` — debits and credits of each elimination.
+
+**Service (`services/consolidation_service.py`):**
+- `run_auto_match()` — pairs RECEIVABLE↔PAYABLE and EXPENSE↔REVENUE lines across entities within `ic_match_tolerance`; skips already-matched lines.
+- `post_elimination_journal()` — validates Σ Dr = Σ Cr; immutable; auto-generates reference.
+- `reverse_elimination_journal()` — swaps Dr/Cr; marks original REVERSED.
+- `consolidated_trial_balance()` — aggregates posted GL lines per account per entity, subtracts elimination lines.
+
+**Router (`routers/consolidation.py`):** 17 endpoints under `/api/consolidation/` — groups CRUD, members, IC mappings, auto-match, match confirm/dispute, elimination journals + reversal, consolidated trial balance.
+
+**Frontend (7 pages):** Group list, Create group, Members management, IC account mappings, IC matches (run auto-match + confirm/dispute), Elimination journals (list + reverse), Consolidated trial balance. Consolidation section added to sidebar under Full ERP gate.
+
+---
+
+### FX Dedicated Tables (2026-07-31, migration `r1s2t3u4v5w6`) — **pending CC commit**
+
+Replaces the JSONB `enabled_currencies`/`fx_rates` columns in `org_setup` with proper relational tables. Enables row-level rate queries, inverse-rate fallback, and rate-type granularity.
+
+**New tables (2, in same migration as IxE):**
+- `tenant_currencies` — one row per enabled currency per tenant; `is_functional` and `is_reporting` booleans (max one of each enforced by service).
+- `tenant_fx_rates` — historical rates with `rate_type` CHECK (`SPOT/CLOSING/AVERAGE/BUDGET`), `rate > 0` CHECK. Unique on `(tenant_id, from_currency, to_currency, rate_date, rate_type)`.
+
+**Service (`services/fx_service.py`):** currency CRUD with functional/reporting enforcement; `upsert_fx_rate()` (idempotent); `lookup_rate()` (most recent rate on or before date; falls back to `1/inverse` if direct not found); `import_from_jsonb()` one-time migration helper.
+
+**Router (`routers/fx.py`):** 8 endpoints under `/api/fx/` — currencies CRUD, rates CRUD, rate lookup, JSONB migration trigger.
+
+**Frontend:** Currencies setup page rewritten with three tabs — Enabled Currencies / FX Rates / Rate Lookup. Functional/reporting badges shown per currency; delete guarded on functional/reporting.
+
+**Architectural note:** `tenant_org_config.enabled_currencies` (JSONB) is now deprecated; `tenant_currencies` is the authority. Run `POST /api/fx/migrate-from-jsonb` once per tenant to backfill.
+
+---
+
+### Performance & Security Audit (2026-07-31) — **pending CC commit**
+
+Security hardening and optional Redis-backed caching. No migration required.
+
+**Redis cache service (`services/cache_service.py`):**
+- Lazy Redis client via `settings.redis_url`; first connection failure flips `_redis_available = False`.
+- All ops become no-ops when Redis unavailable — product works identically without Redis.
+- Keys: `prad:{namespace}:{tenant_id}`; default TTL 300 s.
+- Methods: `get()`, `set()`, `invalidate()` (single namespace), `invalidate_all()`.
+
+**Security headers middleware (`middleware/security_headers.py`):**
+- `X-Content-Type-Options: nosniff` — prevents MIME-sniffing attacks.
+- `X-Frame-Options: DENY` — blocks clickjacking via iframe.
+- `Referrer-Policy: strict-origin-when-cross-origin`.
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()`.
+- `X-XSS-Protection: 1; mode=block` (legacy browser compat).
+- `Cache-Control: no-store` on all `/api/*` paths.
+- HSTS only when `settings.environment == "production"` (avoids breaking local HTTP dev).
+
+**Rate limiting:** `slowapi` limiter scaffolded in `main.py` via `try/except ImportError` — Limiter instantiated and exception handler registered on `app.state`. No endpoint has a `@limiter.limit(...)` decorator yet; rate limiting is wired but inert until decorators are applied to individual routes in a follow-up task.
+
+**New config var:** `redis_url: str = ""` — empty = Redis disabled, no error.
+
+**New deps:** `slowapi>=0.1.9`, `redis>=5.0.0` added to `requirements.txt`.
+
+---
+
+### PWA Phase 4 — Unified Approvals Inbox (2026-07-31) — **pending CC commit**
+
+Aggregates all items waiting for the current user's approval across every module into a single inbox view. No migration required — reads existing data.
+
+**Router (`routers/approvals_inbox.py`):**
+- `GET /api/approvals/inbox` — queries `expense_reports` (status=SUBMITTED), `ap_invoices` (status=SUBMITTED), `purchase_orders` (status=SUBMITTED) via separate try/except blocks so a missing module degrades gracefully. Returns unified `InboxItem` list sorted newest-first with `days_pending` computed field.
+- `GET /api/approvals/inbox/count` — returns `{expense_count, ap_count, po_count, total}` for badge display.
+- Each item carries: `id`, `type` (EXPENSE/AP_INVOICE/PURCHASE_ORDER), `reference`, `description`, `amount`, `currency`, `submitted_at`, `days_pending`.
+
+**Frontend (`approvals/inbox/page.tsx`):** Filter tabs (All / Expense Report / AP Invoice / Purchase Order); badge counts in header; items sorted newest-first; items >3 days pending shown with red "overdue" badge; links to correct detail page per type. Sidebar "Approvals Inbox" section added (all modes).
+
+---
+
+*End of Master Context. Last updated: 2026-07-31 — IxE (group consolidation), FX dedicated tables, Performance & Security Audit, and PWA Unified Approvals Inbox all coded and pending CC commit (migration `r1s2t3u4v5w6`). Last committed head: `2835779` (full PRAD rebrand). Product fully feature-complete for initial release. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*

@@ -33,6 +33,7 @@ MODULE_CATALOGUE: list[dict[str, str]] = [
     {"key": "customer_portal",  "label": "Customer Portal"},
     {"key": "warehouse",        "label": "Warehouse / 3PL Portal"},
     {"key": "reporting",        "label": "Reporting & Analytics"},
+    {"key": "ixe",              "label": "Inter-Company Eliminations (IxE)"},
 ]
 
 MODULE_KEY_TO_LABEL: dict[str, str] = {m["key"]: m["label"] for m in MODULE_CATALOGUE}

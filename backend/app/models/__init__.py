@@ -30,3 +30,5 @@ import app.models.fixed_assets         # noqa: F401  — registers asset_categor
 import app.models.inventory             # noqa: F401  — registers inventory_categories, inventory_locations, inventory_items, stock_movements
 import app.models.ice                  # noqa: F401  — registers ice_tenant_config, ice_predictions, ice_feedback, ice_audit_log, vendor/employee profiles
 import app.models.webauthn             # noqa: F401  — registers user_credentials, push_subscriptions
+import app.models.consolidation        # noqa: F401  — registers consolidation_groups, consolidation_members, ic_account_mappings, ic_matches, elimination_journals, elimination_journal_lines
+import app.models.fx                   # noqa: F401  — registers tenant_currencies, tenant_fx_rates
