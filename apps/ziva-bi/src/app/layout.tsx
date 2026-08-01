@@ -5,9 +5,9 @@
  * can read it via useAppConfig() without a client-side fetch. The fetched value
  * is passed as a prop to <ClientProviders>, which injects it into AppConfigContext.
  *
- * Cache strategy: revalidate every 5 minutes — the app name changes at most once
- * in the product lifetime, so a short stale window is fine and avoids hitting the
- * DB on every page request.
+ * Cache strategy: no-store — the app name is a lightweight single-row KV lookup,
+ * called once per SSR render. No-store ensures every page load reflects the current
+ * value immediately (important after SA Portal renames, migration reseeds, etc.).
  *
  * Next.js App Router: Server Components are allowed to be async. Do not add
  * "use client" here. Any client-side providers live in ClientProviders.tsx.
@@ -23,7 +23,7 @@ const API_URL =
 async function fetchAppName(): Promise<string> {
   try {
     const res = await fetch(`${API_URL}/api/app-config`, {
-      next: { revalidate: 300 }, // 5 minutes
+      cache: "no-store", // always fresh — lightweight KV lookup, called once per SSR render
     });
     if (!res.ok) return "PRAD";
     const data = await res.json();
