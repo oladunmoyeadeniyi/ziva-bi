@@ -156,7 +156,7 @@ function FeatureRow({
           {feature.body}
         </p>
         <a
-          href={`${SITE_CONFIG.APP_URL}/signup`}
+          href={`${SITE_CONFIG.APP_URL}/auth/signup`}
           className="inline-flex items-center gap-2 text-sm font-semibold text-[#4F46E5] hover:gap-3 transition-all"
         >
           See it in action <ArrowRight size={16} />

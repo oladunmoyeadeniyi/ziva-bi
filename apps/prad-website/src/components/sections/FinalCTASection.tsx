@@ -66,7 +66,7 @@ export default function FinalCTASection() {
         >
           {/* Primary: Book a demo → trial signup */}
           <a
-            href={`${SITE_CONFIG.APP_URL}/signup`}
+            href={`${SITE_CONFIG.APP_URL}/auth/signup`}
             className="inline-flex items-center gap-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold px-8 py-4 rounded-xl text-base transition-all shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:-translate-y-0.5 w-full sm:w-auto justify-center"
           >
             Book a demo
@@ -75,7 +75,7 @@ export default function FinalCTASection() {
 
           {/* Secondary: Join the waitlist → same signup page */}
           <a
-            href={`${SITE_CONFIG.APP_URL}/signup`}
+            href={`${SITE_CONFIG.APP_URL}/auth/signup`}
             className="inline-flex items-center gap-2 border border-white/20 hover:border-white/40 text-white/80 hover:text-white font-medium px-8 py-4 rounded-xl text-base transition-all hover:bg-white/5 w-full sm:w-auto justify-center"
           >
             <Mail size={17} />

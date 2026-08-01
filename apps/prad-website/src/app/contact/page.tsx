@@ -36,7 +36,7 @@ export default function ContactPage() {
 
         <div className="flex flex-col gap-4 items-center">
           <a
-            href={`${SITE_CONFIG.APP_URL}/signup`}
+            href={`${SITE_CONFIG.APP_URL}/auth/signup`}
             className="inline-flex items-center gap-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold px-8 py-4 rounded-xl transition-all shadow-xl shadow-indigo-500/25 w-full justify-center"
           >
             Book a demo / Start free trial

@@ -32,7 +32,7 @@ export default function ProductPage() {
           book a demo to see it live.
         </p>
         <Link
-          href={`${SITE_CONFIG.APP_URL}/signup`}
+          href={`${SITE_CONFIG.APP_URL}/auth/signup`}
           className="inline-flex items-center gap-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold px-8 py-4 rounded-xl transition-all"
         >
           Request a demo

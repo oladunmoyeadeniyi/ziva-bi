@@ -202,7 +202,7 @@ export default function Hero() {
             {/* CTAs */}
             <div className="flex flex-col sm:flex-row gap-4 mb-8">
               <a
-                href={`${SITE_CONFIG.APP_URL}/signup`}
+                href={`${SITE_CONFIG.APP_URL}/auth/signup`}
                 className="inline-flex items-center justify-center gap-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white font-semibold px-7 py-4 rounded-xl text-base transition-all shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
               >
                 Request a demo
