@@ -99,3 +99,85 @@ class FxRateLookupResponse(BaseModel):
     rate_type: str
     effective_date: date
     is_inverse: bool = False
+
+
+# ── Revaluation Rules (FX-b) ──────────────────────────────────────────────────
+
+class FxRevaluationRuleCreate(BaseModel):
+    """Create or update a period-end FX revaluation rule.
+
+    Args:
+        account_type: GL account type subject to revaluation
+                      (e.g. MONETARY_ASSET, MONETARY_LIABILITY).
+        rate_type: Which FX rate to use at revaluation — CLOSING | AVERAGE | BUDGET | SPOT.
+        gain_account_id: GL account UUID for recording FX gains.
+        loss_account_id: GL account UUID for recording FX losses.
+        is_active: Whether the rule is currently in effect.
+    """
+
+    account_type: str = Field(..., min_length=1, max_length=50)
+    rate_type: Literal["SPOT", "CLOSING", "AVERAGE", "BUDGET"] = "CLOSING"
+    gain_account_id: uuid.UUID | None = None
+    loss_account_id: uuid.UUID | None = None
+    is_active: bool = True
+
+
+class FxRevaluationRuleUpdate(BaseModel):
+    rate_type: Literal["SPOT", "CLOSING", "AVERAGE", "BUDGET"] | None = None
+    gain_account_id: uuid.UUID | None = None
+    loss_account_id: uuid.UUID | None = None
+    is_active: bool | None = None
+
+
+class FxRevaluationRuleResponse(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    account_type: str
+    rate_type: str
+    gain_account_id: uuid.UUID | None
+    loss_account_id: uuid.UUID | None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── BDC Register (FX-b) ───────────────────────────────────────────────────────
+
+class BdcEntryCreate(BaseModel):
+    """Record a Bureau de Change or parallel-market rate quote.
+
+    Args:
+        from_currency: Currency being sold (ISO 4217, e.g. "NGN").
+        to_currency: Currency being bought (ISO 4217, e.g. "USD").
+        rate: BDC rate — 1 unit of from_currency in to_currency terms.
+        quote_date: Date the quote was obtained.
+        bdc_name: Name of the Bureau de Change or market source.
+        reference: Internal reference or transaction number.
+        notes: Free-text notes for this entry.
+    """
+
+    from_currency: str = Field(..., min_length=3, max_length=3)
+    to_currency: str = Field(..., min_length=3, max_length=3)
+    rate: Decimal = Field(..., gt=0)
+    quote_date: date
+    bdc_name: str | None = Field(None, max_length=200)
+    reference: str | None = Field(None, max_length=200)
+    notes: str | None = None
+
+
+class BdcEntryResponse(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    from_currency: str
+    to_currency: str
+    rate: Decimal
+    quote_date: date
+    bdc_name: str | None
+    reference: str | None
+    notes: str | None
+    created_by: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

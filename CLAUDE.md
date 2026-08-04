@@ -165,7 +165,7 @@ ruff check app/
 
 > **Authoritative as of 2026-07-31.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: ~90% of full product vision. 100% of MVP-for-first-customer. M17b + ICE (`4dc843b`), Phase 2 (`0e07df6`), Phase 3 (`b2c5e9a`), PRAD website (`8961398`), full rebrand (`2835779`) all shipped. IxE (Inter-Company Eliminations), FX dedicated tables (`tenant_currencies`+`tenant_fx_rates`), Performance & Security Audit (Redis cache + SecurityHeadersMiddleware + slowapi), and PWA Unified Approvals Inbox all coded and pending CC commit (migration `r1s2t3u4v5w6`). Clean working tree. Next: `/review-commit` in CC terminal.**
+> **Overall completion: ~95% of full product vision. 100% of MVP-for-first-customer. All TIER 0–4 modules shipped. FX-b (Revaluation Rules + BDC Register, migration `t3u4v5w6x7y8`) + website /product + /about pages committed. No pending CC items. Last updated: 2026-08-04.**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -243,10 +243,15 @@ ruff check app/
 | Phase 2 | Security — httpOnly cookie migration: refresh token moved from localStorage to httpOnly `refresh_token` cookie; `AuthContext` stops reading/writing localStorage for refresh; `/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout` updated | `0e07df6` |
 | Phase 3 | Security — WebAuthn passkey + Web Push: `user_credentials` + `push_subscriptions` tables (migration `q0r1s2t3u4v5`); passkey register/authenticate endpoints; push subscription + send endpoints; VAPID config; `py-webauthn` + `pywebpush` dependencies | `b2c5e9a` |
 | PRAD-site | PRAD marketing website — `apps/prad-website/` added to monorepo; Next.js 15 standalone Docker; Tailwind v4; Framer Motion; 11 homepage sections; `site.config.ts` single source of truth for pricing/FAQ/copy; deployed on Render | `8961398` |
-| IxE | Inter-Company Eliminations — 8 tables (consolidation_groups/members, ic_account_mappings, ic_matches, elimination_journals/lines + FX tables); auto-match engine; consolidated trial balance; 7 frontend pages; migration `r1s2t3u4v5w6` | pending CC |
-| FX | Currencies & FX dedicated tables — `tenant_currencies` + `tenant_fx_rates` replacing JSONB; inverse-rate fallback; currencies page rewritten; migration `r1s2t3u4v5w6` | pending CC |
-| Perf | Performance & Security Audit — Redis cache service (graceful no-op); `SecurityHeadersMiddleware`; `slowapi` rate limiting (graceful import); `REDIS_URL` config var; `slowapi`+`redis` deps | pending CC |
-| PWA-4 | Unified Approvals Inbox — `GET /api/approvals/inbox` + count endpoint aggregating expense/AP/PO; unified inbox frontend page + sidebar link | pending CC |
+| IxE | Inter-Company Eliminations — 8 tables (consolidation_groups/members, ic_account_mappings, ic_matches, elimination_journals/lines + FX tables); auto-match engine; consolidated trial balance; 7 frontend pages; migration `r1s2t3u4v5w6` | `c8e465e` |
+| FX | Currencies & FX dedicated tables — `tenant_currencies` + `tenant_fx_rates` replacing JSONB; inverse-rate fallback; currencies page rewritten; migration `r1s2t3u4v5w6` | `c8e465e` |
+| Perf | Performance & Security Audit — Redis cache service (graceful no-op); `SecurityHeadersMiddleware`; `slowapi` rate limiting (graceful import); `REDIS_URL` config var; `slowapi`+`redis` deps | `c8e465e` |
+| PWA-4 | Unified Approvals Inbox — `GET /api/approvals/inbox` + count endpoint aggregating expense/AP/PO; unified inbox frontend page + sidebar link | `c8e465e` |
+| — | Website auth links 404 fix + AI → Intelligence rebrand across app + website (Nav, site.config, Hero, FinalCTA, Features, blog, pricing, product pages; sidebar, ai-insights, ai-config, IceSuggestionBadge) | post-`c8e465e` |
+| — | DB seed fix: Alembic migration `s2t3u4v5w6x7` updates `platform_config` app_name from 'Ziva BI' → 'PRAD'; remaining website `/signup` → `/auth/signup` link fixes | post-`c8e465e` |
+| — | App-config cache fix: root layout `fetchAppName()` switched from `revalidate:300` to `cache:"no-store"` — eliminates PRAD/Ziva BI name flicker between page refreshes | post-`c8e465e` |
+| FX-b | Currencies & FX — Revaluation Rules tab + BDC Register tab; migration `t3u4v5w6x7y8`; models/schemas/router additions; two new frontend tabs | committed |
+| Website | `/product` and `/about` pages — full content replacing "coming soon" stubs | committed |
 
 ---
 
@@ -274,8 +279,8 @@ ruff check app/
 | M16 | **Budget & Planning** ✅ | **L/C/E** | Shipped `9ffd9e0` — budget periods, lines, variance engine |
 | M19 | **Tax Engine — transaction level** ✅ | **L/C/E** | Shipped `9ffd9e0` — VAT/WHT/PAYE compute, tax returns |
 | M15 | **Payroll & HR** ✅ | **L/C/E** | Shipped `9ffd9e0` — salary structures, payroll runs, leave |
-| ICE | **AI Categorisation Engine** ✅ (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) | **All modes** | Pending CC commit — migration `p9q0r1s2t3u4` |
-| IxE | **Inter-Company Eliminations** ✅ (group consolidation, IC matches, elimination journals, consolidated TB) | **E only** | Pending CC commit — migration `r1s2t3u4v5w6` |
+| ICE | **AI Categorisation Engine** ✅ (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) | **All modes** | Shipped `4dc843b` — migration `p9q0r1s2t3u4` |
+| IxE | **Inter-Company Eliminations** ✅ (group consolidation, IC matches, elimination journals, consolidated TB) | **E only** | Shipped `c8e465e` — migration `r1s2t3u4v5w6` |
 
 #### TIER 4 — Long-term / Specialist — ✅ ALL SHIPPED (except noted)
 
@@ -286,9 +291,10 @@ ruff check app/
 | M17b | **Inventory FIFO + Standard Costing** ⏳ | **L/C/E** | Pending CC commit — FIFO lot tracking, Standard+PPV, GL pickers (`l0m1n2o3p4q5`) |
 | ICE | **AI Categorisation Engine** ⏳ | **All modes** | Pending CC commit — GL prediction, confidence scoring, feedback loop (`p9q0r1s2t3u4`) |
 | M20 | **AI Intelligence Layer** ✅ | **All modes** | Shipped `9ffd9e0` — anomaly detection, patterns, cash forecast |
-| Perf | **Performance & Security Audit** ✅ (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | — | Pending CC commit — no migration |
-| FX | **Currencies & FX dedicated tables** ✅ (`tenant_currencies` + `tenant_fx_rates` tables; rate lookup with inverse fallback) | — | Pending CC commit — tables in migration `r1s2t3u4v5w6` |
-| PWA-4 | **Unified Approvals Inbox** ✅ (`GET /api/approvals/inbox` + frontend; aggregates expense/AP/PO) | **All modes** | Pending CC commit — no migration |
+| Perf | **Performance & Security Audit** ✅ (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | — | Shipped `c8e465e` — no migration |
+| FX | **Currencies & FX dedicated tables** ✅ (`tenant_currencies` + `tenant_fx_rates` tables; rate lookup with inverse fallback) | — | Shipped `c8e465e` — tables in migration `r1s2t3u4v5w6` |
+| PWA-4 | **Unified Approvals Inbox** ✅ (`GET /api/approvals/inbox` + frontend; aggregates expense/AP/PO) | **All modes** | Shipped `c8e465e` — no migration |
+| FX-b | **Currencies & FX — Revaluation Rules + BDC Register** (two deferred tabs from FX milestone) | — | Committed — migration `t3u4v5w6x7y8` |
 
 ## Module PRDs
 

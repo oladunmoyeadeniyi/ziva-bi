@@ -24,8 +24,15 @@ from decimal import Decimal
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.fx import TenantCurrency, TenantFxRate
-from app.schemas.fx import TenantCurrencyCreate, TenantCurrencyUpdate, TenantFxRateCreate
+from app.models.fx import BdcEntry, FxRevaluationRule, TenantCurrency, TenantFxRate
+from app.schemas.fx import (
+    BdcEntryCreate,
+    FxRevaluationRuleCreate,
+    FxRevaluationRuleUpdate,
+    TenantCurrencyCreate,
+    TenantCurrencyUpdate,
+    TenantFxRateCreate,
+)
 
 
 # ── Currencies ────────────────────────────────────────────────────────────────
@@ -431,3 +438,170 @@ async def import_from_jsonb(
 
     await db.flush()
     return {"currencies_created": currencies_created, "rates_created": rates_created}
+
+
+# ── Revaluation Rules (FX-b) ──────────────────────────────────────────────────
+
+async def list_revaluation_rules(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+) -> list[FxRevaluationRule]:
+    """Return all FX revaluation rules for the tenant."""
+    result = await db.execute(
+        select(FxRevaluationRule)
+        .where(FxRevaluationRule.tenant_id == tenant_id)
+        .order_by(FxRevaluationRule.account_type)
+    )
+    return list(result.scalars().all())
+
+
+async def create_revaluation_rule(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    payload: FxRevaluationRuleCreate,
+) -> FxRevaluationRule:
+    """Create a revaluation rule. One rule per (tenant_id, account_type).
+
+    Raises:
+        ValueError: If a rule for this account type already exists.
+    """
+    existing = await db.execute(
+        select(FxRevaluationRule).where(
+            FxRevaluationRule.tenant_id == tenant_id,
+            FxRevaluationRule.account_type == payload.account_type,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise ValueError(f"A revaluation rule for account type '{payload.account_type}' already exists.")
+
+    rule = FxRevaluationRule(
+        tenant_id=tenant_id,
+        account_type=payload.account_type,
+        rate_type=payload.rate_type,
+        gain_account_id=payload.gain_account_id,
+        loss_account_id=payload.loss_account_id,
+        is_active=payload.is_active,
+    )
+    db.add(rule)
+    await db.flush()
+    await db.refresh(rule)
+    return rule
+
+
+async def update_revaluation_rule(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    payload: FxRevaluationRuleUpdate,
+) -> FxRevaluationRule | None:
+    """Update a revaluation rule's rate_type, gain/loss accounts, or active flag."""
+    result = await db.execute(
+        select(FxRevaluationRule).where(
+            FxRevaluationRule.id == rule_id,
+            FxRevaluationRule.tenant_id == tenant_id,
+        )
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        return None
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(rule, field, value)
+    await db.flush()
+    await db.refresh(rule)
+    return rule
+
+
+async def delete_revaluation_rule(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    rule_id: uuid.UUID,
+) -> bool:
+    """Hard-delete a revaluation rule. Returns True if found and deleted."""
+    result = await db.execute(
+        select(FxRevaluationRule).where(
+            FxRevaluationRule.id == rule_id,
+            FxRevaluationRule.tenant_id == tenant_id,
+        )
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        return False
+    await db.delete(rule)
+    await db.flush()
+    return True
+
+
+# ── BDC Register (FX-b) ───────────────────────────────────────────────────────
+
+async def list_bdc_entries(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    from_currency: str | None = None,
+    to_currency: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[BdcEntry]:
+    """List BDC register entries with optional filters."""
+    q = select(BdcEntry).where(BdcEntry.tenant_id == tenant_id)
+    if from_currency:
+        q = q.where(BdcEntry.from_currency == from_currency.upper())
+    if to_currency:
+        q = q.where(BdcEntry.to_currency == to_currency.upper())
+    if date_from:
+        q = q.where(BdcEntry.quote_date >= date_from)
+    if date_to:
+        q = q.where(BdcEntry.quote_date <= date_to)
+    result = await db.execute(q.order_by(BdcEntry.quote_date.desc()))
+    return list(result.scalars().all())
+
+
+async def create_bdc_entry(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    created_by: uuid.UUID,
+    payload: BdcEntryCreate,
+) -> BdcEntry:
+    """Record a BDC or parallel-market rate quote.
+
+    Args:
+        created_by: UUID of the user recording this entry.
+        payload: BDC entry payload.
+
+    Returns:
+        The persisted BdcEntry.
+    """
+    entry = BdcEntry(
+        tenant_id=tenant_id,
+        from_currency=payload.from_currency.upper(),
+        to_currency=payload.to_currency.upper(),
+        rate=payload.rate,
+        quote_date=payload.quote_date,
+        bdc_name=payload.bdc_name,
+        reference=payload.reference,
+        notes=payload.notes,
+        created_by=created_by,
+    )
+    db.add(entry)
+    await db.flush()
+    await db.refresh(entry)
+    return entry
+
+
+async def delete_bdc_entry(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    entry_id: uuid.UUID,
+) -> bool:
+    """Delete a BDC entry. Returns True if found and deleted."""
+    result = await db.execute(
+        select(BdcEntry).where(
+            BdcEntry.id == entry_id,
+            BdcEntry.tenant_id == tenant_id,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        return False
+    await db.delete(entry)
+    await db.flush()
+    return True

@@ -15,6 +15,17 @@ Route map:
 
   GET    /api/fx/rates/lookup            — look up a specific rate for a date
   POST   /api/fx/migrate-from-jsonb      — import JSONB legacy data to new tables
+
+  FX-b — Revaluation Rules:
+  GET    /api/fx/revaluation-rules       — list revaluation rules
+  POST   /api/fx/revaluation-rules       — create a revaluation rule
+  PATCH  /api/fx/revaluation-rules/{id}  — update a revaluation rule
+  DELETE /api/fx/revaluation-rules/{id}  — delete a revaluation rule
+
+  FX-b — BDC Register:
+  GET    /api/fx/bdc                     — list BDC entries (filterable by currency pair + date)
+  POST   /api/fx/bdc                     — record a BDC rate quote
+  DELETE /api/fx/bdc/{id}                — delete a BDC entry
 """
 
 import uuid
@@ -26,7 +37,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import CurrentUser, require_auth
 from app.schemas.fx import (
+    BdcEntryCreate,
+    BdcEntryResponse,
     FxRateLookupResponse,
+    FxRevaluationRuleCreate,
+    FxRevaluationRuleResponse,
+    FxRevaluationRuleUpdate,
     TenantCurrencyCreate,
     TenantCurrencyResponse,
     TenantCurrencyUpdate,
@@ -165,6 +181,104 @@ async def lookup_rate(
             detail=f"No {rate_type} rate found for {from_currency}/{to_currency} on or before {effective_date}",
         )
     return FxRateLookupResponse(**result)
+
+
+# ── Revaluation Rules (FX-b) ─────────────────────────────────────────────────
+
+@router.get("/revaluation-rules", response_model=list[FxRevaluationRuleResponse])
+async def list_revaluation_rules(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> list[FxRevaluationRuleResponse]:
+    """List all FX revaluation rules for this tenant."""
+    rules = await svc.list_revaluation_rules(db, current_user.tenant_id)
+    return [FxRevaluationRuleResponse.model_validate(r) for r in rules]
+
+
+@router.post("/revaluation-rules", response_model=FxRevaluationRuleResponse, status_code=status.HTTP_201_CREATED)
+async def create_revaluation_rule(
+    payload: FxRevaluationRuleCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> FxRevaluationRuleResponse:
+    """Create a new FX revaluation rule. One rule per account_type per tenant."""
+    try:
+        rule = await svc.create_revaluation_rule(db, current_user.tenant_id, payload)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await db.commit()
+    return FxRevaluationRuleResponse.model_validate(rule)
+
+
+@router.patch("/revaluation-rules/{rule_id}", response_model=FxRevaluationRuleResponse)
+async def update_revaluation_rule(
+    rule_id: uuid.UUID,
+    payload: FxRevaluationRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> FxRevaluationRuleResponse:
+    """Update a revaluation rule's rate type, gain/loss accounts, or active flag."""
+    rule = await svc.update_revaluation_rule(db, current_user.tenant_id, rule_id, payload)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Revaluation rule not found")
+    await db.commit()
+    return FxRevaluationRuleResponse.model_validate(rule)
+
+
+@router.delete("/revaluation-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_revaluation_rule(
+    rule_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> None:
+    """Delete a revaluation rule by ID."""
+    deleted = await svc.delete_revaluation_rule(db, current_user.tenant_id, rule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Revaluation rule not found")
+    await db.commit()
+
+
+# ── BDC Register (FX-b) ───────────────────────────────────────────────────────
+
+@router.get("/bdc", response_model=list[BdcEntryResponse])
+async def list_bdc_entries(
+    from_currency: str | None = Query(None),
+    to_currency: str | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> list[BdcEntryResponse]:
+    """List BDC rate entries, with optional currency pair and date range filters."""
+    entries = await svc.list_bdc_entries(
+        db, current_user.tenant_id, from_currency, to_currency, date_from, date_to
+    )
+    return [BdcEntryResponse.model_validate(e) for e in entries]
+
+
+@router.post("/bdc", response_model=BdcEntryResponse, status_code=status.HTTP_201_CREATED)
+async def create_bdc_entry(
+    payload: BdcEntryCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> BdcEntryResponse:
+    """Record a new BDC or parallel-market rate quote."""
+    entry = await svc.create_bdc_entry(db, current_user.tenant_id, current_user.user_id, payload)
+    await db.commit()
+    return BdcEntryResponse.model_validate(entry)
+
+
+@router.delete("/bdc/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_bdc_entry(
+    entry_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_auth),
+) -> None:
+    """Delete a BDC entry by ID."""
+    deleted = await svc.delete_bdc_entry(db, current_user.tenant_id, entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="BDC entry not found")
+    await db.commit()
 
 
 # ── JSONB migration ───────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 > **For current code/schema/endpoint facts (the "what"):** see `docs/PROJECT_STATE.md`, which is the authoritative current-state snapshot and wins all conflicts on volatile matters.
 > If anything in this document conflicts with PROJECT_STATE.md on a volatile fact (table columns, endpoint paths, feature status), **PROJECT_STATE.md wins**.
 >
-> Last updated: 2026-07-31 — IxE (Inter-Company Eliminations), FX dedicated tables (tenant_currencies + tenant_fx_rates), Performance & Security Audit (Redis cache, security headers, rate limiting), and PWA Phase 4 Unified Approvals Inbox all coded and pending CC commit (migration `r1s2t3u4v5w6`). Last committed head: `2835779` (full rebrand). All TIER 0–4 modules + security hardening complete. Next: CC review + alembic upgrade head.
+> Last updated: 2026-08-04 — All TIER 0–4 modules + security hardening shipped and committed. FX-b (Revaluation Rules + BDC Register, migration `t3u4v5w6x7y8`) + website /product + /about pages committed. No pending CC items. Platform is feature-complete for first customer.
 
 ---
 
@@ -900,7 +900,7 @@ Extended the approval-matrix system with three major capabilities:
 
 ---
 
-### Dynamic App Name — platform_config single source of truth (2026-07-21, pending CC commit `u3v4w5x6y7z8`)
+### Dynamic App Name — platform_config single source of truth (2026-07-21, committed)
 
 All hardcoded product name strings (`"PRAD"` / `"ZivaBI"`) removed from frontend, emails, and TOTP issuer. The name now lives in `platform_config` and propagates everywhere with no code redeploy.
 
@@ -932,7 +932,7 @@ All hardcoded product name strings (`"PRAD"` / `"ZivaBI"`) removed from frontend
 
 ---
 
-### P2 — Resend Email Service (2026-07-23, pending CC commit)
+### P2 — Resend Email Service (2026-07-23, committed `a5172a0`)
 
 Replaced all SMTP stubs with a production-ready Resend-backed email service. Every email touchpoint in the product is now wired.
 
@@ -1262,7 +1262,7 @@ Inventory item management, location hierarchy, stock movement ledger, and COGS G
 
 ---
 
-### M17b — Inventory FIFO + Standard Costing (2026-07-29, migration `l0m1n2o3p4q5`) — **pending CC commit**
+### M17b — Inventory FIFO + Standard Costing (2026-07-29, migration `l0m1n2o3p4q5`) — committed `4dc843b`
 
 Extends M17 with full FIFO lot tracking and Standard costing (with Purchase Price Variance GL posting).
 
@@ -1386,7 +1386,7 @@ New `apps/prad-website/` app added to the Turborepo monorepo — the public-faci
 | 2 | Accounts Payable (P2P) | `ap` | ✅ Built (M11, 2026-07-25) | All |
 | 3 | Accounts Receivable (O2C) | `ar` | ✅ Built (M14, 2026-07-28) | All |
 | 4 | Payroll & HR | `payroll` | ✅ Built (M15, 2026-07-28) — committed `9ffd9e0` | All |
-| 5 | Inventory Management | `inventory` | ✅ Built (M17+M17b, 2026-07-28/29) — M17b pending CC commit | All |
+| 5 | Inventory Management | `inventory` | ✅ Built (M17+M17b, 2026-07-28/29) — committed `4dc843b` | All |
 | 6 | Fixed Assets | `fixed_assets` | ✅ Built (M18, 2026-07-28) — committed `9ffd9e0` | All |
 | 7 | POSM Management | `posm` | ⏳ Not yet built | All |
 | 8 | Vendor Portal | `vendor_portal` | ⏳ Not yet built | All |
@@ -1397,8 +1397,8 @@ New `apps/prad-website/` app added to the Turborepo monorepo — the public-faci
 | 13 | AI Intelligence Layer | (Full ERP gate) | ✅ Built (M20, 2026-07-28) — committed `9ffd9e0` | Full ERP |
 | 14 | SA Billing & Subscriptions | (SA only) | ✅ Built (SA-B, 2026-07-28) — committed `9ffd9e0` | SA portal |
 | 15 | Reporting & Analytics | `reporting` | ⏳ Not yet built as standalone module | All |
-| 16 | AI Categorisation (ICE) | (All modes) | ✅ Built (ICE, 2026-07-29) — pending CC commit; migration `p9q0r1s2t3u4` | All |
-| 17 | Inter-Company Eliminations | (Full ERP) | ✅ Built (IxE, 2026-07-31) — pending CC commit; migration `r1s2t3u4v5w6` | Full ERP |
+| 16 | AI Categorisation (ICE) | (All modes) | ✅ Built (ICE, 2026-07-29) — committed `4dc843b`; migration `p9q0r1s2t3u4` | All |
+| 17 | Inter-Company Eliminations | (Full ERP) | ✅ Built (IxE, 2026-07-31) — committed `c8e465e`; migration `r1s2t3u4v5w6` | Full ERP |
 
 > **Module naming rationale:**
 > - "Accounts Payable (P2P)" — P2P = Purchase to Pay, the end-to-end process. AP handles supplier invoices, payment runs, and vendor account management.
@@ -1498,8 +1498,8 @@ Architectural invariants that are durable decisions (the WHY):
 | M16 | **Budget & Planning** (budget periods, lines, variance engine) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | M19 | **Tax Engine — transaction level** (VAT/WHT/PAYE, tax returns, WHT certificates) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | M15 | **Payroll & HR** (salary structures, payroll runs, PAYE, payslips, leave) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
-| ICE | **AI Categorisation Engine** (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) — PRD: `docs/ICE_PRD.md` | ✅ Done (2026-07-29) — pending CC commit; migration `p9q0r1s2t3u4` |
-| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | ✅ Done (2026-07-31) — pending CC commit; migration `r1s2t3u4v5w6` |
+| ICE | **AI Categorisation Engine** (GL prediction, confidence scoring, feedback loop, vendor/employee profiles) — PRD: `docs/ICE_PRD.md` | ✅ Done (2026-07-29) — committed `4dc843b`; migration `p9q0r1s2t3u4` |
+| IxE | **Inter-Company Eliminations** (group consolidation, elimination journals) | ✅ Done (2026-07-31) — committed `c8e465e`; migration `r1s2t3u4v5w6` |
 
 ### TIER 4 — Long-term / Specialist
 
@@ -1509,9 +1509,10 @@ Architectural invariants that are durable decisions (the WHY):
 | M17 | **Inventory & Warehouse** (items, WACC costing, COGS GL posting) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
 | M17b | **Inventory FIFO + Standard Costing** (cost layers, PPV journals, GL pickers) | ✅ Done (2026-07-29) — committed `9ffd9e0` |
 | M20 | **AI Intelligence Layer** (anomaly detection, spending patterns, cash flow forecast, GL auto-classify) | ✅ Done (2026-07-28) — committed `9ffd9e0` |
-| Perf | **Performance & Security Audit** (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | ✅ Done (2026-07-31) — pending CC commit |
-| FX | **Currencies & FX dedicated tables** (`tenant_currencies` + `tenant_fx_rates` replacing JSONB) | ✅ Done (2026-07-31) — pending CC commit; tables in migration `r1s2t3u4v5w6` |
-| PWA-4 | **Unified Approvals Inbox** (`GET /api/approvals/inbox` + frontend; aggregates expense/AP/PO submissions) | ✅ Done (2026-07-31) — pending CC commit |
+| Perf | **Performance & Security Audit** (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | ✅ Done (2026-07-31) — committed `c8e465e` |
+| FX | **Currencies & FX dedicated tables** (`tenant_currencies` + `tenant_fx_rates` replacing JSONB) | ✅ Done (2026-07-31) — committed `c8e465e`; tables in migration `r1s2t3u4v5w6` |
+| PWA-4 | **Unified Approvals Inbox** (`GET /api/approvals/inbox` + frontend; aggregates expense/AP/PO submissions) | ✅ Done (2026-07-31) — committed `c8e465e` |
+| FX-b | **Currencies & FX — Revaluation Rules + BDC Register** (two deferred tabs; revaluation rule engine + parallel-rate log) | ✅ Done (2026-08-01) — pending CC commit (this round); migration `t3u4v5w6x7y8` |
 
 ### Infrastructure (parallel, not a blocker on feature work)
 - Upgrade Render PostgreSQL to Standard ($50/month) — before first paying customer
@@ -1564,7 +1565,7 @@ Bank-accounts page now reads `enabled_currencies` from the single canonical endp
 
 ---
 
-### IxE — Inter-Company Eliminations (2026-07-31, migration `r1s2t3u4v5w6`) — **pending CC commit**
+### IxE — Inter-Company Eliminations (2026-07-31, migration `r1s2t3u4v5w6`) — committed `c8e465e`
 
 Group consolidation engine for multi-entity Full ERP tenants. Pairs intercompany-tagged journal lines across entities and posts immutable elimination journals, then computes a consolidated trial balance.
 
@@ -1588,7 +1589,7 @@ Group consolidation engine for multi-entity Full ERP tenants. Pairs intercompany
 
 ---
 
-### FX Dedicated Tables (2026-07-31, migration `r1s2t3u4v5w6`) — **pending CC commit**
+### FX Dedicated Tables (2026-07-31, migration `r1s2t3u4v5w6`) — committed `c8e465e`
 
 Replaces the JSONB `enabled_currencies`/`fx_rates` columns in `org_setup` with proper relational tables. Enables row-level rate queries, inverse-rate fallback, and rate-type granularity.
 
@@ -1606,7 +1607,7 @@ Replaces the JSONB `enabled_currencies`/`fx_rates` columns in `org_setup` with p
 
 ---
 
-### Performance & Security Audit (2026-07-31) — **pending CC commit**
+### Performance & Security Audit (2026-07-31) — committed `c8e465e`
 
 Security hardening and optional Redis-backed caching. No migration required.
 
@@ -1633,7 +1634,7 @@ Security hardening and optional Redis-backed caching. No migration required.
 
 ---
 
-### PWA Phase 4 — Unified Approvals Inbox (2026-07-31) — **pending CC commit**
+### PWA Phase 4 — Unified Approvals Inbox (2026-07-31) — committed `c8e465e`
 
 Aggregates all items waiting for the current user's approval across every module into a single inbox view. No migration required — reads existing data.
 
@@ -1646,4 +1647,23 @@ Aggregates all items waiting for the current user's approval across every module
 
 ---
 
-*End of Master Context. Last updated: 2026-07-31 — IxE (group consolidation), FX dedicated tables, Performance & Security Audit, and PWA Unified Approvals Inbox all coded and pending CC commit (migration `r1s2t3u4v5w6`). Last committed head: `2835779` (full PRAD rebrand). Product fully feature-complete for initial release. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*
+### FX-b — Revaluation Rules + BDC Register (2026-08-01, migration `t3u4v5w6x7y8`) — pending CC commit (this round)
+
+Adds two deferred tabs to the Currencies page completing the FX milestone.
+
+**New tables (2):**
+- `fx_revaluation_rules` — per-tenant rules mapping GL account types (MONETARY_ASSET, MONETARY_LIABILITY, etc.) to the FX rate type (CLOSING/AVERAGE/BUDGET/SPOT) used at period-end revaluation, with `gain_account_id` and `loss_account_id` FKs to `chart_of_accounts`. Unique on `(tenant_id, account_type)`.
+- `bdc_register` — Bureau de Change / parallel-market rate log. Captures BDC name, quote date, currency pair, rate, reference, and notes. Index on `(tenant_id, quote_date)`. Created by user FK stored for audit trail.
+
+**Backend:**
+- `models/fx.py` — `FxRevaluationRule` + `BdcEntry` ORM models (FKs to `chart_of_accounts.id` and `users.id`).
+- `schemas/fx.py` — `FxRevaluationRuleCreate/Update/Response` + `BdcEntryCreate/Response`.
+- `services/fx_service.py` — CRUD for both tables: `list/create/update/delete_revaluation_rule()`, `list/create/delete_bdc_entry()`.
+- `routers/fx.py` — 7 new endpoints under `/api/fx/` (revaluation-rules: GET/POST/PATCH/DELETE; bdc: GET/POST/DELETE).
+
+**Frontend:**
+- `setup/currencies/page.tsx` — two new tabs added (tabs 4 + 5): "Revaluation Rules" (form + table with inline active toggle) and "BDC Register" (form + register table). Existing 3 tabs unchanged.
+
+---
+
+*End of Master Context. Last updated: 2026-08-04 — All TIER 0–4 modules shipped and committed. FX-b (migration `t3u4v5w6x7y8`) + website /product + /about pages pending CC commit this round. Platform is feature-complete for first customer. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*
