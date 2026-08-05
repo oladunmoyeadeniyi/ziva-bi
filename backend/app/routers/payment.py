@@ -6,7 +6,7 @@ What this module does:
 
   GET  /api/payments/queue                        — list QUEUED payments for the tenant
   GET  /api/payments/history                      — list all payments (PAID + FAILED + CANCELLED)
-  POST /api/payments/queue/{report_id}            — add an approved report to the queue
+  POST /api/payments/queue                         — add an approved report to the queue (body: {expense_report_id})
   POST /api/payments/{id}/initiate                — initiate payment (MANUAL: mark paid; PAYSTACK: API call)
   POST /api/payments/{id}/cancel                  — cancel a queued payment
   GET  /api/payments/config                       — get payment config for tenant
