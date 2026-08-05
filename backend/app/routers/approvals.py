@@ -41,7 +41,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -2361,6 +2361,53 @@ async def approve(
 
             report.status = "APPROVED"
             report.current_approval_level = None
+
+            # ── Auto-queue for payment ────────────────────────────────────────
+            # If the tenant has payment configured, automatically create a
+            # QUEUED expense_payment record. This mirrors how post_expense_to_gl
+            # is called here — the finance team should not need to manually
+            # re-locate each approved report to add it to the queue.
+            # Any failure here MUST NOT block the approval completion, so we
+            # use a nested transaction (savepoint) and swallow all exceptions.
+            try:
+                async with db.begin_nested():
+                    pay_cfg = (await db.execute(text(
+                        "SELECT payment_mode FROM expense_payment_configs "
+                        "WHERE tenant_id = :tid LIMIT 1"
+                    ), {"tid": tenant_id})).first()
+                    if pay_cfg:
+                        dup = (await db.execute(text(
+                            "SELECT id FROM expense_payments "
+                            "WHERE expense_report_id = :rid AND tenant_id = :tid "
+                            "AND status NOT IN ('CANCELLED','FAILED')"
+                        ), {"rid": report.id, "tid": tenant_id})).first()
+                        if not dup:
+                            ba = (await db.execute(text(
+                                "SELECT id FROM employee_bank_accounts "
+                                "WHERE employee_id = :emp AND tenant_id = :tid "
+                                "AND is_primary = true LIMIT 1"
+                            ), {"emp": report.employee_id, "tid": tenant_id})).first()
+                            await db.execute(text("""
+                                INSERT INTO expense_payments
+                                  (id, tenant_id, expense_report_id, employee_id,
+                                   bank_account_id, amount, currency, status, initiated_by)
+                                VALUES
+                                  (:id, :tid, :rid, :emp_id,
+                                   :ba_id, :amt, :currency, 'QUEUED', :user_id)
+                            """), {
+                                "id": str(uuid.uuid4()), "tid": tenant_id,
+                                "rid": report.id, "emp_id": report.employee_id,
+                                "ba_id": str(ba[0]) if ba else None,
+                                "amt": float(report.total_amount),
+                                "currency": report.currency,
+                                "user_id": current_user.user_id,
+                            })
+            except Exception:
+                logger.exception(
+                    "Auto-queue payment failed for report %s (tenant %s) — approval still completed",
+                    report.id, tenant_id,
+                )
+            # ─────────────────────────────────────────────────────────────────
 
             audit_event = (
                 "EXPENSE_GL_POSTED"

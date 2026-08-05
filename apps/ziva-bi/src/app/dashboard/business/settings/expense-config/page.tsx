@@ -17,6 +17,7 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/Banner";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 interface ExpenseConfig {
   coding_level: number;
@@ -85,7 +86,7 @@ function Toggle({
   );
 }
 
-export default function ExpenseConfigPage() {
+function ExpenseConfigPage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
 
@@ -323,5 +324,13 @@ export default function ExpenseConfigPage() {
         )}
       </div>
     </PageContainer>
+  );
+}
+
+export default function ExpenseConfigPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="expense_config" title="Expense Config">
+      <ExpenseConfigPage />
+    </SectionLockWrapper>
   );
 }

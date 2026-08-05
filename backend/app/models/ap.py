@@ -60,6 +60,9 @@ class Vendor(Base):
     bank_sort_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Vendor portal (migration w6x7y8z9a0b1)
+    portal_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    portal_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

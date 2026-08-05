@@ -196,6 +196,14 @@ from app.routers import push as push_router
 from app.routers import consolidation as consolidation_router
 from app.routers import fx as fx_router
 from app.routers import approvals_inbox as approvals_inbox_router
+from app.routers import consultant_locks as consultant_locks_router
+from app.routers import reporting as reporting_router
+from app.routers import vendor_portal as vendor_portal_router
+from app.routers import customer_portal as customer_portal_router
+from app.routers import asset_issuance as asset_issuance_router
+from app.routers import stores as stores_router
+from app.routers import petty_cash as petty_cash_router
+from app.routers import payment as payment_router
 
 app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
@@ -231,6 +239,14 @@ app.include_router(push_router.router)
 app.include_router(consolidation_router.router)
 app.include_router(fx_router.router)
 app.include_router(approvals_inbox_router.router)
+app.include_router(consultant_locks_router.router)
+app.include_router(reporting_router.router)
+app.include_router(vendor_portal_router.router)
+app.include_router(customer_portal_router.router)
+app.include_router(asset_issuance_router.router)
+app.include_router(stores_router.router)
+app.include_router(petty_cash_router.router)
+app.include_router(payment_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

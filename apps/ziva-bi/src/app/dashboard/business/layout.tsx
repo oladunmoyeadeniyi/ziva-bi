@@ -16,6 +16,7 @@ import type { ImpersonationState } from "@/contexts/AuthContext";
 import ImpersonationUserBanner from "@/components/ImpersonationUserBanner";
 import { apiFetch } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
+import { ConsultantLocksProvider, useConsultantLocks } from "@/contexts/ConsultantLocksContext";
 
 // ── Branding ──────────────────────────────────────────────────────────────────
 interface BrandingThemeMin { primary: string; sidebar: string; }
@@ -75,13 +76,13 @@ const MODULE_ROUTES: Record<string, string> = {
   inventory:        "/dashboard/business/inventory",
   fixed_assets:     "/dashboard/business/assets",
   posm:             "/dashboard/business/setup/modules/posm",
-  vendor_portal:    "/dashboard/business/setup/modules/vendor-portal",
-  customer_portal:  "/dashboard/business/setup/modules/customer-portal",
+  vendor_portal:    "/dashboard/business/vendor-portal",
+  customer_portal:  "/dashboard/business/customer-portal",
   warehouse:        "/dashboard/business/setup/modules/warehouse",
   bank_recon:       "/dashboard/business/setup/modules/bank",
   budget:           "/dashboard/business/budgets",
   tax_engine:       "/dashboard/business/tax",
-  reporting:        "/dashboard/business/setup/modules/reporting",
+  reporting:        "/dashboard/business/reporting",
 };
 
 // ── Impersonation banner ──────────────────────────────────────────────────────
@@ -127,12 +128,13 @@ function ImpersonationBanner({
   );
 }
 
-export default function BusinessLayout({
+function BusinessLayoutInner({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const { user, accessToken, isLoading, impersonation, exitImpersonation, exitUserImpersonation } = useAuth();
+  const { isLocked } = useConsultantLocks();
   const pathname = usePathname();
   const router = useRouter();
   const [pendingCount, setPendingCount] = useState<number>(0);
@@ -247,14 +249,17 @@ export default function BusinessLayout({
     icon,
     exact = false,
     badge = null,
+    lockKey,
   }: {
     href: string;
     label: string;
     icon: string;
     exact?: boolean;
     badge?: number | null;
+    lockKey?: string;
   }) => {
     const active = isActive(href, exact);
+    const sectionLocked = lockKey ? isLocked(lockKey) : false;
     return (
       <Link
         href={href}
@@ -273,6 +278,9 @@ export default function BusinessLayout({
       >
         <Icon name={icon} size={14} />
         <span className="flex-1 truncate">{label}</span>
+        {sectionLocked && (
+          <i className="ti ti-lock text-amber-500" style={{ fontSize: 11 }} title="Locked by consultant" />
+        )}
         {badge !== null && badge > 0 && (
           <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
             {badge > 9 ? "9+" : badge}
@@ -363,6 +371,7 @@ export default function BusinessLayout({
               <SectionLabel label="Workspace" />
               <NavLink href="/dashboard/business" label="Home" icon="home" exact />
               <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
+              <NavLink href="/dashboard/business/expenses/payments" label="Payment queue" icon="wallet" />
               {/* RBAC: gate Approvals to approvers once RBAC is available */}
               <NavLink
                 href="/dashboard/business/approvals"
@@ -388,8 +397,8 @@ export default function BusinessLayout({
               <div className="px-2">
                 <SectionLabel label="Common Data" />
                 <NavLink href="/dashboard/business/setup" label="Setup dashboard" icon="layout-dashboard" exact />
-                <NavLink href="/dashboard/business/setup/organisation" label="Organisation" icon="building" />
-                <NavLink href="/dashboard/business/setup/modules" label="Module activation" icon="puzzle" />
+                <NavLink href="/dashboard/business/setup/organisation" label="Organisation" icon="building" lockKey="organisation" />
+                <NavLink href="/dashboard/business/setup/modules" label="Module activation" icon="puzzle" lockKey="module_activation" />
               </div>
 
               {/* FINANCIALS */}
@@ -397,25 +406,27 @@ export default function BusinessLayout({
                 <SectionLabel label="Financials" />
                 {/* Chart of Accounts — hidden in Lite mode */}
                 {postingMode !== 'lite' && (
-                  <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" />
+                  <NavLink href="/dashboard/business/settings/chart-of-accounts" label="Chart of accounts" icon="file-spreadsheet" lockKey="chart_of_accounts" />
                 )}
                 {/* Dimensions — hidden in Lite mode; use_dimensions gate still applies */}
                 {postingMode !== 'lite' && orgConfig?.use_dimensions && (
-                  <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" />
+                  <NavLink href="/dashboard/business/settings/dimensions" label="Dimensions" icon="vector" lockKey="dimensions" />
                 )}
-                <NavLink href="/dashboard/business/setup/bank-accounts" label="Bank accounts" icon="building-bank" />
+                <NavLink href="/dashboard/business/setup/bank-accounts" label="Bank accounts" icon="building-bank" lockKey="bank_accounts" />
+                <NavLink href="/dashboard/business/petty-cash" label="Petty cash" icon="cash" />
+                <NavLink href="/dashboard/business/settings/payment-config" label="Payment settings" icon="credit-card" />
                 {/* Account Mapping — hidden in Lite mode */}
                 {postingMode !== 'lite' && (
-                  <NavLink href="/dashboard/business/setup/account-mapping" label="Account mapping" icon="arrows-transfer-up" />
+                  <NavLink href="/dashboard/business/setup/account-mapping" label="Account mapping" icon="arrows-transfer-up" lockKey="account_mapping" />
                 )}
-                <NavLink href="/dashboard/business/setup/periods" label="Period management" icon="calendar" />
+                <NavLink href="/dashboard/business/setup/periods" label="Period management" icon="calendar" lockKey="periods" />
                 {/* Currencies & FX — hidden in Lite mode; use_multi_currency gate still applies */}
                 {postingMode !== 'lite' && orgConfig?.use_multi_currency && (
-                  <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" />
+                  <NavLink href="/dashboard/business/setup/currencies" label="Currencies & FX" icon="currency-dollar" lockKey="currencies" />
                 )}
                 {/* Tax & Statutory — hidden in Lite mode */}
                 {postingMode !== 'lite' && (
-                  <NavLink href="/dashboard/business/setup/tax" label="Tax & statutory" icon="receipt-tax" />
+                  <NavLink href="/dashboard/business/setup/tax" label="Tax & statutory" icon="receipt-tax" lockKey="tax" />
                 )}
               </div>
 
@@ -481,6 +492,7 @@ export default function BusinessLayout({
                   <NavLink href="/dashboard/business/inventory/movements" label="Stock movements" icon="arrows-transfer-up" />
                   <NavLink href="/dashboard/business/inventory/valuation" label="Valuation report" icon="report-money" />
                   <NavLink href="/dashboard/business/inventory/locations" label="Locations" icon="building-warehouse" />
+                  <NavLink href="/dashboard/business/stores" label="Store issues" icon="hand-move" />
                 </div>
               )}
 
@@ -490,6 +502,8 @@ export default function BusinessLayout({
                   <SectionLabel label="Fixed Assets" />
                   <NavLink href="/dashboard/business/assets" label="Asset register" icon="chart-pie" />
                   <NavLink href="/dashboard/business/assets/categories" label="Categories" icon="tag" />
+                  <NavLink href="/dashboard/business/assets/issuances" label="Asset issuances" icon="arrow-bar-right" />
+                  <NavLink href="/dashboard/business/assets/maintenance" label="Maintenance costs" icon="tool" />
                 </div>
               )}
 
@@ -529,17 +543,31 @@ export default function BusinessLayout({
               {/* PEOPLE */}
               <div className="px-2">
                 <SectionLabel label="People" />
-                <NavLink href="/dashboard/business/settings/employees" label="Employees" icon="users" />
-                <NavLink href="/dashboard/business/settings/positions" label="Positions" icon="hierarchy" />
+                <NavLink href="/dashboard/business/settings/employees" label="Employees" icon="users" lockKey="employees" />
+                <NavLink href="/dashboard/business/settings/positions" label="Positions" icon="hierarchy" lockKey="roles" />
               </div>
 
               {/* WORKFLOW & ACCESS */}
               <div className="px-2">
                 <SectionLabel label="Workflow &amp; Access" />
-                <NavLink href="/dashboard/business/setup/roles" label="Roles & permissions" icon="key" />
-                <NavLink href="/dashboard/business/settings/approval-matrix" label="Approval workflows" icon="git-merge" />
-                <NavLink href="/dashboard/business/setup/documents" label="Document rules" icon="file-check" />
+                <NavLink href="/dashboard/business/setup/roles" label="Roles & permissions" icon="key" lockKey="roles" />
+                <NavLink href="/dashboard/business/settings/approval-matrix" label="Approval workflows" icon="git-merge" lockKey="approval_workflows" />
+                <NavLink href="/dashboard/business/setup/documents" label="Document rules" icon="file-check" lockKey="document_rules" />
                 <NavLink href="/dashboard/business/admin/users" label="Team" icon="user-plus" />
+              </div>
+
+              {/* PORTALS */}
+              <div className="px-2">
+                <SectionLabel label="Portals" />
+                <NavLink href="/dashboard/business/vendor-portal" label="Vendor portal" icon="truck" />
+                <NavLink href="/dashboard/business/customer-portal" label="Customer portal" icon="user-check" />
+              </div>
+
+              {/* REPORTING & ANALYTICS */}
+              <div className="px-2">
+                <SectionLabel label="Reporting" />
+                <NavLink href="/dashboard/business/reporting" label="Analytics dashboard" icon="chart-dots" />
+                <NavLink href="/dashboard/business/reporting/saved" label="Saved reports" icon="bookmark" />
               </div>
 
               {/* AI CONFIGURATION */}
@@ -580,5 +608,20 @@ export default function BusinessLayout({
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>
+  );
+}
+
+// Outer component — wraps the layout with the ConsultantLocksProvider so all
+// child pages can read lock state without extra network requests.
+export default function BusinessLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { accessToken } = useAuth();
+  return (
+    <ConsultantLocksProvider accessToken={accessToken}>
+      <BusinessLayoutInner>{children}</BusinessLayoutInner>
+    </ConsultantLocksProvider>
   );
 }

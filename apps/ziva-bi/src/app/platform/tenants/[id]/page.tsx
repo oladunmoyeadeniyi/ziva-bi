@@ -18,6 +18,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PromotionReviewDialog from "@/components/PromotionReviewDialog";
+import { useConfirm } from "@/components/ConfirmDialog";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
@@ -110,6 +111,7 @@ export default function TenantDetailPage() {
   const { user, accessToken, enterTenant, startUserImpersonation } = useAuth();
   const { appName } = useAppConfig();
   const router = useRouter();
+  const { confirm } = useConfirm();
 
   const [tenant, setTenant] = useState<TenantDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -265,7 +267,8 @@ export default function TenantDetailPage() {
 
   const suspendTenant = async () => {
     if (!accessToken || !tenant) return;
-    if (!window.confirm("This will block all users of this tenant from logging in. Continue?")) return;
+    const ok = await confirm({ title: "Suspend tenant?", message: "This will block all users of this tenant from logging in until the tenant is reactivated.", confirmLabel: "Suspend", danger: true });
+    if (!ok) return;
     setActioning(true);
     setActionMsg(null);
     try {

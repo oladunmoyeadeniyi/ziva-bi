@@ -15,6 +15,7 @@ import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 type Tab = "tiers" | "assignments";
 
@@ -665,8 +666,11 @@ function RolesContent() {
 
 export default function RolesPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+    <SectionLockWrapper sectionKey="roles" title="Roles & Permissions">
+      <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
       <RolesContent />
     </Suspense>
+
+  </SectionLockWrapper>
   );
 }

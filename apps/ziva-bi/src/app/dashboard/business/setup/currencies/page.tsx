@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 type Tab = "currencies" | "rates" | "lookup" | "revaluation" | "bdc";
 
@@ -81,7 +82,7 @@ const TAB_LABELS: Record<Tab, string> = {
   bdc: "BDC Register",
 };
 
-export default function CurrenciesPage() {
+function CurrenciesPage() {
   const { accessToken } = useAuth();
   const [tab, setTab] = useState<Tab>("currencies");
 
@@ -739,5 +740,13 @@ export default function CurrenciesPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function CurrenciesPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="currencies" title="Currencies & FX">
+      <CurrenciesPage />
+    </SectionLockWrapper>
   );
 }

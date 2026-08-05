@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 interface PayrollRun {
   id: string;
@@ -34,6 +35,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function PayrollRunsPage() {
   const { accessToken } = useAuth();
+  const { confirm } = useConfirm();
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -66,7 +68,8 @@ export default function PayrollRunsPage() {
   };
 
   const handleApprove = async (id: string) => {
-    if (!window.confirm("Approve this payroll run? This will create a GL journal entry.")) return;
+    const ok = await confirm({ title: "Approve payroll run?", message: "This will create a GL journal entry. This action cannot be undone.", confirmLabel: "Approve" });
+    if (!ok) return;
     try {
       await apiFetch(`/api/payroll/runs/${id}/approve`, { token: accessToken!, method: "POST" });
       load();

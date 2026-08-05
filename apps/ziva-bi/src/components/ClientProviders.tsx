@@ -16,6 +16,9 @@
 
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AppConfigProvider } from "@/contexts/AppConfigContext";
+import { ToastProvider } from "@/contexts/ToastContext";
+import { ConfirmProvider } from "@/components/ConfirmDialog";
+import NavigationProgress from "@/components/NavigationProgress";
 
 export function ClientProviders({
   appName,
@@ -26,7 +29,14 @@ export function ClientProviders({
 }) {
   return (
     <AppConfigProvider appName={appName}>
-      <AuthProvider>{children}</AuthProvider>
+      <ToastProvider>
+        <ConfirmProvider>
+          <AuthProvider>
+            <NavigationProgress />
+            {children}
+          </AuthProvider>
+        </ConfirmProvider>
+      </ToastProvider>
     </AppConfigProvider>
   );
 }

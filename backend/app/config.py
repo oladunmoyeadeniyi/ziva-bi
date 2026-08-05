@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     # When not set, all cache operations are no-ops (safe for local dev).
     redis_url: str = ""
 
+    # ── Payment encryption (M-Payment) ───────────────────────────────────────
+    # Fernet key used to encrypt Paystack secret keys before storing in DB.
+    # Generate once: from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())
+    # Store in Render dashboard env vars (PAYMENT_ENCRYPTION_KEY) — never commit.
+    # When blank, raw storage is used (only safe for dev; keys are still never logged).
+    payment_encryption_key: str = ""
+
     # ── Platform owner ────────────────────────────────────────────────────────
     # UUID of the PRAD platform owner. When set, this user's impersonation
     # sessions in live environments are unrestricted (no sensitive field masking).

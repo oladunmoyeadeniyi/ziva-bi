@@ -20,6 +20,8 @@ import { getCurrencyLabel } from "@/lib/currencies";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -162,9 +164,10 @@ function GLPicker({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function BankAccountsPage() {
+function BankAccountsPage() {
   const { accessToken } = useAuth();
   const router = useRouter();
+  const { confirm } = useConfirm();
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [glAccounts, setGlAccounts] = useState<GLAccount[]>([]);
@@ -272,7 +275,8 @@ export default function BankAccountsPage() {
 
   const deleteAccount = async (a: BankAccount) => {
     if (!accessToken) return;
-    if (!window.confirm(`Delete "${a.account_name}"? This cannot be undone if the account has no journal line references.`)) return;
+    const ok = await confirm({ title: `Delete "${a.account_name}"?`, message: "This cannot be undone if the account has no journal line references.", confirmLabel: "Delete", danger: true });
+    if (!ok) return;
     setDeletingId(a.id);
     try {
       await apiFetch(`/api/setup/bank-accounts/${a.id}`, { method: "DELETE", token: accessToken });
@@ -456,5 +460,13 @@ export default function BankAccountsPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function BankAccountsPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="bank_accounts" title="Bank Accounts">
+      <BankAccountsPage />
+    </SectionLockWrapper>
   );
 }

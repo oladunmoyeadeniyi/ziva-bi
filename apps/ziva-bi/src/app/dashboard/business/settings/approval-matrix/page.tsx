@@ -23,6 +23,7 @@ import { fmtCommaInput, stripCommas } from "@/lib/utils";
 import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 type Tab = "roles" | "policies";
 
@@ -181,7 +182,7 @@ function DesigSelect({ value, onChange, placeholder, includeIC }: {
   );
 }
 
-export default function ApprovalWorkflowsPage() {
+function ApprovalWorkflowsPage() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("roles");
@@ -914,5 +915,13 @@ export default function ApprovalWorkflowsPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function ApprovalWorkflowsPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="approval_workflows" title="Approval Workflows">
+      <ApprovalWorkflowsPage />
+    </SectionLockWrapper>
   );
 }

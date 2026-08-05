@@ -1666,4 +1666,169 @@ Adds two deferred tabs to the Currencies page completing the FX milestone.
 
 ---
 
-*End of Master Context. Last updated: 2026-08-04 — All TIER 0–4 modules shipped and committed. FX-b (migration `t3u4v5w6x7y8`) + website /product + /about pages pending CC commit this round. Platform is feature-complete for first customer. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*
+### M-RT — Consultant Locking (2026-08-05, migration `u4v5w6x7y8z9`)
+
+Allows the Super Admin (SA) consultant to lock or unlock any of 14 implementation-setup sections per tenant, preventing tenants from accidentally modifying in-progress configuration.
+
+**New table:** `consultant_locks` — one row per `(tenant_id, section_key)`. Columns: `id` (UUID), `tenant_id`, `section_key` (e.g. `"org_structure"`, `"chart_of_accounts"`), `is_locked` (bool), `locked_by` (user FK), `locked_at`, `lock_reason` (text), `created_at`. Unique on `(tenant_id, section_key)`.
+
+**Backend (`routers/consultant_locks.py`):**
+- `GET /api/platform/consultant-locks/{tenant_id}` — list all locks for a tenant (SA only)
+- `POST /api/platform/consultant-locks/{tenant_id}/{section_key}/lock` — lock a section
+- `POST /api/platform/consultant-locks/{tenant_id}/{section_key}/unlock` — unlock a section
+- `GET /api/consultant-locks` — tenant-facing: fetch own lock states for sidebar rendering
+
+**Frontend:**
+- `ConsultantLocksContext` — React context fetching `/api/consultant-locks` on mount; provides `isSectionLocked(key)` helper.
+- `SectionLockWrapper` — wrapper component that disables child form controls and shows a lock icon + tooltip when a section is locked.
+- All 14 setup `NavLink` entries in the sidebar display a lock icon when their section key is locked.
+- SA portal: new "Consultant Config" panel in tenant detail — toggle + list of 14 lockable sections, inline lock/unlock buttons.
+
+---
+
+### M-Reporting — Analytics & Saved Reports (2026-08-05, migration `v5w6x7y8z9a0`)
+
+Gives tenants a KPI dashboard and 8 built-in parameterised report runners. Users can save any report configuration and re-run it later.
+
+**New table:** `saved_reports` — columns: `id` (UUID), `tenant_id`, `name`, `report_type` (e.g. `EXPENSE_SUMMARY`, `BUDGET_VARIANCE`, `AR_AGING`), `parameters` (JSONB — date ranges, filters), `created_by`, `last_run_at`, `created_at`.
+
+**Backend (`routers/reporting.py`, `services/reporting_service.py`):**
+- `GET /api/reporting/kpis` — returns 6 KPIs: total approved expenses (MTD), open AP, open AR, cash position, budget utilisation %, headcount.
+- `POST /api/reporting/run` — runs one of 8 built-in reports: `EXPENSE_SUMMARY`, `BUDGET_VARIANCE`, `AR_AGING`, `AP_AGING`, `PAYROLL_SUMMARY`, `TAX_SUMMARY`, `ASSET_SCHEDULE`, `INVENTORY_VALUATION`. Returns `{columns, rows}`.
+- `GET /api/reporting/saved` — list saved report configurations for tenant.
+- `POST /api/reporting/saved` — save a report config.
+- `DELETE /api/reporting/saved/{id}` — delete saved config.
+
+**Frontend:**
+- `reporting/page.tsx` — KPI cards grid + report runner (dropdown + date pickers + Run button + results table).
+- `reporting/saved/page.tsx` — list of saved report configs with Re-run and Delete actions.
+
+---
+
+### M-VendorPortal — Vendor Self-Service Portal (2026-08-05, migration `w6x7y8z9a0b1`)
+
+Allows vendors to access a private, tokenised URL to view their AP invoices and submit new invoices for review — no username/password required.
+
+**Schema changes:** `vendors` table extended with `portal_enabled` (bool) and `portal_token` (varchar 64). `vendor_invoice_submissions` new table: `id`, `tenant_id`, `vendor_id`, `invoice_number`, `invoice_date`, `due_date`, `currency_code`, `total_amount`, `description`, `status` (PENDING/CONVERTED/REJECTED), `submitted_at`, `reviewed_by`, `reviewed_at`, `rejection_reason`, `converted_ap_invoice_id`.
+
+**Backend (`routers/vendor_portal.py`):**
+- Admin: `GET /api/vendor-portal/vendors`, `POST /api/vendor-portal/vendors/{id}/enable|disable|reset-token`, `GET /api/vendor-portal/submissions`, `PUT /api/vendor-portal/submissions/{id}/review`.
+- Portal (token-auth): `POST /api/vendor-portal/auth/{token}` → short-lived JWT; `GET /api/vendor-portal/portal/invoices`; `POST /api/vendor-portal/portal/submit`.
+
+**Frontend:** `vendor-portal/page.tsx` — vendor list with portal status + enable/disable/copy-URL controls + submission review table. Public page `portal/vendor/[token]/page.tsx` — auth via URL token → view invoices + submit form.
+
+---
+
+### M-CustomerPortal — Customer Self-Service Portal (2026-08-05, migration `w6x7y8z9a0b1`)
+
+Same pattern as vendor portal but for AR customers: view invoices, send messages/disputes/remittance notices.
+
+**Schema changes:** `customers` table extended with `portal_enabled` + `portal_token`. `customer_portal_messages` new table: `id`, `tenant_id`, `customer_id`, `ar_invoice_id` (nullable), `message_type` (DISPUTE/REMITTANCE/QUERY/OTHER), `subject`, `body`, `amount`, `status` (OPEN/RESOLVED), `resolved_by`, `resolved_at`, `created_at`.
+
+**Backend (`routers/customer_portal.py`):** Admin: list customers with portal status, enable/disable/reset-token, list + resolve messages. Portal: token → JWT auth; list AR invoices; send message.
+
+**Frontend:** `customer-portal/page.tsx` — admin management. Public `portal/customer/[token]/page.tsx` — invoice view + message form.
+
+---
+
+### M-AssetIssuance — Asset Issuance & Tracking (2026-08-05, migration `x7y8z9a0b1c2`)
+
+Extends the Fixed Assets module so assets can be formally issued to employees and maintenance costs tracked over asset lifetime.
+
+**New tables:**
+- `asset_issuances` — `id`, `tenant_id`, `asset_id` (FK assets), `employee_id` (FK employees), `issued_by` (FK users), `issue_date`, `expected_return_date`, `actual_return_date`, `condition_on_issue`, `condition_on_return`, `notes`, `status` (ISSUED/RETURNED/LOST), `created_at`.
+- `asset_maintenance_costs` — `id`, `tenant_id`, `asset_id`, `maintenance_date`, `description`, `vendor_id` (nullable), `cost`, `currency_code`, `gl_account_id` (nullable), `reference`, `recorded_by`, `created_at`.
+
+**Backend (`routers/asset_issuance.py`):** Full CRUD for both tables — 8 endpoints: list/create/get/update issuances; issue/return asset; list/create maintenance costs.
+
+**Frontend:** `assets/issuances/page.tsx` (list + return action), `assets/issuances/new/page.tsx` (issue form), `assets/maintenance/page.tsx` (maintenance cost log + form). Sidebar links added under Fixed Assets.
+
+---
+
+### M-SA — SA Portal Gap-fills (2026-08-05, no migration)
+
+Replaced three stub pages in the Super Admin portal with working implementations.
+
+**Audit Log (`platform/audit/page.tsx`):** Calls `GET /api/platform/audit` — returns paginated audit log entries across all tenants. Filters by tenant, action type, date range. Backend endpoint added to `routers/platform.py`.
+
+**SA Team Management (`platform/team/page.tsx`):** Calls `GET /api/platform/team` (list SA users) and `POST /api/platform/team/invite` (invite new SA user by email). SA users have `user_type = "platform_admin"`.
+
+**Cross-Tenant Support Inbox (`platform/support/page.tsx`):** Calls `GET /api/platform/support` — aggregates open messages from both `customer_portal_messages` and `vendor_invoice_submissions` (status=PENDING) across all tenants. Shows tenant name, type, subject, age.
+
+---
+
+### M-UX — Global UI Polish (2026-08-05, no migration)
+
+Systematic UX improvements across the entire app to reduce friction and improve visual consistency.
+
+**ToastContext:** `src/contexts/ToastContext.tsx` — React context providing `const { toast } = useToast()`. Methods: `toast.success(msg)`, `toast.error(msg)`, `toast.info(msg)`, `toast.warning(msg)`. Auto-dismiss after 4 s. Toast stack appears top-right. Wired into `ClientProviders`.
+
+**NavigationProgress:** Thin blue bar at top of viewport during Next.js route transitions. Uses `usePathname` + `useEffect` to detect navigation.
+
+**AppHeader avatar:** User initials badge (first + last name initials) shown in top-right of the app shell header, replacing the generic icon.
+
+**ConfirmDialog:** `src/components/ConfirmDialog.tsx` — modal confirm/cancel with customisable title, message, and danger variant. `useConfirm()` hook provides `confirm({ title, message, danger })` → Promise<boolean>. Replaces `window.confirm()` across 4 pages.
+
+**EmptyState:** `src/components/EmptyState.tsx` — consistent empty-state illustration + title + description + optional action button. Used across all list pages.
+
+**ClientProviders:** `src/components/ClientProviders.tsx` — aggregates ToastProvider + ConfirmDialogProvider into a single wrapper imported by root layout.
+
+---
+
+### M-Stores — Store Issue Tracking (2026-08-05, migration `y8z9a0b1c2d3`)
+
+Keeper-managed workflow for issuing consumable items from an internal store and recording returns. Integrates with the existing Inventory module's `stock_movements` table to keep `inventory_items.current_stock` accurate.
+
+**Schema changes:** `inventory_items` extended with `is_store_item` (bool) and `minimum_stock_level` (Numeric 18,4). `reorder_quantity` already existed from M17 and is reused.
+
+**New tables:**
+- `store_issues` — records a keeper-issued quantity to an employee/department. Columns: `id` (UUID), `tenant_id`, `inventory_item_id`, `employee_id` (nullable), `department`, `location_name`, `quantity_issued`, `unit_of_measure`, `issue_date`, `purpose`, `reference`, `notes`, `issued_by`, `stock_movement_id` (loose UUID, no FK), `created_at`.
+- `store_returns` — records items returned to the store. Columns: `id` (UUID), `tenant_id`, `store_issue_id` (nullable FK to store_issues), `inventory_item_id`, `employee_id` (nullable), `quantity_returned`, `return_date`, `condition` (GOOD/DAMAGED/PARTIAL), `notes`, `received_by`, `stock_movement_id` (loose UUID), `created_at`.
+
+**Backend (`routers/stores.py`):** 8 endpoints — list issues; record issue; record return; list returns; analytics (monthly issue volume, top items, reorder alerts); toggle `is_store_item`; set `minimum_stock_level`.
+
+**Frontend (`stores/page.tsx`):** 4-tab layout: Issues (record + history), Returns (record + history), Stock Levels (table with reorder-alert highlighting), Analytics (bar chart monthly + top-N table). Sidebar link added.
+
+---
+
+### M-PettyCash — Petty Cash Fund Management (2026-08-05, migration `z9a0b1c2d3e4`)
+
+Full lifecycle management of physical petty cash floats held by custodian employees.
+
+**New tables:**
+- `petty_cash_funds` — one row per fund. Columns: `id` (UUID), `tenant_id`, `name`, `description`, `custodian_id` (FK employees), `gl_account_id` (FK chart_of_accounts), `expense_gl_account_id` (FK chart_of_accounts), `currency_code`, `float_amount` (authorised maximum), `current_balance` (running — updated atomically), `is_active`, `created_by`, `created_at`, `updated_at`.
+- `petty_cash_transactions` — every debit/credit against a fund. Columns: `id` (UUID), `tenant_id`, `fund_id` (FK petty_cash_funds), `transaction_type` (DISBURSEMENT/RETIREMENT/REPLENISHMENT/ADJUSTMENT), `employee_id` (nullable), `amount`, `description`, `reference`, `transaction_date`, `expense_report_id` (loose UUID, no FK), `journal_entry_id` (nullable FK journal_entries), `balance_after` (snapshot), `recorded_by`, `approved_by`, `notes`, `created_at`.
+
+**Balance rule:** DISBURSEMENT subtracts; REPLENISHMENT adds; ADJUSTMENT adds (can be negative); RETIREMENT is balance-neutral (closes out a prior disbursement with receipts).
+
+**Backend (`routers/petty_cash.py`):** 9 endpoints — list funds, create fund, get fund detail, update fund meta, list transactions, disburse, retire, replenish, adjust. Balance guard on disbursement (422 if insufficient).
+
+**Frontend (`petty-cash/page.tsx`):** Fund cards grid (balance bar, low-balance highlight); fund detail view with balance card + action panel (Disburse/Retire/Replenish/Adjust inline forms) + transaction history table. New fund creation form. Sidebar "Petty cash" link.
+
+---
+
+### M-Payment — Expense Payment Queue (2026-08-05, migration `a0b1c2d3e4f5`)
+
+Tracks and executes reimbursement payments for approved expense reports. Supports MANUAL (finance marks paid offline) and PAYSTACK (Transfers API direct bank transfer) rails.
+
+**New tables:**
+- `expense_payment_configs` — one row per tenant. Columns: `id` (UUID), `tenant_id` (unique), `payment_mode` (MANUAL/PAYSTACK), `paystack_secret_key_encrypted` (Fernet-encrypted, nullable), `paystack_public_key_encrypted` (nullable), `paystack_subaccount` (nullable), `is_active`, `created_by`, `created_at`, `updated_at`.
+- `employee_bank_accounts` — columns: `id` (UUID), `tenant_id`, `employee_id`, `bank_name`, `bank_code` (Paystack code), `account_number`, `account_name` (bank-verified), `currency`, `is_primary`, `paystack_recipient_code` (cached after first transfer), `is_verified`, `created_by`, `created_at`.
+- `expense_payments` — columns: `id` (UUID), `tenant_id`, `expense_report_id` (loose UUID, no FK), `employee_id`, `bank_account_id` (FK employee_bank_accounts), `amount`, `currency`, `status` (QUEUED/PROCESSING/PAID/FAILED/CANCELLED), `paystack_transfer_code`, `paystack_reference` (unique), `paystack_response` (raw webhook JSON), `failure_reason`, `payment_date`, `payment_reference`, `payment_notes`, `initiated_by`, `approved_by`, `created_at`, `updated_at`.
+
+**Backend (`routers/payment.py`, `services/paystack_service.py`):**
+- `GET /api/payments/queue` — approved reports pending payment.
+- `POST /api/payments/{id}/initiate` — MANUAL: mark PAID; PAYSTACK: create recipient → POST transfer → status PROCESSING.
+- `POST /api/payments/{id}/cancel` — cancel a QUEUED payment.
+- `GET /api/payments/history` — completed/failed payments.
+- `GET/POST /api/payments/config` — get/upsert payment config (mode + encrypted keys).
+- `GET/POST/DELETE /api/payments/bank-accounts` — employee bank account management.
+- `GET /api/payments/banks` — proxy Paystack bank list.
+- `POST /api/payments/webhook` (public, no JWT) — receives `transfer.success`/`transfer.failed` events. **Webhook security:** if the tenant has PAYSTACK configured, both missing AND invalid `X-Paystack-Signature` headers are rejected silently (returns 200 without processing). Paystack brand name never appears in user-facing error messages.
+- `PaystackService` — wraps Paystack Transfers API. Fernet-encrypts/decrypts keys stored in DB. All Paystack errors mapped to generic 503. HMAC-SHA512 webhook verification.
+
+**Frontend:** `expenses/payments/page.tsx` (Queue tab + History tab + initiate/cancel actions), `settings/payment-config/page.tsx` (mode toggle + Paystack key form + bank accounts management). Sidebar "Payment queue" and "Payment settings" links.
+
+---
+
+*End of Master Context. Last updated: 2026-08-05 — All TIER 0–4 modules + post-launch ops modules shipped. Milestones M-RT through M-Payment pending CC commit this round. Platform is fully feature-complete. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*

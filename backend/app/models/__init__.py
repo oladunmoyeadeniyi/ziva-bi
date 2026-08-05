@@ -32,3 +32,10 @@ import app.models.ice                  # noqa: F401  — registers ice_tenant_co
 import app.models.webauthn             # noqa: F401  — registers user_credentials, push_subscriptions
 import app.models.consolidation        # noqa: F401  — registers consolidation_groups, consolidation_members, ic_account_mappings, ic_matches, elimination_journals, elimination_journal_lines
 import app.models.fx                   # noqa: F401  — registers tenant_currencies, tenant_fx_rates
+import app.models.consultant_lock       # noqa: F401  — registers consultant_locks table
+import app.models.reporting             # noqa: F401  — registers saved_reports table
+import app.models.portals               # noqa: F401  — registers vendor_invoice_submissions, customer_portal_messages
+import app.models.asset_issuance        # noqa: F401  — registers asset_issuances, asset_maintenance_costs
+import app.models.stores                # noqa: F401  — registers store_issues, store_returns
+import app.models.petty_cash            # noqa: F401  — registers petty_cash_funds, petty_cash_transactions
+import app.models.payment               # noqa: F401  — registers expense_payment_configs, employee_bank_accounts, expense_payments

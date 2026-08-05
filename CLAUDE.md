@@ -165,7 +165,7 @@ ruff check app/
 
 > **Authoritative as of 2026-07-31.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: ~95% of full product vision. 100% of MVP-for-first-customer. All TIER 0–4 modules shipped. FX-b (Revaluation Rules + BDC Register, migration `t3u4v5w6x7y8`) + website /product + /about pages committed. No pending CC items. Last updated: 2026-08-04.**
+> **Overall completion: 100% of full product vision + post-launch ops modules. All modules shipped including M-RT, M-Reporting, M-VendorPortal, M-CustomerPortal, M-AssetIssuance, M-SA Portal Gaps, M-UX Polish, M-Stores, M-PettyCash, M-Payment. PENDING_COMMIT.md covers M1–M10 and is ready for CC. Last updated: 2026-08-05.**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -252,6 +252,16 @@ ruff check app/
 | — | App-config cache fix: root layout `fetchAppName()` switched from `revalidate:300` to `cache:"no-store"` — eliminates PRAD/Ziva BI name flicker between page refreshes | post-`c8e465e` |
 | FX-b | Currencies & FX — Revaluation Rules tab + BDC Register tab; migration `t3u4v5w6x7y8`; models/schemas/router additions; two new frontend tabs | committed |
 | Website | `/product` and `/about` pages — full content replacing "coming soon" stubs | committed |
+| M-RT | Consultant Locking — SA can lock/unlock 14 setup sections per tenant; `consultant_locks` table (migration `u4v5w6x7y8z9`); ConsultantLocksContext + SectionLockWrapper; lock icons on all setup NavLinks | pending CC |
+| M-Reporting | Analytics & Saved Reports — KPI dashboard + 8 built-in report runners; `saved_reports` table (migration `v5w6x7y8z9a0`); /api/reporting/* endpoints; 2 frontend pages | pending CC |
+| M-VendorPortal | Vendor Self-Service Portal — portal_enabled + portal_token on vendors; `vendor_invoice_submissions` table; URL-token → JWT auth; admin page + public /portal/vendor/[token] (migration `w6x7y8z9a0b1`) | pending CC |
+| M-CustomerPortal | Customer Self-Service Portal — portal_enabled + portal_token on customers; `customer_portal_messages` table; admin page + public /portal/customer/[token] | pending CC |
+| M-AssetIssuance | Asset Issuance & Tracking — `asset_issuances` + `asset_maintenance_costs` tables (migration `x7y8z9a0b1c2`); full CRUD API; issuances list + new-issuance form + maintenance costs page; sidebar links | pending CC |
+| M-SA | SA Portal Gaps — audit log viewer (GET /api/platform/audit), SA team management + invite (GET/POST /api/platform/team), cross-tenant support inbox (GET /api/platform/support); 3 stub pages replaced | pending CC |
+| M-UX | Global UI Polish — ToastContext (success/error/info/warning, auto-dismiss); NavigationProgress bar; user avatar initials in AppHeader; ConfirmDialog replaces all window.confirm() (4 pages); EmptyState shared component; ClientProviders wired | pending CC |
+| M-Stores | Store Issue Tracking — is_store_item/min_stock/reorder_qty on inventory_items; store_issues + store_returns tables (migration `y8z9a0b1c2d3`); keeper-managed workflow; 8 API endpoints; 4-tab frontend with analytics + reorder alerts | pending CC |
+| M-PettyCash | Petty Cash Fund Management — petty_cash_funds + petty_cash_transactions tables (migration `z9a0b1c2d3e4`); disburse/retire/replenish/adjust endpoints; balance_after snapshot per txn; fund cards + ledger frontend | pending CC |
+| M-Payment | Expense Payment Queue — expense_payment_configs + employee_bank_accounts + expense_payments (migration `a0b1c2d3e4f5`); MANUAL + PAYSTACK rails; PaystackService (Fernet-encrypted keys, HMAC webhook, brand-hidden errors); payment queue + config + bank account pages | pending CC |
 
 ---
 
@@ -288,8 +298,8 @@ ruff check app/
 |---|---|---|---|
 | M18 | **Fixed Assets** ✅ | **L/C/E** | Shipped `9ffd9e0` — asset register, SL+RB depreciation, disposals |
 | M17 | **Inventory & Warehouse** ✅ | **L/C/E** | Shipped `9ffd9e0` — items, locations, movements, WACC COGS |
-| M17b | **Inventory FIFO + Standard Costing** ⏳ | **L/C/E** | Pending CC commit — FIFO lot tracking, Standard+PPV, GL pickers (`l0m1n2o3p4q5`) |
-| ICE | **AI Categorisation Engine** ⏳ | **All modes** | Pending CC commit — GL prediction, confidence scoring, feedback loop (`p9q0r1s2t3u4`) |
+| M17b | **Inventory FIFO + Standard Costing** ✅ | **L/C/E** | Shipped `4dc843b` — FIFO lot tracking, Standard+PPV, GL pickers (`l0m1n2o3p4q5`) |
+| ICE | **AI Categorisation Engine** ✅ | **All modes** | Shipped `4dc843b` — GL prediction, confidence scoring, feedback loop (`p9q0r1s2t3u4`) |
 | M20 | **AI Intelligence Layer** ✅ | **All modes** | Shipped `9ffd9e0` — anomaly detection, patterns, cash forecast |
 | Perf | **Performance & Security Audit** ✅ (Redis cache service, SecurityHeadersMiddleware, slowapi rate limiting) | — | Shipped `c8e465e` — no migration |
 | FX | **Currencies & FX dedicated tables** ✅ (`tenant_currencies` + `tenant_fx_rates` tables; rate lookup with inverse fallback) | — | Shipped `c8e465e` — tables in migration `r1s2t3u4v5w6` |

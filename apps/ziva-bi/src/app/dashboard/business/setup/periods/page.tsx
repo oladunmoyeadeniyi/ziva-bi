@@ -31,6 +31,8 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -252,6 +254,7 @@ function PeriodsContent() {
   const { accessToken, user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { confirm } = useConfirm();
 
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "periods");
 
@@ -610,7 +613,8 @@ function PeriodsContent() {
 
   const doStatutoryClose = async () => {
     if (!accessToken || !selectedFY) return;
-    if (!window.confirm(`Permanently lock ${formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)}? This is irreversible.`)) return;
+    const ok = await confirm({ title: "Permanently lock fiscal year?", message: `This will statutory-close ${formatFY(selectedFY, fmt, orgSettings.fiscal_year_start_month, fyPeriods)}. This is irreversible and cannot be undone.`, confirmLabel: "Lock permanently", danger: true });
+    if (!ok) return;
     setClosingStat(true);
     setError(null);
     try {
@@ -1846,8 +1850,11 @@ function PeriodsContent() {
 
 export default function PeriodsPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+    <SectionLockWrapper sectionKey="periods" title="Period Management">
+      <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
       <PeriodsContent />
     </Suspense>
+
+  </SectionLockWrapper>
   );
 }

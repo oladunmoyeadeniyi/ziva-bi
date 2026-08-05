@@ -20,6 +20,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import ModeNotAvailable from "@/components/ModeNotAvailable";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -254,7 +255,7 @@ function GLPicker({
 
 const STATEMENT_ORDER = ["BS", "PL"];
 
-export default function AccountMappingPage() {
+function AccountMappingPage() {
   const { accessToken, user } = useAuth();
   const router = useRouter();
 
@@ -623,5 +624,13 @@ export default function AccountMappingPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function AccountMappingPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="account_mapping" title="Account Mapping">
+      <AccountMappingPage />
+    </SectionLockWrapper>
   );
 }

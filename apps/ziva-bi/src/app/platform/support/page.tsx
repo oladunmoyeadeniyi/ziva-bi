@@ -1,68 +1,137 @@
 "use client";
 
 /**
- * Platform — Support placeholder.
- * Real content: future milestone (tenant support tickets + impersonation for troubleshooting).
+ * Platform Support — /platform/support
+ *
+ * Shows open customer portal messages across all tenants as support items.
+ * SA can see which tenants have unresolved customer messages and enter
+ * the tenant (via existing impersonation) to investigate.
  */
 
+import { useEffect, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 
-export default function PlatformSupportPage() {
+interface SupportItem {
+  id: string;
+  tenant_name: string;
+  customer_name: string;
+  message_type: string;
+  subject: string;
+  status: string;
+  created_at: string;
+}
+
+function TypeBadge({ type }: { type: string }) {
+  const colors: Record<string, string> = {
+    DISPUTE: "bg-red-50 text-red-700 border-red-200",
+    REMITTANCE_NOTICE: "bg-blue-50 text-blue-700 border-blue-200",
+    QUERY: "bg-amber-50 text-amber-700 border-amber-200",
+    PAYMENT_CONFIRMATION: "bg-green-50 text-green-700 border-green-200",
+    OTHER: "bg-gray-50 text-gray-600 border-gray-200",
+  };
   return (
-    <PageContainer maxWidth="4xl">
-      <PageHeading title="Support" />
-      <p className="text-sm text-gray-500 mb-8">
-        Tenant support tickets, troubleshooting access, and escalation management.
-      </p>
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${colors[type] ?? "bg-gray-50 text-gray-600 border-gray-200"}`}>
+      {type.replace("_", " ")}
+    </span>
+  );
+}
 
-      {/* Coming-soon card */}
-      <section className="border border-gray-200 rounded-xl bg-white p-6 mb-6">
-        <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
-            <i className="ti ti-lifebuoy text-amber-500" style={{ fontSize: 20 }} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-800 mb-1">Coming in a future milestone</p>
-            <ul className="text-sm text-gray-500 space-y-1 list-disc list-inside">
-              <li>Incoming support requests linked to specific tenants</li>
-              <li>One-click tenant entry for troubleshooting (uses existing impersonation)</li>
-              <li>Escalation tracking and SLA visibility</li>
-              <li>Support notes and internal handoff log per tenant</li>
-            </ul>
-            <p className="text-xs text-gray-400 mt-3 italic">
-              Tenant entry for support already works via the Tenants section. This page will surface it as a ticket-driven workflow.
-            </p>
-          </div>
-        </div>
-      </section>
+function daysSince(iso: string) {
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.floor(ms / 86400000);
+}
 
-      {/* Faded ticket list preview */}
-      <section className="border border-gray-100 rounded-xl overflow-hidden">
-        <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-100">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
-            Preview — not yet functional
-          </p>
+export default function PlatformSupportPage() {
+  const { accessToken } = useAuth();
+  const [items, setItems] = useState<SupportItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    apiFetch<SupportItem[]>("/api/platform/support", { token: accessToken })
+      .then(data => setItems(Array.isArray(data) ? data : []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [accessToken]);
+
+  const disputes = items.filter(i => i.message_type === "DISPUTE");
+  const stale = items.filter(i => daysSince(i.created_at) >= 2);
+
+  return (
+    <PageContainer maxWidth="5xl">
+      <div className="mb-6">
+        <PageHeading>Support</PageHeading>
+        <p className="text-sm text-gray-500 mt-1">
+          Open customer portal messages across all tenants — {items.length} open items.
+        </p>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-white rounded-xl border border-gray-100 p-4">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Open</p>
+          <p className="text-2xl font-bold text-gray-800">{items.length}</p>
         </div>
-        <div className="opacity-30 pointer-events-none select-none">
-          <table className="w-full text-xs">
-            <thead className="bg-white border-b border-gray-100">
+        <div className="bg-white rounded-xl border border-gray-100 p-4">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Disputes</p>
+          <p className={`text-2xl font-bold ${disputes.length > 0 ? "text-red-600" : "text-gray-800"}`}>{disputes.length}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-100 p-4">
+          <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Stale (48h+)</p>
+          <p className={`text-2xl font-bold ${stale.length > 0 ? "text-amber-600" : "text-gray-800"}`}>{stale.length}</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        {loading ? (
+          <div className="p-4 space-y-2">
+            {[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-lg animate-pulse" />)}
+          </div>
+        ) : items.length === 0 ? (
+          <div className="p-8 text-center text-sm text-gray-400">
+            <i className="ti ti-circle-check text-green-400" style={{ fontSize: 32 }} />
+            <p className="mt-2">No open support items.</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                {["Tenant", "Subject", "Priority", "Status", "Opened", "Assignee"].map((h) => (
-                  <th key={h} className="text-left py-2.5 px-4 font-medium text-gray-500">{h}</th>
-                ))}
+                <th className="text-left px-4 py-3 font-semibold text-gray-600">Tenant</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600">Customer</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600">Type</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600">Subject</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600">Age</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td colSpan={6} className="py-8 px-4 text-center text-gray-400 italic text-sm">
-                  No data — section not yet built.
-                </td>
-              </tr>
+              {items.map((item, i) => {
+                const age = daysSince(item.created_at);
+                return (
+                  <tr key={item.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                    <td className="px-4 py-3 font-medium text-gray-800">{item.tenant_name}</td>
+                    <td className="px-4 py-3 text-gray-600">{item.customer_name}</td>
+                    <td className="px-4 py-3"><TypeBadge type={item.message_type} /></td>
+                    <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{item.subject}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium ${age >= 2 ? "text-amber-600" : "text-gray-500"}`}>
+                        {age === 0 ? "Today" : age === 1 ? "Yesterday" : `${age}d ago`}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-        </div>
-      </section>
+        )}
+      </div>
+
+      <p className="mt-3 text-xs text-gray-400">
+        To resolve a message, enter the tenant via the Tenants page and navigate to Customer Portal → Messages.
+      </p>
     </PageContainer>
   );
 }

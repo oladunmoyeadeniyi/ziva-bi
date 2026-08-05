@@ -25,6 +25,7 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import ModeNotAvailable from "@/components/ModeNotAvailable";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1139,8 +1140,11 @@ function TaxContent() {
 
 export default function TaxPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+    <SectionLockWrapper sectionKey="tax" title="Tax & Statutory">
+      <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
       <TaxContent />
     </Suspense>
+
+  </SectionLockWrapper>
   );
 }

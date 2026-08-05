@@ -19,6 +19,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 type Tab = "identity" | "structure" | "branding" | "config" | "functions";
 
@@ -2974,8 +2975,11 @@ function OrganisationPage() {
 
 export default function OrganisationPageWrapper() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading...</div>}>
+    <SectionLockWrapper sectionKey="organisation" title="Organisation">
+      <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading...</div>}>
          <OrganisationPage />
     </Suspense>
+
+  </SectionLockWrapper>
   );
 }

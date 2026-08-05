@@ -19,6 +19,7 @@ import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/Banner";
 import ModeNotAvailable from "@/components/ModeNotAvailable";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 interface GLAccount {
   id: string;
@@ -232,7 +233,7 @@ function SheetResultDisplay({ result, label }: { result: SheetResult; label: str
   );
 }
 
-export default function ChartOfAccountsPage() {
+function ChartOfAccountsPage() {
   const { user, accessToken } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -2680,5 +2681,13 @@ export default function ChartOfAccountsPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+export default function ChartOfAccountsPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="chart_of_accounts" title="Chart of Accounts">
+      <ChartOfAccountsPage />
+    </SectionLockWrapper>
   );
 }

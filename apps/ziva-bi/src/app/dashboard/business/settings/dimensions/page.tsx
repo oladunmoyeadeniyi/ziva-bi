@@ -9,6 +9,7 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import ModeNotAvailable from "@/components/ModeNotAvailable";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 interface DimensionSource {
   source_type: string;
@@ -2609,8 +2610,11 @@ function DimensionsPage() {
 
 export default function DimensionsPageWrapper() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+    <SectionLockWrapper sectionKey="dimensions" title="Dimensions">
+      <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
       <DimensionsPage />
     </Suspense>
+
+  </SectionLockWrapper>
   );
 }

@@ -1902,3 +1902,194 @@ async def update_platform_config(
     await db.commit()
 
     return PlatformConfigItem(key=row.key, value=row.value, description=row.description)
+
+
+# ── M-SA: Audit Log viewer ─────────────────────────────────────────────────────
+
+@router.get("/audit", tags=["platform-audit"])
+async def list_audit_logs(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    event_type: Optional[str] = Query(None),
+    tenant_id: Optional[uuid.UUID] = Query(None),
+    user_email: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_super_admin),
+) -> dict:
+    """List platform audit log entries — SA only.
+
+    Supports filtering by event_type, tenant_id, or user email substring.
+    Returns paginated results with total count.
+    """
+    q = (
+        select(
+            AuditLog,
+            User.email.label("user_email"),
+            User.first_name.label("user_first"),
+            User.last_name.label("user_last"),
+            Tenant.name.label("tenant_name"),
+        )
+        .outerjoin(User, AuditLog.user_id == User.id)
+        .outerjoin(Tenant, AuditLog.tenant_id == Tenant.id)
+        .where(AuditLog.event_type.not_like("ice.%"))  # exclude noisy ICE events from this view
+        .order_by(AuditLog.created_at.desc())
+    )
+
+    if event_type:
+        q = q.where(AuditLog.event_type.ilike(f"%{event_type}%"))
+    if tenant_id:
+        q = q.where(AuditLog.tenant_id == tenant_id)
+    if user_email:
+        q = q.where(User.email.ilike(f"%{user_email}%"))
+
+    count_q = select(func.count()).select_from(q.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    rows = (await db.execute(q.offset(offset).limit(limit))).all()
+    items = [
+        {
+            "id": str(r.AuditLog.id),
+            "event_type": r.AuditLog.event_type,
+            "user_email": r.user_email,
+            "user_name": f"{r.user_first or ''} {r.user_last or ''}".strip() or None,
+            "tenant_name": r.tenant_name,
+            "ip_address": r.AuditLog.ip_address,
+            "metadata": r.AuditLog.log_metadata,
+            "created_at": r.AuditLog.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+    return {"total": total, "offset": offset, "limit": limit, "items": items}
+
+
+# ── M-SA: Team management ──────────────────────────────────────────────────────
+
+@router.get("/team", tags=["platform-team"])
+async def list_sa_team(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_super_admin),
+) -> list[dict]:
+    """List all super-admin users (the PRAD internal team)."""
+    from sqlalchemy import select as sa_select
+    sa_role_sq = (
+        sa_select(UserRole.user_id)
+        .join(Role, UserRole.role_id == Role.id)
+        .where(Role.name == "super_admin", Role.tenant_id.is_(None))
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(User)
+        .where(User.id.in_(sa_select(sa_role_sq.c.user_id)))
+        .order_by(User.first_name, User.last_name)
+    )).scalars().all()
+    return [
+        {
+            "id": str(u.id),
+            "email": u.email,
+            "first_name": u.first_name,
+            "last_name": u.last_name,
+            "full_name": f"{u.first_name or ''} {u.last_name or ''}".strip(),
+            "is_active": u.is_active,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login_at.isoformat() if hasattr(u, "last_login_at") and u.last_login_at else None,
+        }
+        for u in rows
+    ]
+
+
+@router.post("/team/invite", tags=["platform-team"])
+async def invite_sa_team_member(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_super_admin),
+) -> dict:
+    """Create a new super-admin user (PRAD internal team member).
+
+    Creates the user with a temporary password and assigns the super_admin role.
+    In production this would send an invitation email. For now it returns
+    the temporary password so the SA can share it securely.
+    """
+    import secrets
+    from app.models.auth import Role, User, UserRole
+    from app.core.security import hash_password as _hash_password
+
+    email = (body.get("email") or "").strip().lower()
+    first_name = (body.get("first_name") or "").strip()
+    last_name = (body.get("last_name") or "").strip()
+    if not email:
+        raise HTTPException(400, detail="Email is required.")
+
+    existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(409, detail="A user with this email already exists.")
+
+    temp_password = secrets.token_urlsafe(12)
+    new_user = User(
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        password_hash=_hash_password(temp_password),
+        is_active=True,
+        is_super_admin=True,
+        must_change_password=True,
+    )
+    db.add(new_user)
+    await db.flush()
+
+    sa_role = (await db.execute(
+        select(Role).where(Role.name == "super_admin", Role.tenant_id.is_(None))
+    )).scalar_one_or_none()
+    if sa_role:
+        db.add(UserRole(user_id=new_user.id, role_id=sa_role.id))
+
+    await db.commit()
+    await _log("platform.team.invited", current_user.user_id, None, {"email": email}, db)
+    await db.commit()
+
+    return {
+        "id": str(new_user.id),
+        "email": new_user.email,
+        "temp_password": temp_password,
+        "message": "Team member created. They must change their password on first login.",
+    }
+
+
+# ── M-SA: Support tickets (simplified) ────────────────────────────────────────
+
+@router.get("/support", tags=["platform-support"])
+async def list_support_items(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_super_admin),
+) -> list[dict]:
+    """List open customer portal messages (cross-tenant) as support items.
+
+    These are messages customers sent via the portal that may need PRAD team
+    involvement — e.g. unresolved DISPUTE messages past 48h.
+    Combines customer portal messages with a summary for the support dashboard.
+    """
+    from app.models.portals import CustomerPortalMessage
+    from app.models.ar import Customer
+    rows = (await db.execute(
+        select(
+            CustomerPortalMessage,
+            Customer.name.label("customer_name"),
+            Tenant.name.label("tenant_name"),
+        )
+        .join(Customer, CustomerPortalMessage.customer_id == Customer.id)
+        .join(Tenant, CustomerPortalMessage.tenant_id == Tenant.id)
+        .where(CustomerPortalMessage.status == "OPEN")
+        .order_by(CustomerPortalMessage.created_at.asc())
+        .limit(200)
+    )).all()
+    return [
+        {
+            "id": str(r.CustomerPortalMessage.id),
+            "tenant_name": r.tenant_name,
+            "customer_name": r.customer_name,
+            "message_type": r.CustomerPortalMessage.message_type,
+            "subject": r.CustomerPortalMessage.subject,
+            "status": r.CustomerPortalMessage.status,
+            "created_at": r.CustomerPortalMessage.created_at.isoformat(),
+        }
+        for r in rows
+    ]

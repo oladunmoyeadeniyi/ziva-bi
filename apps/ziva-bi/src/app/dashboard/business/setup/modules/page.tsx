@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAppConfig } from "@/contexts/AppConfigContext";
 import { apiFetch } from "@/lib/api";
 import { MODULE_MODE_AVAILABILITY } from "@/lib/modules";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 interface ModuleState {
   module_key: string;
@@ -309,7 +310,7 @@ function ModuleCard({
   );
 }
 
-export default function ModuleActivationPage() {
+function ModuleActivationPage() {
   const { accessToken } = useAuth();
   const { appName } = useAppConfig();
   const router = useRouter();
@@ -581,5 +582,13 @@ export default function ModuleActivationPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ModuleActivationPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="module_activation" title="Module Activation">
+      <ModuleActivationPage />
+    </SectionLockWrapper>
   );
 }

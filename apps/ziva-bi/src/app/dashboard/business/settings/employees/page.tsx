@@ -20,6 +20,7 @@ import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
 import { Banner } from "@/components/Banner";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1157,8 +1158,11 @@ function EmployeesPage() {
 
 export default function EmployeesPageWrapper() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
+    <SectionLockWrapper sectionKey="employees" title="Employees">
+      <Suspense fallback={<div className="p-8 text-sm text-gray-400">Loading…</div>}>
       <EmployeesPage />
     </Suspense>
+
+  </SectionLockWrapper>
   );
 }

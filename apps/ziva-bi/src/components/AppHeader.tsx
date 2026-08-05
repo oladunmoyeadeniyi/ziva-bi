@@ -135,11 +135,20 @@ export default function AppHeader({ context }: AppHeaderProps) {
         <button
           type="button"
           onClick={() => setShowMenu((v) => !v)}
-          className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 focus:outline-none"
+          className="flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900 focus:outline-none"
         >
-          <span className="font-medium">{user?.full_name}</span>
+          {/* Avatar initials */}
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-[11px] font-bold shrink-0 select-none">
+            {(user?.full_name ?? "?")
+              .split(" ")
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((n) => n[0].toUpperCase())
+              .join("")}
+          </span>
+          <span className="font-medium hidden sm:inline">{user?.full_name}</span>
           {contextLine && (
-            <span className="text-gray-400 text-xs hidden sm:inline">
+            <span className="text-gray-400 text-xs hidden md:inline">
               — {contextLine}
             </span>
           )}

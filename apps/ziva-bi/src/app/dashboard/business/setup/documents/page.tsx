@@ -16,6 +16,7 @@ import { apiFetch } from "@/lib/api";
 import PageContainer from "@/components/PageContainer";
 import PageHeading from "@/components/PageHeading";
 import { Button } from "@/components/ui/button";
+import SectionLockWrapper from "@/components/SectionLockWrapper";
 
 interface ModuleState {
   module_key: string;
@@ -62,7 +63,7 @@ const BLANK_RULE: NewRule = {
 const FORMAT_OPTIONS = ["PDF", "JPG", "PNG", "XLSX", "CSV"];
 const OCR_TEMPLATES = ["None", "Invoice standard", "Receipt standard", "Custom"];
 
-export default function DocumentRulesPage() {
+function DocumentRulesPage() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
@@ -367,5 +368,13 @@ export default function DocumentRulesPage() {
         </>
       )}
     </PageContainer>
+  );
+}
+
+export default function DocumentRulesPageWrapper() {
+  return (
+    <SectionLockWrapper sectionKey="document_rules" title="Document Rules">
+      <DocumentRulesPage />
+    </SectionLockWrapper>
   );
 }
