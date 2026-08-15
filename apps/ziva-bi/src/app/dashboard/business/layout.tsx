@@ -371,6 +371,7 @@ function BusinessLayoutInner({
               <SectionLabel label="Workspace" />
               <NavLink href="/dashboard/business" label="Home" icon="home" exact />
               <NavLink href="/dashboard/business/expenses" label="Expenses" icon="receipt" />
+              <NavLink href="/dashboard/business/advances" label="Advances" icon="cash-banknote" />
               <NavLink href="/dashboard/business/expenses/payments" label="Payment queue" icon="wallet" />
               {/* RBAC: gate Approvals to approvers once RBAC is available */}
               <NavLink
@@ -414,6 +415,7 @@ function BusinessLayoutInner({
                 )}
                 <NavLink href="/dashboard/business/setup/bank-accounts" label="Bank accounts" icon="building-bank" lockKey="bank_accounts" />
                 <NavLink href="/dashboard/business/petty-cash" label="Petty cash" icon="cash" />
+                <NavLink href="/dashboard/business/advances/aging" label="Advance aging" icon="clock-dollar" />
                 <NavLink href="/dashboard/business/settings/payment-config" label="Payment settings" icon="credit-card" />
                 {/* Account Mapping — hidden in Lite mode */}
                 {postingMode !== 'lite' && (

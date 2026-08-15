@@ -1831,4 +1831,66 @@ Tracks and executes reimbursement payments for approved expense reports. Support
 
 ---
 
-*End of Master Context. Last updated: 2026-08-05 — All TIER 0–4 modules + post-launch ops modules shipped. Milestones M-RT through M-Payment pending CC commit this round. Platform is fully feature-complete. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*
+### M-Advance — Employee Advance & Retirement + PWA rename (2026-08-15, migration `b1c2d3e4f5g6`)
+
+Employees can request a cash advance ahead of a trip or purchase, have it approved and issued by finance, then retire it by submitting expense lines. The system automatically computes over/underspend and posts GL entries in all three modes.
+
+**New tables:**
+- `employee_advances` — master advance record. Columns: `id` (UUID), `tenant_id`, `employee_id` (FK users), `advance_number` (ADV-YYYY-NNNN, unique per tenant/year), `advance_type` (TRAVEL/BUSINESS/OTHER), `purpose`, `amount`, `currency`, `status` (DRAFT/SUBMITTED/APPROVED/ISSUED/PARTIALLY_RETIRED/FULLY_RETIRED/REJECTED/CANCELLED), `gl_advance_account_id` (loose UUID — Employee Advance asset account), `gl_cash_account_id` (loose UUID — Cash/Bank account), `request_date`, `required_by_date`, `due_retirement_date`, `rejection_comment`, `notes`, `total_retired` (running sum, updated on each approved retirement), `journal_entry_id` (FK journal_entries, nullable — issuance JE), `issued_by`, `issued_at`, `approved_by`, `approved_at`, `created_at`, `updated_at`.
+- `advance_retirements` — one per partial retirement. Columns: `id` (UUID), `tenant_id`, `advance_id` (FK employee_advances), `employee_id`, `retirement_number` (RET-YYYY-NNNN), `retirement_date`, `status` (DRAFT/SUBMITTED/APPROVED/REJECTED/POSTED), `advance_amount` (snapshot of parent advance.amount), `total_claimed` (live sum of lines), `balance` (total_claimed - advance_amount; positive = overspend), `journal_entry_id` (loose UUID, nullable — retirement JE), `posting_batch_id` (loose UUID, nullable — Connected mode), `rejection_comment`, `notes`, `submitted_at`, `approved_at`, `posted_at`, `created_at`, `updated_at`.
+- `advance_retirement_lines` — individual expense lines within a retirement. Columns: `id` (UUID), `tenant_id`, `retirement_id` (FK advance_retirements), `advance_id`, `description`, `amount`, `currency`, `receipt_date`, `gl_id` (loose UUID), `dimension_values` (JSONB), `category_id` (loose UUID), `subcategory_id` (loose UUID), `created_at`.
+
+**Status flow:**
+- Advance: DRAFT → SUBMITTED → APPROVED → ISSUED → PARTIALLY_RETIRED / FULLY_RETIRED (or REJECTED / CANCELLED at any pre-issued stage).
+- Retirement: DRAFT → SUBMITTED → APPROVED → POSTED (or REJECTED).
+
+**GL posting logic (all three modes):**
+
+*Full ERP (journal_entries):*
+- Issuance: DR Employee Advance Account / CR Cash Account (issuance amount).
+- Retirement approval + post: DR Expense GL accounts (per line amounts) / CR Employee Advance Account (advance amount). If overspend (total_claimed > advance_amount): additional DR on each excess line / CR Employee Payable. If underspend: DR Employee Advance (remaining) / CR Employee Payable (amount to recover).
+
+*Connected mode (posting_batches):*
+- Issuance: inserts a `posting_batches` row (`module='advance'`, `status='pending'`, `batch_ref='ADV-ISS-{id[:8]}'`, `transactions` JSONB with type/advance_id/amount/currency). Finance downloads and posts to external ERP.
+- Retirement approval: inserts a second `posting_batches` row (`batch_ref='ADV-RET-{ret_id[:8]}'`, `transactions` with type/retirement_id/advance_id/total_claimed/balance).
+
+*Lite mode:* workflow only — no GL writes.
+
+**Backend (`routers/advance.py`, `models/advance.py`):**
+- `GET /api/advances` — list (employees see own; admins see all; filter by status).
+- `POST /api/advances` — create DRAFT advance.
+- `GET /api/advances/{id}` — detail.
+- `PUT /api/advances/{id}` — edit DRAFT.
+- `POST /api/advances/{id}/submit` — submit for approval.
+- `POST /api/advances/{id}/approve` — finance approves.
+- `POST /api/advances/{id}/reject` — finance rejects (with comment).
+- `POST /api/advances/{id}/issue` — finance marks as issued (GL: issuance journal or posting_batch).
+- `POST /api/advances/{id}/cancel` — owner cancels DRAFT/SUBMITTED.
+- `GET /api/advances/{id}/retirements` — list retirements for an advance.
+- `POST /api/advances/{id}/retirements` — create DRAFT retirement.
+- `GET /api/advances/retirements/{ret_id}` — retirement detail with lines.
+- `POST /api/advances/retirements/{ret_id}/lines` — add line to DRAFT retirement.
+- `DELETE /api/advances/retirements/{ret_id}/lines/{line_id}` — remove line.
+- `POST /api/advances/retirements/{ret_id}/submit` — submit retirement for approval.
+- `POST /api/advances/retirements/{ret_id}/approve` — finance approves (updates advance.total_retired; triggers Connected-mode posting_batch).
+- `POST /api/advances/retirements/{ret_id}/reject` — finance rejects.
+- `POST /api/advances/retirements/{ret_id}/post` — Full ERP: post retirement journal.
+- `GET /api/advances/aging` — aging report (outstanding advances in 0-30/31-60/61-90/90+ buckets).
+
+**Authorization:** advances owned by employee (or visible to admin). Retirement read/write requires advance owner or admin. Finance actions (approve/reject/issue) require `current_user.is_admin`.
+
+**Frontend (6 pages):**
+- `advances/page.tsx` — tabbed list by status; employees see own, finance sees all.
+- `advances/new/page.tsx` — request form: type, purpose, amount, currency, dates, GL accounts, notes.
+- `advances/[id]/page.tsx` — detail: status + amount + dates cards; action buttons (submit/approve/reject/issue/cancel); retirements list.
+- `advances/[id]/retire/page.tsx` — retire advance: create retirement, add/remove expense lines, live balance bar (advance amount vs claimed; over/underspend highlight), submit for approval.
+- `advances/retirements/[ret_id]/page.tsx` — retirement detail: 4-card summary (status/advance amount/total claimed/balance); finance approve/reject/post-to-GL actions; expense lines table.
+- `advances/aging/page.tsx` — aging report: outstanding advances in 4 age buckets with employee breakdown.
+
+**Sidebar:** "Advances" link in WORKSPACE section (after Expenses); "Advance aging" link in FINANCIALS section (after Petty cash; finance/admin only).
+
+**PWA rename:** `apps/ziva-bi/src/app/manifest.ts` added — Next.js App Router manifest route. Sets `name`/`short_name` to "PRAD Expense". Icons split into separate `"any"` and `"maskable"` entries per spec.
+
+---
+
+*End of Master Context. Last updated: 2026-08-15 — All TIER 0–4 modules + post-launch ops modules + Employee Advance module shipped. M-Advance pending CC commit. Platform is fully feature-complete. For current schema/endpoint facts, see `docs/PROJECT_STATE.md`.*

@@ -204,6 +204,7 @@ from app.routers import asset_issuance as asset_issuance_router
 from app.routers import stores as stores_router
 from app.routers import petty_cash as petty_cash_router
 from app.routers import payment as payment_router
+from app.routers import advance as advance_router
 
 app.include_router(app_config_router.router)  # public — no auth, must be first
 app.include_router(auth_router.router)
@@ -247,6 +248,7 @@ app.include_router(asset_issuance_router.router)
 app.include_router(stores_router.router)
 app.include_router(petty_cash_router.router)
 app.include_router(payment_router.router)
+app.include_router(advance_router.router)
 
 
 @app.get("/onboard/{token}", tags=["onboarding"])

@@ -39,3 +39,4 @@ import app.models.asset_issuance        # noqa: F401  — registers asset_issuan
 import app.models.stores                # noqa: F401  — registers store_issues, store_returns
 import app.models.petty_cash            # noqa: F401  — registers petty_cash_funds, petty_cash_transactions
 import app.models.payment               # noqa: F401  — registers expense_payment_configs, employee_bank_accounts, expense_payments
+import app.models.advance               # noqa: F401  — registers employee_advances, advance_retirements, advance_retirement_lines

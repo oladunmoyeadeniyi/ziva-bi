@@ -165,7 +165,7 @@ ruff check app/
 
 > **Authoritative as of 2026-07-31.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: 100% of full product vision + post-launch ops modules. All modules shipped including M-RT, M-Reporting, M-VendorPortal, M-CustomerPortal, M-AssetIssuance, M-SA Portal Gaps, M-UX Polish, M-Stores, M-PettyCash, M-Payment. PENDING_COMMIT.md covers M1–M10 and is ready for CC. Last updated: 2026-08-05.**
+> **Overall completion: 100% of full product vision + post-launch ops modules + Employee Advance module. All modules shipped. M-Advance (employee advance request → approve → issue → retire + PWA rename to PRAD Expense) pending CC. Last updated: 2026-08-05.**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -262,6 +262,7 @@ ruff check app/
 | M-Stores | Store Issue Tracking — is_store_item/min_stock/reorder_qty on inventory_items; store_issues + store_returns tables (migration `y8z9a0b1c2d3`); keeper-managed workflow; 8 API endpoints; 4-tab frontend with analytics + reorder alerts | pending CC |
 | M-PettyCash | Petty Cash Fund Management — petty_cash_funds + petty_cash_transactions tables (migration `z9a0b1c2d3e4`); disburse/retire/replenish/adjust endpoints; balance_after snapshot per txn; fund cards + ledger frontend | pending CC |
 | M-Payment | Expense Payment Queue — expense_payment_configs + employee_bank_accounts + expense_payments (migration `a0b1c2d3e4f5`); MANUAL + PAYSTACK rails; PaystackService (Fernet-encrypted keys, HMAC webhook, brand-hidden errors); payment queue + config + bank account pages | pending CC |
+| M-Advance | Employee Advance & Retirement — employee_advances + advance_retirements + advance_retirement_lines (migration `b1c2d3e4f5g6`); request → approve → issue → retire workflow; GL posting all 3 modes; aging report; 6 frontend pages; PWA renamed to PRAD Expense | pending CC |
 
 ---
 
