@@ -538,7 +538,7 @@ Same migration as IxE (§2.27). Two tables replacing the JSONB `fx_rates` field 
 
 ---
 
-### 2.29 FX-b — Revaluation Rules + BDC Register (migration `t3u4v5w6x7y8`, pending CC commit)
+### 2.29 FX-b — Revaluation Rules + BDC Register (migration `t3u4v5w6x7y8`, committed `a81b34e`)
 
 Chains after `s2t3u4v5w6x7` (platform_config app_name update). Two tables extending the FX module.
 
@@ -547,7 +547,7 @@ Chains after `s2t3u4v5w6x7` (platform_config app_name update). Two tables extend
 | `fx_revaluation_rules` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `account_type VARCHAR(50)`, `rate_type VARCHAR(20) DEFAULT 'CLOSING'`, `gain_account_id UUID FK→chart_of_accounts SET NULL`, `loss_account_id UUID FK→chart_of_accounts SET NULL`, `is_active BOOL DEFAULT true`, `created_at`, `updated_at`. CHECK: `rate_type IN ('SPOT','CLOSING','AVERAGE','BUDGET')`. UQ: `(tenant_id, account_type)`. | Period-end FX revaluation config: one rule per account type per tenant (e.g. MONETARY_ASSET, MONETARY_LIABILITY). Specifies which rate type to use and which GL accounts absorb the gain/loss. |
 | `bdc_register` | `id UUID PK`, `tenant_id FK→tenants CASCADE`, `from_currency VARCHAR(3)`, `to_currency VARCHAR(3)`, `rate NUMERIC(20,6)`, `quote_date DATE`, `bdc_name VARCHAR(200) NULL`, `reference VARCHAR(200) NULL`, `notes TEXT NULL`, `created_by UUID FK→users SET NULL`, `created_at`. CHECK: `rate > 0`. Index: `(tenant_id, quote_date)`. | Bureau de Change / parallel-market rate log. Companies operating in dual-rate environments (e.g. Nigeria) record BDC quotes here for disclosure and reconciliation vs the official rate. |
 
-**API endpoints (FX-b, pending CC commit `t3u4v5w6x7y8`):**
+**API endpoints (FX-b, committed `a81b34e`):**
 - `GET  /api/fx/revaluation-rules` — list rules for tenant
 - `POST /api/fx/revaluation-rules` — create rule (one per account_type; 409 on duplicate)
 - `PATCH /api/fx/revaluation-rules/{rule_id}` — update rate_type, gain/loss accounts, is_active
@@ -560,7 +560,7 @@ Chains after `s2t3u4v5w6x7` (platform_config app_name update). Two tables extend
 
 ---
 
-### 2.30 Consultant Locks — M-RT (migration `u4v5w6x7y8z9`, pending CC)
+### 2.30 Consultant Locks — M-RT (migration `u4v5w6x7y8z9`, committed `f3df7f9`)
 
 Chains after `u3v4w5x6y7z8` (platform_config app_name seed). One table. SA-only write path; tenant-side read path (locked sections render read-only).
 
@@ -576,7 +576,7 @@ Chains after `u3v4w5x6y7z8` (platform_config app_name seed). One table. SA-only 
 
 ---
 
-### 2.31 Saved Reports — M-Reporting (migration `v5w6x7y8z9a0`, pending CC)
+### 2.31 Saved Reports — M-Reporting (migration `v5w6x7y8z9a0`, committed `f3df7f9`)
 
 Chains after `u4v5w6x7y8z9`. One table. Report execution itself is stateless; only user-saved report definitions need persistence.
 
@@ -588,7 +588,7 @@ Chains after `u4v5w6x7y8z9`. One table. Report execution itself is stateless; on
 
 ---
 
-### 2.32 Vendor & Customer Portals — M-VendorPortal + M-CustomerPortal (migration `w6x7y8z9a0b1`, pending CC)
+### 2.32 Vendor & Customer Portals — M-VendorPortal + M-CustomerPortal (migration `w6x7y8z9a0b1`, committed `f3df7f9`)
 
 Chains after `v5w6x7y8z9a0`. Extends existing `vendors` and `customers` tables with two portal columns each; creates two new tables.
 
@@ -603,7 +603,7 @@ Chains after `v5w6x7y8z9a0`. Extends existing `vendors` and `customers` tables w
 
 ---
 
-### 2.33 Asset Issuance & Maintenance — M-AssetIssuance (migration `x7y8z9a0b1c2`, pending CC)
+### 2.33 Asset Issuance & Maintenance — M-AssetIssuance (migration `x7y8z9a0b1c2`, committed `f3df7f9`)
 
 Chains after `w6x7y8z9a0b1`. Two new tables. No changes to `assets` table.
 
@@ -614,7 +614,7 @@ Chains after `w6x7y8z9a0b1`. Two new tables. No changes to `assets` table.
 
 ---
 
-### 2.34 Store Issue Tracking — M-Stores (migration `y8z9a0b1c2d3`, pending CC)
+### 2.34 Store Issue Tracking — M-Stores (migration `y8z9a0b1c2d3`, committed `f3df7f9`)
 
 Chains after `x7y8z9a0b1c2`. Extends `inventory_items` with two store-specific columns; creates two new tables.
 
@@ -629,7 +629,7 @@ Chains after `x7y8z9a0b1c2`. Extends `inventory_items` with two store-specific c
 
 ---
 
-### 2.35 Petty Cash — M-PettyCash (migration `z9a0b1c2d3e4`, pending CC)
+### 2.35 Petty Cash — M-PettyCash (migration `z9a0b1c2d3e4`, committed `f3df7f9`)
 
 Chains after `y8z9a0b1c2d3`. Two tables.
 
@@ -640,7 +640,7 @@ Chains after `y8z9a0b1c2d3`. Two tables.
 
 ---
 
-### 2.36 Expense Payments — M-Payment (migration `a0b1c2d3e4f5`, pending CC)
+### 2.36 Expense Payments — M-Payment (migration `a0b1c2d3e4f5`, committed `f3df7f9`)
 
 Chains after `z9a0b1c2d3e4`. Three tables. Supports MANUAL and PAYSTACK payment rails.
 
@@ -662,7 +662,7 @@ Chains after `z9a0b1c2d3e4`. Three tables. Supports MANUAL and PAYSTACK payment 
 | Invariant | Detail |
 |---|---|
 | **Cost center source of truth** | Cost centers live in `org_structure` (node_type='Cost center'). `employees.cost_center_id` and `cost_center_config.cost_center_id` both FK to `org_structure.id`. `dimension_values` may have cost_center-typed rows (legacy) but are NOT read for primary cost center lookup. |
-| **Currency source of truth** | `tenant_org_config.functional_currency`, `.reporting_currency`, `.enabled_currencies JSONB` are the identity authority. FX rates live in `tenant_currencies` + `tenant_fx_rates` dedicated tables (§2.28, committed `c8e465e`). Revaluation rules live in `fx_revaluation_rules` (§2.29, pending CC commit `t3u4v5w6x7y8`). BDC quotes live in `bdc_register` (§2.29). GET /api/fx/currencies reads `tenant_currencies`; GET /api/fx/rates reads `tenant_fx_rates` with inverse fallback. |
+| **Currency source of truth** | `tenant_org_config.functional_currency`, `.reporting_currency`, `.enabled_currencies JSONB` are the identity authority. FX rates live in `tenant_currencies` + `tenant_fx_rates` dedicated tables (§2.28, committed `c8e465e`). Revaluation rules live in `fx_revaluation_rules` (§2.29, committed `a81b34e`). BDC quotes live in `bdc_register` (§2.29). GET /api/fx/currencies reads `tenant_currencies`; GET /api/fx/rates reads `tenant_fx_rates` with inverse fallback. |
 | **Standing date floor** | No transaction date may precede `tenant_org_config.date_of_registration`. |
 | **lifecycle_status gates** | CoA Replace All only when `lifecycle_status='in_implementation'`. CoA Remap only when `lifecycle_status='live'`. |
 | **Expense→GL posting** | Synchronous, same DB transaction as final approval. Uncoded leaf lines (`gl_id=NULL`) block posting. Split parent containers (`is_split_parent=True`) are excluded from `leaf_lines` — their split children carry the GL codes and dimension values that post to GL. Frontend validation (Q4 fix, 2026-07-24) ensures split children are fully coded before submission. |
@@ -1255,7 +1255,7 @@ The existing `/api/ai/ocr` and `/api/ai/override` endpoints (M10) remain. M20 ex
 
 ---
 
-### 4.29 FX (`/api/fx`) — committed `c8e465e`; FX-b endpoints pending CC commit `t3u4v5w6x7y8`
+### 4.29 FX (`/api/fx`) — committed `c8e465e`; FX-b endpoints committed `a81b34e`
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1268,7 +1268,7 @@ The existing `/api/ai/ocr` and `/api/ai/override` endpoints (M10) remain. M20 ex
 | DELETE | /api/fx/rates/{rate_id} | Delete a specific rate row. |
 | GET | /api/fx/rates/lookup | `?from_currency=NGN&to_currency=USD&effective_date=2026-07-31&rate_type=SPOT` — rate lookup with inverse fallback. |
 | POST | /api/fx/migrate-from-jsonb | One-time migration of JSONB currency/rate data to dedicated tables. Idempotent. |
-| GET | /api/fx/revaluation-rules | List revaluation rules for tenant. *(FX-b, pending CC commit)* |
+| GET | /api/fx/revaluation-rules | List revaluation rules for tenant. *FX-b, committed `a81b34e`* |
 | POST | /api/fx/revaluation-rules | Create revaluation rule (one per account_type; 409 on duplicate). *(FX-b)* |
 | PATCH | /api/fx/revaluation-rules/{rule_id} | Update rate_type, gain/loss accounts, is_active. *(FX-b)* |
 | DELETE | /api/fx/revaluation-rules/{rule_id} | Delete revaluation rule. *(FX-b)* |
@@ -1287,7 +1287,7 @@ The existing `/api/ai/ocr` and `/api/ai/override` endpoints (M10) remain. M20 ex
 
 ---
 
-### 4.31 Consultant Locks (`/api/locks`) — M-RT, pending CC
+### 4.31 Consultant Locks (`/api/locks`) — M-RT, committed `f3df7f9`
 
 SA-only write path. All authenticated users can read (tenant dashboard fetches on load).
 
@@ -1298,7 +1298,7 @@ SA-only write path. All authenticated users can read (tenant dashboard fetches o
 
 ---
 
-### 4.32 Reporting & Analytics (`/api/reporting`) — M-Reporting, pending CC
+### 4.32 Reporting & Analytics (`/api/reporting`) — M-Reporting, committed `f3df7f9`
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1312,7 +1312,7 @@ SA-only write path. All authenticated users can read (tenant dashboard fetches o
 
 ---
 
-### 4.33 Vendor Portal (`/api/vendor-portal`) — M-VendorPortal, pending CC
+### 4.33 Vendor Portal (`/api/vendor-portal`) — M-VendorPortal, committed `f3df7f9`
 
 Admin endpoints require tenant auth. Portal endpoints use portal JWT (token-based, no tenant session).
 
@@ -1330,7 +1330,7 @@ Admin endpoints require tenant auth. Portal endpoints use portal JWT (token-base
 
 ---
 
-### 4.34 Customer Portal (`/api/customer-portal`) — M-CustomerPortal, pending CC
+### 4.34 Customer Portal (`/api/customer-portal`) — M-CustomerPortal, committed `f3df7f9`
 
 Same pattern as vendor portal. Admin endpoints require tenant auth; portal endpoints use portal JWT.
 
@@ -1348,7 +1348,7 @@ Same pattern as vendor portal. Admin endpoints require tenant auth; portal endpo
 
 ---
 
-### 4.35 Asset Issuance (`/api/assets`) — M-AssetIssuance, pending CC
+### 4.35 Asset Issuance (`/api/assets`) — M-AssetIssuance, committed `f3df7f9`
 
 Extends the `/api/assets` prefix (same router as M18 fixed assets).
 
@@ -1365,7 +1365,7 @@ Extends the `/api/assets` prefix (same router as M18 fixed assets).
 
 ---
 
-### 4.36 SA Portal Gaps (`/api/platform`) — M-SA, pending CC
+### 4.36 SA Portal Gaps (`/api/platform`) — M-SA, committed `f3df7f9`
 
 Three new endpoints on the existing platform router.
 
@@ -1378,7 +1378,7 @@ Three new endpoints on the existing platform router.
 
 ---
 
-### 4.37 Store Tracking (`/api/stores`) — M-Stores, pending CC
+### 4.37 Store Tracking (`/api/stores`) — M-Stores, committed `f3df7f9`
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1393,7 +1393,7 @@ Three new endpoints on the existing platform router.
 
 ---
 
-### 4.38 Petty Cash (`/api/petty-cash`) — M-PettyCash, pending CC
+### 4.38 Petty Cash (`/api/petty-cash`) — M-PettyCash, committed `f3df7f9`
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1409,7 +1409,7 @@ Three new endpoints on the existing platform router.
 
 ---
 
-### 4.39 Expense Payments (`/api/payments`) — M-Payment, pending CC
+### 4.39 Expense Payments (`/api/payments`) — M-Payment, committed `f3df7f9`
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -1444,7 +1444,7 @@ Three new endpoints on the existing platform router.
 | `/dashboard/business/setup/modules` | Module activation |
 | `/dashboard/business/setup/modules/[module]` | Module detail |
 | `/dashboard/business/setup/periods` | Period management |
-| `/dashboard/business/setup/currencies` | Currencies & FX — 5-tab page (currencies | rates | lookup | revaluation | bdc) backed by /api/fx/* dedicated tables. Tabs 1–3 committed `c8e465e`; tabs 4–5 pending CC commit `t3u4v5w6x7y8`. |
+| `/dashboard/business/setup/currencies` | Currencies & FX — 5-tab page (currencies | rates | lookup | revaluation | bdc) backed by /api/fx/* dedicated tables. Tabs 1–3 committed `c8e465e`; tabs 4–5 committed `a81b34e`. |
 | `/dashboard/business/setup/tax` | Tax & statutory config |
 | `/dashboard/business/setup/roles` | Roles & permissions |
 | `/dashboard/business/setup/documents` | Document rules |
@@ -1507,29 +1507,29 @@ Three new endpoints on the existing platform router.
 | `/platform/support` | **Stub** |
 | `/platform/team` | **Stub** |
 | `/platform/trials` | SA lead management queue — lists trial tenants, lead-status tabs, inline notes, one-click activation |
-| `/platform/audit` | SA audit log viewer — paginated event log with event_type + tenant + user + date filters (M-SA, pending CC) |
-| `/platform/team` | SA team management — list SA users + invite new SA team member (M-SA, pending CC) |
-| `/platform/support` | SA cross-tenant support inbox — open customer messages and vendor submissions (M-SA, pending CC) |
-| `/dashboard/business/reporting` | Analytics KPI dashboard: 8 summary cards with live data (M-Reporting, pending CC) |
-| `/dashboard/business/reporting/reports` | Built-in report runner: 20 report types, filter inputs, tabular results, Save Report modal (M-Reporting, pending CC) |
-| `/dashboard/business/reporting/saved` | Saved reports list: re-run, delete, shared-flag toggle (M-Reporting, pending CC) |
-| `/dashboard/business/settings/vendor-portal` | Admin portal management: enable/disable per vendor, share link, reset token, review submissions (M-VendorPortal, pending CC) |
-| `/portal/vendor/[token]` | **Public** — Vendor self-service portal: view own invoices, submit new invoice (M-VendorPortal, pending CC) |
-| `/dashboard/business/settings/customer-portal` | Admin portal management: enable/disable per customer, share link, reset token, resolve messages (M-CustomerPortal, pending CC) |
-| `/portal/customer/[token]` | **Public** — Customer self-service portal: view AR invoices, submit payment notice/dispute (M-CustomerPortal, pending CC) |
-| `/dashboard/business/assets/issuances` | Asset issuance list: all issuances + status filter; New Issuance form (M-AssetIssuance, pending CC) |
-| `/dashboard/business/assets/issuances/new` | New issuance form: asset selector, employee/location assignee, dates, condition (M-AssetIssuance, pending CC) |
-| `/dashboard/business/assets/maintenance` | Maintenance costs log: per-asset history, record cost form with GL + vendor fields (M-AssetIssuance, pending CC) |
-| `/dashboard/business/stores` | Store items list: stock levels, reorder alerts, is_store_item toggle (M-Stores, pending CC) |
-| `/dashboard/business/stores/issues` | Issue recording: new issue form + issue history with item/employee/date filters (M-Stores, pending CC) |
-| `/dashboard/business/stores/returns` | Return recording: standalone return form + returns history (M-Stores, pending CC) |
-| `/dashboard/business/stores/analytics` | Store analytics: MTD issues, top-10 items, reorder alert count (M-Stores, pending CC) |
-| `/dashboard/business/petty-cash` | Petty cash fund cards: balance, float, custodian, create fund modal (M-PettyCash, pending CC) |
-| `/dashboard/business/petty-cash/[fund_id]` | Fund ledger: transaction history, disburse/retire/replenish/adjust action buttons (M-PettyCash, pending CC) |
-| `/dashboard/business/expenses/payments` | Payment queue: QUEUED + PROCESSING rows; initiate + cancel actions; status badges (M-Payment, pending CC) |
-| `/dashboard/business/expenses/payments/history` | Payment history: PAID + FAILED + CANCELLED with date/status filters (M-Payment, pending CC) |
-| `/dashboard/business/settings/payment-config` | Payment config: mode selector (MANUAL/PAYSTACK), encrypted key inputs, save config (M-Payment, pending CC) |
-| `/dashboard/business/settings/bank-accounts` | Employee bank accounts: list by employee, add account form with bank picker (M-Payment, pending CC) |
+| `/platform/audit` | SA audit log viewer — paginated event log with event_type + tenant + user + date filters (M-SA, committed `f3df7f9`) |
+| `/platform/team` | SA team management — list SA users + invite new SA team member (M-SA, committed `f3df7f9`) |
+| `/platform/support` | SA cross-tenant support inbox — open customer messages and vendor submissions (M-SA, committed `f3df7f9`) |
+| `/dashboard/business/reporting` | Analytics KPI dashboard: 8 summary cards with live data (M-Reporting, committed `f3df7f9`) |
+| `/dashboard/business/reporting/reports` | Built-in report runner: 20 report types, filter inputs, tabular results, Save Report modal (M-Reporting, committed `f3df7f9`) |
+| `/dashboard/business/reporting/saved` | Saved reports list: re-run, delete, shared-flag toggle (M-Reporting, committed `f3df7f9`) |
+| `/dashboard/business/settings/vendor-portal` | Admin portal management: enable/disable per vendor, share link, reset token, review submissions (M-VendorPortal, committed `f3df7f9`) |
+| `/portal/vendor/[token]` | **Public** — Vendor self-service portal: view own invoices, submit new invoice (M-VendorPortal, committed `f3df7f9`) |
+| `/dashboard/business/settings/customer-portal` | Admin portal management: enable/disable per customer, share link, reset token, resolve messages (M-CustomerPortal, committed `f3df7f9`) |
+| `/portal/customer/[token]` | **Public** — Customer self-service portal: view AR invoices, submit payment notice/dispute (M-CustomerPortal, committed `f3df7f9`) |
+| `/dashboard/business/assets/issuances` | Asset issuance list: all issuances + status filter; New Issuance form (M-AssetIssuance, committed `f3df7f9`) |
+| `/dashboard/business/assets/issuances/new` | New issuance form: asset selector, employee/location assignee, dates, condition (M-AssetIssuance, committed `f3df7f9`) |
+| `/dashboard/business/assets/maintenance` | Maintenance costs log: per-asset history, record cost form with GL + vendor fields (M-AssetIssuance, committed `f3df7f9`) |
+| `/dashboard/business/stores` | Store items list: stock levels, reorder alerts, is_store_item toggle (M-Stores, committed `f3df7f9`) |
+| `/dashboard/business/stores/issues` | Issue recording: new issue form + issue history with item/employee/date filters (M-Stores, committed `f3df7f9`) |
+| `/dashboard/business/stores/returns` | Return recording: standalone return form + returns history (M-Stores, committed `f3df7f9`) |
+| `/dashboard/business/stores/analytics` | Store analytics: MTD issues, top-10 items, reorder alert count (M-Stores, committed `f3df7f9`) |
+| `/dashboard/business/petty-cash` | Petty cash fund cards: balance, float, custodian, create fund modal (M-PettyCash, committed `f3df7f9`) |
+| `/dashboard/business/petty-cash/[fund_id]` | Fund ledger: transaction history, disburse/retire/replenish/adjust action buttons (M-PettyCash, committed `f3df7f9`) |
+| `/dashboard/business/expenses/payments` | Payment queue: QUEUED + PROCESSING rows; initiate + cancel actions; status badges (M-Payment, committed `f3df7f9`) |
+| `/dashboard/business/expenses/payments/history` | Payment history: PAID + FAILED + CANCELLED with date/status filters (M-Payment, committed `f3df7f9`) |
+| `/dashboard/business/settings/payment-config` | Payment config: mode selector (MANUAL/PAYSTACK), encrypted key inputs, save config (M-Payment, committed `f3df7f9`) |
+| `/dashboard/business/settings/bank-accounts` | Employee bank accounts: list by employee, add account form with bank picker (M-Payment, committed `f3df7f9`) |
 
 ---
 
@@ -1652,19 +1652,19 @@ Three new endpoints on the existing platform router.
 | Full rebrand (Ziva BI → PRAD) | ✅ committed `2835779` | All user-facing strings, page titles, metadata, config files rebranded. Repo/package names unchanged. |
 | IxE — Inter-Company Eliminations | ✅ committed `c8e465e` | 6 tables in migration `r1s2t3u4v5w6`: consolidation_groups, consolidation_members, ic_account_mappings, ic_matches, elimination_journals, elimination_journal_lines. Auto-match engine; consolidated TB; 7 frontend pages. Full ERP only. |
 | FX dedicated tables | ✅ committed `c8e465e` | `tenant_currencies` + `tenant_fx_rates` in migration `r1s2t3u4v5w6`. Inverse-rate fallback. 3-tab currencies page. |
-| FX-b — Revaluation Rules + BDC Register | ⏳ pending CC commit `t3u4v5w6x7y8` | `fx_revaluation_rules` + `bdc_register`. Revaluation + BDC tabs added to currencies page. |
+| FX-b — Revaluation Rules + BDC Register | ⏳ committed `a81b34e` | `fx_revaluation_rules` + `bdc_register`. Revaluation + BDC tabs added to currencies page. |
 | Performance & Security Audit | ✅ committed `c8e465e` | Redis cache service (graceful no-op), SecurityHeadersMiddleware, slowapi rate limiting (graceful import), REDIS_URL config var. No migration. |
 | PWA Unified Approvals Inbox | ✅ committed `c8e465e` | `GET /api/approvals/inbox` aggregates SUBMITTED expense reports + AP invoices + POs. Unified inbox frontend page with type filter tabs. No migration. |
-| M-RT — Consultant Locking | ⏳ pending CC (fixes applied 2026-08-05) | `consultant_locks` table (migration `u4v5w6x7y8z9`). SA can lock/unlock 14 setup sections per tenant. `ConsultantLocksContext` + `SectionLockWrapper` + lock icons on all setup NavLinks. |
-| M-Reporting — Analytics & Saved Reports | ⏳ pending CC | KPI dashboard + 20-type stateless report runner. `saved_reports` table (migration `v5w6x7y8z9a0`). `/api/reporting/*` endpoints. 3 frontend pages. |
-| M-VendorPortal — Vendor Self-Service | ⏳ pending CC | `portal_enabled` + `portal_token` on vendors. `vendor_invoice_submissions` table (migration `w6x7y8z9a0b1`). Token→JWT auth. Admin page + public portal `/portal/vendor/[token]`. |
-| M-CustomerPortal — Customer Self-Service | ⏳ pending CC | `portal_enabled` + `portal_token` on customers. `customer_portal_messages` table (same migration `w6x7y8z9a0b1`). Admin page + public portal `/portal/customer/[token]`. |
-| M-AssetIssuance — Asset Issuance & Maintenance | ⏳ pending CC | `asset_issuances` + `asset_maintenance_costs` tables (migration `x7y8z9a0b1c2`). Full CRUD API on `/api/assets` prefix. 3 frontend pages (issuances list, new issuance, maintenance costs). |
-| M-SA — SA Portal Gaps | ⏳ pending CC | Audit log viewer, SA team management + invite, cross-tenant support inbox. 3 stub pages replaced. No migration. |
-| M-UX — Global UI Polish | ⏳ pending CC | `ToastContext`, `NavigationProgress`, user avatar initials, `ConfirmDialog` (replaces all `window.confirm()`), `EmptyState`, `ClientProviders` wired. No migration. |
-| M-Stores — Store Issue Tracking | ⏳ pending CC | `is_store_item` + `minimum_stock_level` on inventory_items. `store_issues` + `store_returns` tables (migration `y8z9a0b1c2d3`). Keeper workflow. 8 endpoints. 4-tab frontend + analytics. |
-| M-PettyCash — Petty Cash Fund Management | ⏳ pending CC | `petty_cash_funds` + `petty_cash_transactions` tables (migration `z9a0b1c2d3e4`). Disburse/retire/replenish/adjust lifecycle. `balance_after` snapshot. Fund cards + ledger frontend. |
-| M-Payment — Expense Payment Queue | ⏳ pending CC | `expense_payment_configs` + `employee_bank_accounts` + `expense_payments` (migration `a0b1c2d3e4f5`). MANUAL + PAYSTACK rails. Fernet-encrypted keys, HMAC webhook. Payment queue + config + bank account pages. |
+| M-RT — Consultant Locking | ✅ committed `f3df7f9` | `consultant_locks` table (migration `u4v5w6x7y8z9`). SA can lock/unlock 14 setup sections per tenant. `ConsultantLocksContext` + `SectionLockWrapper` + lock icons on all setup NavLinks. |
+| M-Reporting — Analytics & Saved Reports | ✅ committed `f3df7f9` | KPI dashboard + 20-type stateless report runner. `saved_reports` table (migration `v5w6x7y8z9a0`). `/api/reporting/*` endpoints. 3 frontend pages. |
+| M-VendorPortal — Vendor Self-Service | ✅ committed `f3df7f9` | `portal_enabled` + `portal_token` on vendors. `vendor_invoice_submissions` table (migration `w6x7y8z9a0b1`). Token→JWT auth. Admin page + public portal `/portal/vendor/[token]`. |
+| M-CustomerPortal — Customer Self-Service | ✅ committed `f3df7f9` | `portal_enabled` + `portal_token` on customers. `customer_portal_messages` table (same migration `w6x7y8z9a0b1`). Admin page + public portal `/portal/customer/[token]`. |
+| M-AssetIssuance — Asset Issuance & Maintenance | ✅ committed `f3df7f9` | `asset_issuances` + `asset_maintenance_costs` tables (migration `x7y8z9a0b1c2`). Full CRUD API on `/api/assets` prefix. 3 frontend pages (issuances list, new issuance, maintenance costs). |
+| M-SA — SA Portal Gaps | ✅ committed `f3df7f9` | Audit log viewer, SA team management + invite, cross-tenant support inbox. 3 stub pages replaced. No migration. |
+| M-UX — Global UI Polish | ✅ committed `f3df7f9` | `ToastContext`, `NavigationProgress`, user avatar initials, `ConfirmDialog` (replaces all `window.confirm()`), `EmptyState`, `ClientProviders` wired. No migration. |
+| M-Stores — Store Issue Tracking | ✅ committed `f3df7f9` | `is_store_item` + `minimum_stock_level` on inventory_items. `store_issues` + `store_returns` tables (migration `y8z9a0b1c2d3`). Keeper workflow. 8 endpoints. 4-tab frontend + analytics. |
+| M-PettyCash — Petty Cash Fund Management | ✅ committed `f3df7f9` | `petty_cash_funds` + `petty_cash_transactions` tables (migration `z9a0b1c2d3e4`). Disburse/retire/replenish/adjust lifecycle. `balance_after` snapshot. Fund cards + ledger frontend. |
+| M-Payment — Expense Payment Queue | ✅ committed `f3df7f9` | `expense_payment_configs` + `employee_bank_accounts` + `expense_payments` (migration `a0b1c2d3e4f5`). MANUAL + PAYSTACK rails. Fernet-encrypted keys, HMAC webhook. Payment queue + config + bank account pages. |
 
 ---
 
@@ -1740,12 +1740,12 @@ Reconciled the tenant environment architecture per `docs/BRIEF_M9_0_1_test_first
 
 | Entity | Count |
 |---|---|
-| Application DB tables | ~128 (committed through `c8e465e` ~111; pending CC M1–M10 batch adds 17 more: consultant_locks, saved_reports, vendor_invoice_submissions, customer_portal_messages, asset_issuances, asset_maintenance_costs, store_issues, store_returns, petty_cash_funds, petty_cash_transactions, expense_payment_configs, employee_bank_accounts, expense_payments + 2 portal columns each on vendors/customers + 2 store columns on inventory_items — see §2.30–§2.36) |
-| Alembic migrations in repo | 88+ (committed head `t3u4v5w6x7y8`; 8 pending CC: `u4v5w6x7y8z9` → `v5w6x7y8z9a0` → `w6x7y8z9a0b1` → `x7y8z9a0b1c2` → `y8z9a0b1c2d3` → `z9a0b1c2d3e4` → `a0b1c2d3e4f5`) |
-| Backend router files | 35+ (9 new routers pending CC: consultant_locks, reporting, vendor_portal, customer_portal, asset_issuance, stores, petty_cash, payment + platform.py extended) |
-| Backend model files | 28+ (7 new model files pending CC: consultant_locks, reporting, vendor_portal, customer_portal, asset_issuance, stores, petty_cash, payment) |
-| Backend schema files | 26+ (7 new schema files pending CC) |
-| Backend service files | 17+ (3 new service files pending CC: reporting_service, paystack_service, petty_cash_service) |
+| Application DB tables | ~128 (committed through `f3df7f9` ~128 total — consultant_locks, saved_reports, vendor_invoice_submissions, customer_portal_messages, asset_issuances, asset_maintenance_costs, store_issues, store_returns, petty_cash_funds, petty_cash_transactions, expense_payment_configs, employee_bank_accounts, expense_payments + 2 portal columns each on vendors/customers + 2 store columns on inventory_items — see §2.30–§2.36) |
+| Alembic migrations in repo | 96+ (committed head `b1c2d3e4f5g6`) |
+| Backend router files | 44+ (all routers committed through `f3df7f9`) |
+| Backend model files | 35+ (all model files committed through `f3df7f9`) |
+| Backend schema files | 26+ (7 new schema files committed `f3df7f9`) |
+| Backend service files | 20+ (all service files committed through `f3df7f9`) |
 | Backend scripts | 5 (seed_m7_categories, seed_demo_tenant, cleanup_orphan_employee_usertenant, purge_test_tenant_users, cleanup_duplicate_periods) |
-| API endpoints | ~325+ (~40 new endpoints pending CC across 9 new routers — see §4.31–§4.39) |
-| Frontend pages | ~105+ (24 new pages/routes pending CC — see §5 additions) |
+| API endpoints | ~365+ (all endpoints committed through `f3df7f9`) |
+| Frontend pages | ~129+ (all pages committed through `f3df7f9`) |
