@@ -33,6 +33,8 @@ interface PromotionDiffItem {
 }
 
 interface PromotionDiff {
+  org_structure: PromotionDiffItem[];
+  approval_roles: PromotionDiffItem[];
   dimensions: PromotionDiffItem[];
   coa: PromotionDiffItem[];
   dimension_values: PromotionDiffItem[];
@@ -65,6 +67,8 @@ export interface PromotionReviewDialogProps {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SECTION_ORDER: Array<{ key: keyof Omit<PromotionDiff, "total_changes">; label: string }> = [
+  { key: "org_structure",    label: "Org Structure" },
+  { key: "approval_roles",   label: "Approval Roles" },
   { key: "dimensions",       label: "Dimensions" },
   { key: "coa",              label: "Chart of Accounts" },
   { key: "dimension_values", label: "Dimension Values" },
@@ -271,6 +275,8 @@ export default function PromotionReviewDialog({
         setDiff(d);
         // Default: accept everything
         const allIds = new Set([
+          ...d.org_structure.map((i) => i.item_id),
+          ...d.approval_roles.map((i) => i.item_id),
           ...d.dimensions.map((i) => i.item_id),
           ...d.coa.map((i) => i.item_id),
           ...d.dimension_values.map((i) => i.item_id),
@@ -308,6 +314,8 @@ export default function PromotionReviewDialog({
   const acceptAll = useCallback(() => {
     if (!diff) return;
     const allIds = new Set([
+      ...diff.org_structure.map((i) => i.item_id),
+      ...diff.approval_roles.map((i) => i.item_id),
       ...diff.dimensions.map((i) => i.item_id),
       ...diff.coa.map((i) => i.item_id),
       ...diff.dimension_values.map((i) => i.item_id),

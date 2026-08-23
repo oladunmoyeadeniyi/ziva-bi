@@ -164,6 +164,9 @@ class PromotionDiffItem(BaseModel):
 class PromotionDiff(BaseModel):
     """Full structured diff returned by POST /promotion/diff."""
 
+    # Promotion-engine v2 — org structure and roles (added with OrgStructure gap fix)
+    org_structure: list[PromotionDiffItem] = []
+    approval_roles: list[PromotionDiffItem] = []
     dimensions: list[PromotionDiffItem]
     coa: list[PromotionDiffItem]
     dimension_values: list[PromotionDiffItem]

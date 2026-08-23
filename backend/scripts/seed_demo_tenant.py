@@ -1,5 +1,5 @@
 """
-ZivaBI — Demo seed script for trial tenants.
+PRAD — Demo seed script for trial tenants.
 
 Populates a trial tenant with realistic demo data so SA consultants can
 immediately show a working system to prospects without manual setup.
@@ -9,8 +9,10 @@ What it seeds (idempotent — safe to re-run):
   - OrgStructureNodes: 4 departments / cost centres
   - ApprovalRoles: 7-level role hierarchy
   - Employees: 12 staff across all departments
-  - ChartOfAccounts: 24 accounts (P&L + BS)
+  - ChartOfAccounts: 25 accounts (P&L + BS + Staff Advances)
   - ExpenseReports: 6 reports in DRAFT / SUBMITTED / APPROVED / REJECTED
+  - EmployeeAdvances: 3 advances (PENDING / APPROVED / ISSUED)
+  - PettyCashFund: 1 fund + 5 transactions
 
 Skips any entity that already exists (matched by name/number) so it is safe
 to run repeatedly — it will only add what is missing.
@@ -143,6 +145,64 @@ DEMO_COA = [
     {"gl_number": "2003", "gl_name": "VAT Payable",              "account_type": "BS"},
     # BS — Equity
     {"gl_number": "3001", "gl_name": "Share Capital",            "account_type": "BS"},
+    # BS — Other Assets
+    {"gl_number": "1004", "gl_name": "Staff Advances Receivable", "account_type": "BS"},
+]
+
+# Employee advances — status: PENDING / APPROVED / ISSUED
+DEMO_ADVANCES = [
+    {
+        "advance_number": "ADV-2026-0001",
+        "advance_type": "TRAVEL",
+        "purpose": "Abuja trade fair — logistics & accommodation",
+        "amount": 120_000,
+        "status": "PENDING",
+        "request_date": date(2026, 8, 1),
+        "required_by_date": date(2026, 8, 10),
+        "due_retirement_date": date(2026, 9, 10),
+        "notes": "Annual trade fair attendance — Abuja",
+    },
+    {
+        "advance_number": "ADV-2026-0002",
+        "advance_type": "GENERAL",
+        "purpose": "Office equipment — standing desks procurement",
+        "amount": 350_000,
+        "status": "APPROVED",
+        "request_date": date(2026, 7, 15),
+        "required_by_date": date(2026, 7, 25),
+        "due_retirement_date": date(2026, 8, 25),
+        "notes": "3 units approved by Finance Director",
+    },
+    {
+        "advance_number": "ADV-2026-0003",
+        "advance_type": "TRAVEL",
+        "purpose": "Port Harcourt field inspection — plant audit",
+        "amount": 85_000,
+        "status": "ISSUED",
+        "request_date": date(2026, 7, 5),
+        "required_by_date": date(2026, 7, 12),
+        "due_retirement_date": date(2026, 8, 12),
+        "notes": "Quarterly plant audit visit",
+    },
+]
+
+# Petty cash — one fund with realistic transactions
+DEMO_PETTY_CASH_FUND = {
+    "name": "Main Office Petty Cash",
+    "description": "Day-to-day operational petty cash — Lagos head office",
+    "currency_code": "NGN",
+    "float_amount": 50_000,
+    "current_balance": 23_500,  # after disbursements below
+    "custodian_emp_code": "EMP-012",  # Chioma Okafor, HR
+    "gl_account_number": "1001",      # Cash & Bank
+    "expense_gl_number": "6003",      # Office Supplies (default)
+}
+DEMO_PETTY_CASH_TRANSACTIONS = [
+    {"txn_type": "REPLENISHMENT", "amount": 50_000, "description": "Initial float funding",                "ref": "PCF-001", "date": date(2026, 7, 1),  "balance_after": 50_000},
+    {"txn_type": "DISBURSEMENT",  "amount":  5_000, "description": "Printer cartridges — HP LaserJet",    "ref": "PCR-001", "date": date(2026, 7, 8),  "balance_after": 45_000},
+    {"txn_type": "DISBURSEMENT",  "amount":  8_500, "description": "Dispatch motorbike fuel",             "ref": "PCR-002", "date": date(2026, 7, 12), "balance_after": 36_500},
+    {"txn_type": "DISBURSEMENT",  "amount":  4_000, "description": "Cleaning supplies & detergents",      "ref": "PCR-003", "date": date(2026, 7, 18), "balance_after": 32_500},
+    {"txn_type": "DISBURSEMENT",  "amount":  9_000, "description": "Staff refreshments — board meeting",  "ref": "PCR-004", "date": date(2026, 7, 25), "balance_after": 23_500},
 ]
 
 # (employee_code, title, status, report_date, lines)
@@ -220,7 +280,7 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
     print("=" * 60)
 
     # ── 1. TenantOrgConfig ────────────────────────────────────────
-    print("\n[1/6] Org config...")
+    print("\n[1/8] Org config...")
     existing_cfg = await conn.fetchrow(
         "SELECT id FROM tenant_org_config WHERE tenant_id = $1", uuid.UUID(tenant_id)
     )
@@ -275,7 +335,7 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
         print(f"  {'CREATED' if apply else 'WOULD CREATE'} org config")
 
     # ── 2. Departments / cost centres ────────────────────────────
-    print("\n[2/6] Departments...")
+    print("\n[2/8] Departments...")
     dept_ids: dict[str, str] = {}  # code -> node id
     for dept in DEMO_DEPARTMENTS:
         existing = await conn.fetchrow(
@@ -300,7 +360,7 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
             print(f"  {'CREATED' if apply else 'WOULD CREATE'} dept {dept['code']} — {dept['name']}")
 
     # ── 3. Approval roles ─────────────────────────────────────────
-    print("\n[3/6] Approval roles...")
+    print("\n[3/8] Approval roles...")
     role_ids: dict[str, str] = {}  # code -> approval_role id
     for role in DEMO_ROLES:
         existing = await conn.fetchrow(
@@ -328,7 +388,7 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
             print(f"  {'CREATED' if apply else 'WOULD CREATE'} role {role['code']} — {role['name']}")
 
     # ── 4. Chart of Accounts ──────────────────────────────────────
-    print("\n[4/6] Chart of accounts...")
+    print("\n[4/8] Chart of accounts...")
     coa_ids: dict[str, str] = {}  # gl_number -> coa id
     for acct in DEMO_COA:
         existing = await conn.fetchrow(
@@ -354,7 +414,7 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
             print(f"  {'CREATED' if apply else 'WOULD CREATE'} {acct['gl_number']} {acct['gl_name']}")
 
     # ── 5. Employees ──────────────────────────────────────────────
-    print("\n[5/6] Employees...")
+    print("\n[5/8] Employees...")
     emp_ids: dict[str, str] = {}  # employee_code -> employee id
     for emp in DEMO_EMPLOYEES:
         existing = await conn.fetchrow(
@@ -388,7 +448,7 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
             print(f"  {'CREATED' if apply else 'WOULD CREATE'} {emp['employee_code']} {emp['first_name']} {emp['last_name']}")
 
     # ── 6. Expense reports ────────────────────────────────────────
-    print("\n[6/6] Expense reports...")
+    print("\n[6/8] Expense reports...")
     # Need a user_id for each employee submitter — look up via email on users table
     # Demo employees don't have user accounts, so we use a placeholder UUID for employee_id.
     # In a real trial, the SA will create user accounts; for the seed we just need the report rows.
@@ -460,6 +520,114 @@ async def seed(conn: asyncpg.Connection, tenant_id: str, apply: bool) -> None:
 
             status_tag = f"[{rpt['status']}]"
             print(f"  {'CREATED' if apply else 'WOULD CREATE'} {report_number} {status_tag} {rpt['title']} — ₦{total:,.0f}")
+
+    # ── 7. Employee advances ──────────────────────────────────────
+    print("\n[7/8] Employee advances...")
+    if not owner_user_id:
+        print("  SKIP advances — no active user found for this tenant")
+    else:
+        adv_account_id = coa_ids.get("1004")   # Staff Advances Receivable
+        cash_account_id = coa_ids.get("1001")  # Cash & Bank
+        for adv in DEMO_ADVANCES:
+            existing_adv = await conn.fetchrow(
+                "SELECT id FROM employee_advances WHERE tenant_id=$1 AND advance_number=$2",
+                uuid.UUID(tenant_id), adv["advance_number"],
+            )
+            if existing_adv:
+                print(f"  SKIP {adv['advance_number']} (exists)")
+                continue
+
+            adv_id = uid()
+            approved_at = datetime.now(timezone.utc) if adv["status"] in ("APPROVED", "ISSUED") else None
+            issued_at   = datetime.now(timezone.utc) if adv["status"] == "ISSUED" else None
+
+            if apply:
+                await conn.execute("""
+                    INSERT INTO employee_advances (
+                        id, tenant_id, employee_id, advance_number, advance_type,
+                        purpose, amount, currency, status,
+                        gl_advance_account_id, gl_cash_account_id,
+                        request_date, required_by_date, due_retirement_date,
+                        approved_at, issued_by, issued_at,
+                        total_retired, notes, created_at, updated_at
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'NGN',$8,$9,$10,$11,$12,$13,$14,$15,$16,0,$17,$18,$18)
+                """,
+                    uuid.UUID(adv_id), uuid.UUID(tenant_id), uuid.UUID(owner_user_id),
+                    adv["advance_number"], adv["advance_type"],
+                    adv["purpose"], adv["amount"], adv["status"],
+                    uuid.UUID(adv_account_id) if adv_account_id else None,
+                    uuid.UUID(cash_account_id) if cash_account_id else None,
+                    adv["request_date"], adv.get("required_by_date"),
+                    adv.get("due_retirement_date"),
+                    approved_at,
+                    uuid.UUID(owner_user_id) if issued_at else None,
+                    issued_at,
+                    adv.get("notes"),
+                    datetime.now(timezone.utc),
+                )
+            tag = f"[{adv['status']}]"
+            print(f"  {'CREATED' if apply else 'WOULD CREATE'} {adv['advance_number']} {tag} ₦{adv['amount']:,.0f} — {adv['purpose'][:40]}")
+
+    # ── 8. Petty cash fund & transactions ────────────────────────
+    print("\n[8/8] Petty cash...")
+    pcf = DEMO_PETTY_CASH_FUND
+    existing_fund = await conn.fetchrow(
+        "SELECT id FROM petty_cash_funds WHERE tenant_id=$1 AND name=$2",
+        uuid.UUID(tenant_id), pcf["name"],
+    )
+    if existing_fund:
+        fund_id = str(existing_fund["id"])
+        print(f"  SKIP fund '{pcf['name']}' (exists)")
+    else:
+        fund_id = uid()
+        custodian_id = emp_ids.get(pcf["custodian_emp_code"])
+        pc_gl_id = coa_ids.get(pcf["gl_account_number"])
+        pc_exp_gl_id = coa_ids.get(pcf["expense_gl_number"])
+        if apply:
+            await conn.execute("""
+                INSERT INTO petty_cash_funds (
+                    id, tenant_id, name, description,
+                    custodian_id, gl_account_id, expense_gl_account_id,
+                    currency_code, float_amount, current_balance, is_active,
+                    created_by, created_at, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,$11,$12,$12)
+            """,
+                uuid.UUID(fund_id), uuid.UUID(tenant_id),
+                pcf["name"], pcf["description"],
+                uuid.UUID(custodian_id) if custodian_id else None,
+                uuid.UUID(pc_gl_id)     if pc_gl_id     else None,
+                uuid.UUID(pc_exp_gl_id) if pc_exp_gl_id else None,
+                pcf["currency_code"], pcf["float_amount"], pcf["current_balance"],
+                uuid.UUID(owner_user_id) if owner_user_id else None,
+                datetime.now(timezone.utc),
+            )
+        print(f"  {'CREATED' if apply else 'WOULD CREATE'} fund '{pcf['name']}' — float ₦{pcf['float_amount']:,.0f}")
+
+        # Seed transactions for this fund
+        for txn in DEMO_PETTY_CASH_TRANSACTIONS:
+            existing_txn = await conn.fetchrow(
+                "SELECT id FROM petty_cash_transactions WHERE fund_id=$1 AND reference=$2",
+                uuid.UUID(fund_id), txn["ref"],
+            ) if apply else None
+            if existing_txn:
+                continue
+            if apply:
+                await conn.execute("""
+                    INSERT INTO petty_cash_transactions (
+                        id, tenant_id, fund_id, transaction_type,
+                        amount, description, reference,
+                        transaction_date, balance_after,
+                        recorded_by, created_at
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                """,
+                    uuid.UUID(uid()), uuid.UUID(tenant_id), uuid.UUID(fund_id),
+                    txn["txn_type"], txn["amount"], txn["description"], txn["ref"],
+                    txn["date"], txn["balance_after"],
+                    uuid.UUID(owner_user_id) if owner_user_id else None,
+                    datetime.now(timezone.utc),
+                )
+            sign = "↑" if txn["txn_type"] == "REPLENISHMENT" else "↓"
+            print(f"    {'CREATED' if apply else 'WOULD CREATE'} {sign} {txn['ref']} ₦{txn['amount']:,.0f} — {txn['description']}")
 
     print("\n" + "=" * 60)
     print(f"{'Seed complete.' if apply else 'Dry run complete — re-run with --apply to write.'}\n")

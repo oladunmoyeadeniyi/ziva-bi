@@ -105,7 +105,7 @@ ziva-bi/
 │   │       ├── gl_posting.py     — core GL journal validator + post_journal (flush-only; caller commits)
 │   │       ├── gl_reporting.py   — trial_balance() + account_ledger() query builders
 │   │       ├── periods.py        — period state machine helpers: is_date_postable, grace computation
-│   │       ├── promotion_engine.py — Phase 3a: diff + apply config promotion from test → live
+│   │       ├── promotion_engine.py — Phase 3b: diff + apply config promotion from test → live; 7 entity types (OrgStructureNode, ApprovalRole, TenantDimension, ChartOfAccount, DimensionValue, GLDimensionRequirement, TenantAccountMapping); 2-pass pattern for self-referential parent FKs
 │   │       ├── account_determination.py — resolve_account(): posting role_key → GL account ID
 │   │       ├── email.py          — async Resend email service (httpx → REST API); helpers: send_invitation/password_reset/live_promotion/onboarding_invite/approval_notification; suppress flag for test tenants
 │   │       ├── ar_posting.py     — post_ar_approval() (Full ERP DR AR/CR revenue), post_ar_receipt() (DR bank/CR AR), create_ar_posting_batch() (Connected)
@@ -119,9 +119,18 @@ ziva-bi/
 │   │       ├── consolidation_service.py — group CRUD, auto-match, elimination journal posting, consolidated TB (IxE, committed `c8e465e`)
 │   │       ├── fx_service.py     — currency CRUD, rate upsert/lookup (inverse fallback), revaluation rules, BDC entries, JSONB import helper (FX + FX-b, committed `c8e465e` + pending `t3u4v5w6x7y8`)
 │   │       └── cache_service.py  — Redis-backed key-value cache; graceful no-op when REDIS_URL empty (Perf, committed `c8e465e`)
+│   ├── tests/                    — pytest suite (added 2026-08-15)
+│   │   ├── conftest.py           — fixtures: app, async_client, admin_tokens/headers; `integration` mark skips when TEST_DATABASE_URL unset
+│   │   ├── test_auth.py          — login success/fail/missing-fields, token rejection, logout (integration)
+│   │   ├── test_expenses.py      — DRAFT create, line add, submit, list, cross-tenant isolation (integration)
+│   │   ├── test_gl_posting.py    — DR=CR invariant (unit); posted-journals DB check, manual journal create (integration)
+│   │   ├── test_advances.py      — create+list, approve, full lifecycle, not-found (integration)
+│   │   └── test_promotion_engine.py — _v(), _fields_dict(), _IdMap, field lists, item ID prefixes (unit, no DB)
+│   │       Run: cd backend && python -m pytest tests/ -v
+│   │       Without TEST_DATABASE_URL: 18 unit pass, integration tests skip gracefully
 │   ├── scripts/
 │   │   ├── seed_m7_categories.py — one-off seed script for M7 expense categories
-│   │   ├── seed_demo_tenant.py   — idempotent demo seeder for trial tenants (--list-trials, --tenant-slug, --apply)
+│   │   ├── seed_demo_tenant.py   — idempotent demo seeder for trial tenants (--list-trials, --tenant-slug, --apply); seeds org, roles, CoA, employees, reports, advances (3), petty cash fund + 5 txns
 │   │   ├── cleanup_orphan_employee_usertenant.py — one-time: deactivate UserTenants for employees already deactivated before cascade was wired
 │   │   └── purge_test_tenant_users.py — hard-delete deactivated test-tenant user accounts
 ├── apps/ziva-bi/src/
@@ -1721,7 +1730,7 @@ Reconciled the tenant environment architecture per `docs/BRIEF_M9_0_1_test_first
 
 1. **Residual schema drift (73 lines remaining — cosmetic only, dangerous items resolved)**: Fully investigated 2026-07-21. Critical DROP TABLE risk on `tenant_invitations` is fixed (added missing `app.models.tenant_management` import). 5 partial indexes excluded from autogenerate via `include_object()` hook in `alembic/env.py`. Migration `t2u3v4w5x6y7` drops stale `gl_account_suggestion` column. Remaining 73 `alembic check` lines are comment-only diffs, index-naming-convention mismatches, and known type widenings on `impersonation_sessions` — none are data-loss or DROP risks. Tracked as non-urgent follow-up after P1 deployment.
 
-2. **Promotion engine may not promote org_structure changes**: `promotion_engine.py` handles 5 entity types (TenantDimension, ChartOfAccount, DimensionValue, GLDimensionRequirement, TenantAccountMapping). If org_structure nodes differ between test and live, the promotion diff/apply will silently miss them. Needs full read of `promotion_engine.py` to confirm.
+2. **Promotion engine org_structure + ApprovalRole gap — FIXED (2026-08-15)**: Confirmed gap: engine previously handled only 5 entity types. Added `_diff_org_structure`/`_apply_org_structure` (natural key: `code`) and `_diff_approval_roles`/`_apply_approval_roles` (composite key: `(name, area, sub_area)` — same role name may exist in multiple areas per arch decision) with correct dependency order (org promoted before roles). 2-pass pattern handles self-referential parent FKs. Engine now covers 7 entity types. No further action needed.
 
 3. **GET /reports visibility under zero-roles**: The role-based filter at `expenses.py` checks finance roles for non-admin users. If a user has no roles assigned, the query might default to showing only their own reports (correct) or all reports (wrong). Low-confidence; trace the query under zero-roles condition to confirm.
 

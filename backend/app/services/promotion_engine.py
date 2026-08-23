@@ -1,7 +1,9 @@
 """
-PRAD — CoA / Dimensions promotion engine (Phase 3a).
+PRAD — CoA / Dimensions / Org promotion engine (Phase 3b).
 
 Implements repeatable test→live promotion for:
+    OrgStructureNode         (natural key: code)
+    ApprovalRole             (natural key: name + area + sub_area — composite, per arch decision)
     TenantDimension          (natural key: dimension.code)
     ChartOfAccount           (natural key: gl_number)
     DimensionValue           (natural key: dimension.code + value.code)
@@ -16,11 +18,13 @@ Two-step flow:
                               then returns a PromotionApplyResult.
 
 Dependency order (enforced in both steps):
-    1. TenantDimension         (no upstream deps)
-    2. ChartOfAccount          (no upstream deps)
-    3. DimensionValue          (needs dim id-map; two-pass for cascade_value_id)
-    4. GLDimensionRequirement  (needs dim + coa id-maps)
-    5. TenantAccountMapping    (needs coa id-map)
+    0. OrgStructureNode        (no upstream deps; 2-pass for parent_id)
+    1. ApprovalRole            (depends on org id-map; 2-pass for parent_role_id)
+    2. TenantDimension         (no upstream deps)
+    3. ChartOfAccount          (no upstream deps)
+    4. DimensionValue          (needs dim id-map; two-pass for cascade_value_id)
+    5. GLDimensionRequirement  (needs dim + coa id-maps)
+    6. TenantAccountMapping    (needs coa id-map)
 
 All-or-nothing: runs inside the caller's DB transaction (the router's get_db
 dependency commits on success, rolls back on any exception).
@@ -38,12 +42,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account_mapping import TenantAccountMapping
+from app.models.approvals import ApprovalRole
 from app.models.master_data import (
     ChartOfAccount,
     DimensionValue,
     GLDimensionRequirement,
     TenantDimension,
 )
+from app.models.setup import OrgStructureNode
 from app.schemas.platform import (
     PromotionApplyRequest,
     PromotionApplyResult,
@@ -67,6 +73,8 @@ class _IdMap:
     as rows are created, making the map usable for downstream entities in the
     same apply call.
     """
+    org:    dict[UUID, Optional[UUID]] = field(default_factory=dict)   # OrgStructureNode
+    role:   dict[UUID, Optional[UUID]] = field(default_factory=dict)   # ApprovalRole
     dim:    dict[UUID, Optional[UUID]] = field(default_factory=dict)
     coa:    dict[UUID, Optional[UUID]] = field(default_factory=dict)
     dimval: dict[UUID, Optional[UUID]] = field(default_factory=dict)
@@ -93,6 +101,16 @@ _DIMVAL_FIELDS = [
 ]
 
 _REQ_FIELDS = ["requirement"]
+
+_ORG_FIELDS = [
+    "name", "node_type", "cost_center_code", "entity_code", "is_active", "sort_order",
+]
+
+_ROLE_FIELDS = [
+    "name", "description", "display_order", "is_active", "designation",
+    "area", "sub_area", "employment_type", "permission_tier", "code", "grade",
+    "max_occupants",
+]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -482,6 +500,220 @@ async def _diff_account_mappings(
     return items
 
 
+async def _diff_org_structure(
+    db: AsyncSession,
+    test_id: UUID,
+    live_id: UUID,
+    id_map: _IdMap,
+) -> list[PromotionDiffItem]:
+    """
+    Compute diff for OrgStructureNode rows.
+
+    Natural key: code (DB-unique per tenant via uq_org_structure_tenant_code).
+    parent_id represented as parent_code for human-readable display.
+    Self-referential parent is resolved by code lookup in the same tenant.
+    """
+    test_rows_all = (await db.execute(
+        select(OrgStructureNode).where(OrgStructureNode.tenant_id == test_id)
+    )).scalars().all()
+    test_rows = [r for r in test_rows_all if r.is_active]
+    test_by_id: dict[UUID, OrgStructureNode] = {r.id: r for r in test_rows_all}
+    test_active_codes = {r.code for r in test_rows}
+
+    live_rows = (await db.execute(
+        select(OrgStructureNode).where(OrgStructureNode.tenant_id == live_id)
+    )).scalars().all()
+    live_by_code: dict[str, OrgStructureNode] = {r.code: r for r in live_rows}
+    live_by_id: dict[UUID, OrgStructureNode] = {r.id: r for r in live_rows}
+
+    def _parent_code(node: OrgStructureNode, by_id: dict[UUID, OrgStructureNode]) -> Optional[str]:
+        if node.parent_id is None:
+            return None
+        parent = by_id.get(node.parent_id)
+        return parent.code if parent else None
+
+    items: list[PromotionDiffItem] = []
+
+    for t in test_rows:
+        item_id = f"org:{t.code}"
+        live = live_by_code.get(t.code)
+        t_parent_code = _parent_code(t, test_by_id)
+
+        if live is None:
+            id_map.org[t.id] = None
+            after = _fields_dict(t, _ORG_FIELDS)
+            after["parent_code"] = t_parent_code
+            items.append(PromotionDiffItem(
+                item_id=item_id, entity="org_structure", action="create",
+                natural_key=t.code, label=f"{t.code} — {t.name}",
+                before={}, after=after, changed_fields=[],
+            ))
+        else:
+            id_map.org[t.id] = live.id
+            l_parent_code = _parent_code(live, live_by_id)
+            differs, changed = _fields_differ(t, live, _ORG_FIELDS)
+            if t_parent_code != l_parent_code:
+                differs = True
+                changed = changed + ["parent_code"]
+            if differs:
+                before = _fields_dict(live, _ORG_FIELDS)
+                before["parent_code"] = l_parent_code
+                after = _fields_dict(t, _ORG_FIELDS)
+                after["parent_code"] = t_parent_code
+                items.append(PromotionDiffItem(
+                    item_id=item_id, entity="org_structure", action="update",
+                    natural_key=t.code, label=f"{t.code} — {t.name}",
+                    before=before, after=after, changed_fields=changed,
+                ))
+
+    # DEACTIVATE: live active nodes whose code no longer exists as active in test
+    for live in live_rows:
+        if live.is_active and live.code not in test_active_codes:
+            items.append(PromotionDiffItem(
+                item_id=f"org:{live.code}", entity="org_structure", action="deactivate",
+                natural_key=live.code, label=f"{live.code} — {live.name}",
+                before=_fields_dict(live, _ORG_FIELDS), after={}, changed_fields=[],
+            ))
+
+    return items
+
+
+def _role_ckey(role: "ApprovalRole") -> tuple[str, Optional[str], Optional[str]]:
+    """Composite natural key for ApprovalRole: (name, area, sub_area).
+
+    Per arch decision (MASTER_CONTEXT Role Hierarchy Enhancements): the same role
+    name (e.g. 'Finance Reviewer') may exist in multiple areas — uniqueness is
+    enforced across (name, area, sub_area), NOT name alone.
+    """
+    return (role.name, role.area, role.sub_area)
+
+
+def _role_item_id(role: "ApprovalRole") -> str:
+    """Stable string encoding of the composite key for use as PromotionDiffItem.item_id."""
+    area    = role.area    or ""
+    sub     = role.sub_area or ""
+    return f"role:{role.name}::{area}::{sub}"
+
+
+async def _diff_approval_roles(
+    db: AsyncSession,
+    test_id: UUID,
+    live_id: UUID,
+    id_map: _IdMap,
+) -> list[PromotionDiffItem]:
+    """
+    Compute diff for ApprovalRole rows.
+
+    Natural key: (name, area, sub_area) — composite, per arch decision.
+    The same role name may exist in multiple areas; name alone is NOT unique.
+    parent_role_id represented as parent composite key string; cost_center_id and
+    entity_node_id represented as org node codes for human-readable display.
+
+    Requires id_map.org to be populated (org structure processed first).
+    """
+    test_rows_all = (await db.execute(
+        select(ApprovalRole).where(ApprovalRole.tenant_id == test_id)
+    )).scalars().all()
+    test_rows = [r for r in test_rows_all if r.is_active]
+    test_by_id: dict[UUID, ApprovalRole] = {r.id: r for r in test_rows_all}
+    test_active_ckeys = {_role_ckey(r) for r in test_rows}
+
+    live_rows = (await db.execute(
+        select(ApprovalRole).where(ApprovalRole.tenant_id == live_id)
+    )).scalars().all()
+    live_by_ckey: dict[tuple, ApprovalRole] = {_role_ckey(r): r for r in live_rows}
+    live_by_id: dict[UUID, ApprovalRole] = {r.id: r for r in live_rows}
+
+    # Load org nodes for FK label resolution
+    test_org_by_id: dict[UUID, OrgStructureNode] = {
+        n.id: n for n in (await db.execute(
+            select(OrgStructureNode).where(OrgStructureNode.tenant_id == test_id)
+        )).scalars().all()
+    }
+    live_org_by_id: dict[UUID, OrgStructureNode] = {
+        n.id: n for n in (await db.execute(
+            select(OrgStructureNode).where(OrgStructureNode.tenant_id == live_id)
+        )).scalars().all()
+    }
+
+    def _parent_ckey_str(role: ApprovalRole, by_id: dict[UUID, ApprovalRole]) -> Optional[str]:
+        if role.parent_role_id is None:
+            return None
+        parent = by_id.get(role.parent_role_id)
+        return _role_item_id(parent) if parent else None
+
+    def _org_code(fk_id: Optional[UUID], org_by_id: dict[UUID, OrgStructureNode]) -> Optional[str]:
+        if fk_id is None:
+            return None
+        node = org_by_id.get(fk_id)
+        return node.code if node else None
+
+    items: list[PromotionDiffItem] = []
+
+    for t in test_rows:
+        ckey    = _role_ckey(t)
+        item_id = _role_item_id(t)
+        label   = f"{t.name} ({t.area or '—'}/{t.sub_area or '—'})"
+        live    = live_by_ckey.get(ckey)
+        t_parent = _parent_ckey_str(t, test_by_id)
+        t_cc = _org_code(t.cost_center_id, test_org_by_id)
+        t_en = _org_code(t.entity_node_id, test_org_by_id)
+
+        if live is None:
+            id_map.role[t.id] = None
+            after = _fields_dict(t, _ROLE_FIELDS)
+            after["parent_role"] = t_parent
+            after["cost_center_code"] = t_cc
+            after["entity_node_code"] = t_en
+            items.append(PromotionDiffItem(
+                item_id=item_id, entity="approval_role", action="create",
+                natural_key=item_id, label=label,
+                before={}, after=after, changed_fields=[],
+            ))
+        else:
+            id_map.role[t.id] = live.id
+            l_parent = _parent_ckey_str(live, live_by_id)
+            l_cc = _org_code(live.cost_center_id, live_org_by_id)
+            l_en = _org_code(live.entity_node_id, live_org_by_id)
+            differs, changed = _fields_differ(t, live, _ROLE_FIELDS)
+            if t_parent != l_parent:
+                differs = True
+                changed = changed + ["parent_role"]
+            if t_cc != l_cc:
+                differs = True
+                changed = changed + ["cost_center_code"]
+            if t_en != l_en:
+                differs = True
+                changed = changed + ["entity_node_code"]
+            if differs:
+                before = _fields_dict(live, _ROLE_FIELDS)
+                before["parent_role"] = l_parent
+                before["cost_center_code"] = l_cc
+                before["entity_node_code"] = l_en
+                after = _fields_dict(t, _ROLE_FIELDS)
+                after["parent_role"] = t_parent
+                after["cost_center_code"] = t_cc
+                after["entity_node_code"] = t_en
+                items.append(PromotionDiffItem(
+                    item_id=item_id, entity="approval_role", action="update",
+                    natural_key=item_id, label=label,
+                    before=before, after=after, changed_fields=changed,
+                ))
+
+    # DEACTIVATE — live roles whose composite key no longer exists in test active set
+    for live in live_rows:
+        if live.is_active and _role_ckey(live) not in test_active_ckeys:
+            item_id = _role_item_id(live)
+            label   = f"{live.name} ({live.area or '—'}/{live.sub_area or '—'})"
+            items.append(PromotionDiffItem(
+                item_id=item_id, entity="approval_role", action="deactivate",
+                natural_key=item_id, label=label,
+                before=_fields_dict(live, _ROLE_FIELDS), after={}, changed_fields=[],
+            ))
+
+    return items
+
+
 # ── Public: compute diff (read-only) ──────────────────────────────────────────
 
 async def compute_promotion_diff(
@@ -500,15 +732,18 @@ async def compute_promotion_diff(
     """
     id_map = _IdMap()
 
+    org    = await _diff_org_structure(db, test_tenant_id, live_tenant_id, id_map)
+    roles  = await _diff_approval_roles(db, test_tenant_id, live_tenant_id, id_map)
     dims   = await _diff_dimensions(db, test_tenant_id, live_tenant_id, id_map)
     coa    = await _diff_coa(db, test_tenant_id, live_tenant_id, id_map)
     dvals  = await _diff_dimension_values(db, test_tenant_id, live_tenant_id, id_map)
     reqs   = await _diff_gl_requirements(db, test_tenant_id, live_tenant_id, id_map)
     maps   = await _diff_account_mappings(db, test_tenant_id, live_tenant_id, id_map)
 
-    total = sum(len(x) for x in [dims, coa, dvals, reqs, maps])
+    total = sum(len(x) for x in [org, roles, dims, coa, dvals, reqs, maps])
     return (
         PromotionDiff(
+            org_structure=org, approval_roles=roles,
             dimensions=dims, coa=coa, dimension_values=dvals,
             gl_requirements=reqs, account_mappings=maps,
             total_changes=total,
@@ -883,6 +1118,203 @@ async def _apply_account_mappings(
             counts["account_mapping"]["updated"] += 1
 
 
+async def _apply_org_structure(
+    db: AsyncSession,
+    test_id: UUID,
+    live_id: UUID,
+    accepted: set[str],
+    id_map: _IdMap,
+    counts: dict,
+) -> None:
+    """
+    Apply accepted OrgStructureNode changes.
+
+    Two-pass:
+      Pass 1 — insert/update all accepted rows with parent_id=None.
+      Pass 2 — back-fill parent_id once all nodes exist and id_map.org is complete.
+    """
+    test_rows = (await db.execute(
+        select(OrgStructureNode).where(OrgStructureNode.tenant_id == test_id)
+    )).scalars().all()
+    test_by_id: dict[UUID, OrgStructureNode] = {r.id: r for r in test_rows}
+
+    live_rows = (await db.execute(
+        select(OrgStructureNode).where(OrgStructureNode.tenant_id == live_id)
+    )).scalars().all()
+    live_by_code: dict[str, OrgStructureNode] = {r.code: r for r in live_rows}
+    test_active_codes = {r.code for r in test_rows if r.is_active}
+
+    # code→live_id — seeded from existing live rows; updated as new rows are created
+    live_code_to_id: dict[str, UUID] = {r.code: r.id for r in live_rows}
+
+    # (live_row, test_parent_id) collected during pass 1 for pass 2 resolution
+    nodes_needing_parent: list[tuple[OrgStructureNode, UUID]] = []
+
+    # ── Pass 1: insert/update without parent_id ───────────────────────────────
+    for t in test_rows:
+        if not t.is_active:
+            continue
+        item_id = f"org:{t.code}"
+        live = live_by_code.get(t.code)
+
+        if item_id not in accepted:
+            # Not accepted — register existing mapping in id_map so downstream can use it
+            if live:
+                id_map.org[t.id] = live.id
+                live_code_to_id[t.code] = live.id
+            continue
+
+        if live is None:
+            new_row = OrgStructureNode(tenant_id=live_id, code=t.code, parent_id=None)
+            for f in _ORG_FIELDS:
+                setattr(new_row, f, getattr(t, f))
+            db.add(new_row)
+            await db.flush()
+            id_map.org[t.id] = new_row.id
+            live_code_to_id[t.code] = new_row.id
+            if t.parent_id:
+                nodes_needing_parent.append((new_row, t.parent_id))
+            counts["org_structure"]["created"] += 1
+        else:
+            id_map.org[t.id] = live.id
+            live_code_to_id[t.code] = live.id
+            for f in _ORG_FIELDS:
+                setattr(live, f, getattr(t, f))
+            if t.parent_id:
+                nodes_needing_parent.append((live, t.parent_id))
+            else:
+                live.parent_id = None
+            counts["org_structure"]["updated"] += 1
+
+    # Deactivations
+    for live in live_rows:
+        if not live.is_active:
+            continue
+        item_id = f"org:{live.code}"
+        if item_id in accepted and live.code not in test_active_codes:
+            live.is_active = False
+            counts["org_structure"]["deactivated"] += 1
+
+    # Register non-accepted existing nodes in id_map (needed by ApprovalRole)
+    for t in test_rows:
+        if t.id not in id_map.org:
+            live = live_by_code.get(t.code)
+            if live:
+                id_map.org[t.id] = live.id
+
+    # ── Pass 2: back-fill parent_id ───────────────────────────────────────────
+    for live_row, test_parent_id in nodes_needing_parent:
+        test_parent = test_by_id.get(test_parent_id)
+        if test_parent:
+            live_parent_id = live_code_to_id.get(test_parent.code)
+            if live_parent_id:
+                live_row.parent_id = live_parent_id
+
+
+async def _apply_approval_roles(
+    db: AsyncSession,
+    test_id: UUID,
+    live_id: UUID,
+    accepted: set[str],
+    id_map: _IdMap,
+    counts: dict,
+) -> None:
+    """
+    Apply accepted ApprovalRole changes.
+
+    Natural key: (name, area, sub_area) — composite per arch decision.
+    item_id encoding: _role_item_id(role) == "role:{name}::{area}::{sub_area}".
+
+    Two-pass:
+      Pass 1 — insert/update without parent_role_id; remap cost_center_id and
+               entity_node_id via id_map.org (org structure must be applied first).
+      Pass 2 — back-fill parent_role_id using composite_key→live_id map.
+    """
+    test_rows_all = (await db.execute(
+        select(ApprovalRole).where(ApprovalRole.tenant_id == test_id)
+    )).scalars().all()
+    test_rows = [r for r in test_rows_all if r.is_active]
+    test_by_id: dict[UUID, ApprovalRole] = {r.id: r for r in test_rows_all}
+
+    live_rows = (await db.execute(
+        select(ApprovalRole).where(ApprovalRole.tenant_id == live_id)
+    )).scalars().all()
+    live_by_ckey: dict[tuple, ApprovalRole] = {_role_ckey(r): r for r in live_rows}
+    test_active_ckeys = {_role_ckey(r) for r in test_rows}
+
+    # composite_key→live_id — seeded from existing live rows; updated as new rows are created
+    live_ckey_to_id: dict[tuple, UUID] = {_role_ckey(r): r.id for r in live_rows}
+
+    # (live_row, test_parent_role_id) for pass 2
+    roles_needing_parent: list[tuple[ApprovalRole, UUID]] = []
+
+    # ── Pass 1 ─────────────────────────────────────────────────────────────────
+    for t in test_rows:
+        ckey    = _role_ckey(t)
+        item_id = _role_item_id(t)
+        live    = live_by_ckey.get(ckey)
+
+        if item_id not in accepted:
+            if live:
+                id_map.role[t.id] = live.id
+                live_ckey_to_id[ckey] = live.id
+            continue
+
+        # Remap org-structure FKs via id_map.org (populated by _apply_org_structure)
+        live_cc_id = id_map.org.get(t.cost_center_id) if t.cost_center_id else None
+        live_en_id = id_map.org.get(t.entity_node_id) if t.entity_node_id else None
+
+        if live is None:
+            new_row = ApprovalRole(tenant_id=live_id, name=t.name, parent_role_id=None)
+            for f in _ROLE_FIELDS:
+                setattr(new_row, f, getattr(t, f))
+            new_row.cost_center_id = live_cc_id
+            new_row.entity_node_id = live_en_id
+            db.add(new_row)
+            await db.flush()
+            id_map.role[t.id] = new_row.id
+            live_ckey_to_id[ckey] = new_row.id
+            if t.parent_role_id:
+                roles_needing_parent.append((new_row, t.parent_role_id))
+            counts["approval_role"]["created"] += 1
+        else:
+            id_map.role[t.id] = live.id
+            live_ckey_to_id[ckey] = live.id
+            for f in _ROLE_FIELDS:
+                setattr(live, f, getattr(t, f))
+            live.cost_center_id = live_cc_id
+            live.entity_node_id = live_en_id
+            if t.parent_role_id:
+                roles_needing_parent.append((live, t.parent_role_id))
+            else:
+                live.parent_role_id = None
+            counts["approval_role"]["updated"] += 1
+
+    # Deactivations — live roles whose composite key is no longer active in test
+    for live in live_rows:
+        if not live.is_active:
+            continue
+        item_id = _role_item_id(live)
+        if item_id in accepted and _role_ckey(live) not in test_active_ckeys:
+            live.is_active = False
+            counts["approval_role"]["deactivated"] += 1
+
+    # Register non-accepted existing roles in id_map (needed by downstream FK remapping)
+    for t in test_rows_all:
+        if t.id not in id_map.role:
+            live = live_by_ckey.get(_role_ckey(t))
+            if live:
+                id_map.role[t.id] = live.id
+
+    # ── Pass 2: back-fill parent_role_id ──────────────────────────────────────
+    for live_row, test_parent_id in roles_needing_parent:
+        test_parent = test_by_id.get(test_parent_id)
+        if test_parent:
+            live_parent_id = live_ckey_to_id.get(_role_ckey(test_parent))
+            if live_parent_id:
+                live_row.parent_role_id = live_parent_id
+
+
 # ── Public: apply promotion (writes) ─────────────────────────────────────────
 
 async def apply_promotion(
@@ -911,19 +1343,25 @@ async def apply_promotion(
     from collections import defaultdict
     counts: dict = defaultdict(lambda: defaultdict(int))
 
-    # 1. Dimensions
+    # 0. Org structure (no upstream deps; 2-pass for parent_id)
+    await _apply_org_structure(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
+
+    # 1. Approval roles (depends on org id_map; 2-pass for parent_role_id)
+    await _apply_approval_roles(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
+
+    # 2. Dimensions
     await _apply_dimensions(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
 
-    # 2. CoA
+    # 3. CoA
     await _apply_coa(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
 
-    # 3. DimensionValues (2-pass inside helper)
+    # 4. DimensionValues (2-pass inside helper)
     await _apply_dimension_values(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
 
-    # 4. GL Dimension Requirements
+    # 5. GL Dimension Requirements
     await _apply_gl_requirements(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
 
-    # 5. Account Mappings
+    # 6. Account Mappings
     await _apply_account_mappings(db, test_tenant_id, live_tenant_id, accepted, id_map, counts)
 
     await db.flush()
