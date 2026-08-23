@@ -163,9 +163,9 @@ ruff check app/
 
 ## Milestone Status
 
-> **Authoritative as of 2026-07-31.** Reconciled against live codebase and git log (280+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
+> **Authoritative as of 2026-08-23.** Reconciled against live codebase and git log (290+ commits). Full narrative detail: `docs/MASTER_CONTEXT.md` §5. Update this table AND §5 of MASTER_CONTEXT.md every time a milestone ships.
 >
-> **Overall completion: 100% of full product vision + post-launch ops modules + Employee Advance module. All modules shipped. M-Advance (employee advance request → approve → issue → retire + PWA rename to PRAD Expense) pending CC. Last updated: 2026-08-05.**
+> **Overall completion: 100% of full product vision. All modules shipped and committed. Last commit: `ccdb925` (2026-08-23) — promotion engine Phase 3b + pytest suite + demo seed improvements. Last updated: 2026-08-23.**
 
 ### ✅ COMPLETED (ordered chronologically)
 
@@ -252,17 +252,18 @@ ruff check app/
 | — | App-config cache fix: root layout `fetchAppName()` switched from `revalidate:300` to `cache:"no-store"` — eliminates PRAD/Ziva BI name flicker between page refreshes | post-`c8e465e` |
 | FX-b | Currencies & FX — Revaluation Rules tab + BDC Register tab; migration `t3u4v5w6x7y8`; models/schemas/router additions; two new frontend tabs | committed |
 | Website | `/product` and `/about` pages — full content replacing "coming soon" stubs | committed |
-| M-RT | Consultant Locking — SA can lock/unlock 14 setup sections per tenant; `consultant_locks` table (migration `u4v5w6x7y8z9`); ConsultantLocksContext + SectionLockWrapper; lock icons on all setup NavLinks | pending CC |
-| M-Reporting | Analytics & Saved Reports — KPI dashboard + 8 built-in report runners; `saved_reports` table (migration `v5w6x7y8z9a0`); /api/reporting/* endpoints; 2 frontend pages | pending CC |
-| M-VendorPortal | Vendor Self-Service Portal — portal_enabled + portal_token on vendors; `vendor_invoice_submissions` table; URL-token → JWT auth; admin page + public /portal/vendor/[token] (migration `w6x7y8z9a0b1`) | pending CC |
-| M-CustomerPortal | Customer Self-Service Portal — portal_enabled + portal_token on customers; `customer_portal_messages` table; admin page + public /portal/customer/[token] | pending CC |
-| M-AssetIssuance | Asset Issuance & Tracking — `asset_issuances` + `asset_maintenance_costs` tables (migration `x7y8z9a0b1c2`); full CRUD API; issuances list + new-issuance form + maintenance costs page; sidebar links | pending CC |
-| M-SA | SA Portal Gaps — audit log viewer (GET /api/platform/audit), SA team management + invite (GET/POST /api/platform/team), cross-tenant support inbox (GET /api/platform/support); 3 stub pages replaced | pending CC |
-| M-UX | Global UI Polish — ToastContext (success/error/info/warning, auto-dismiss); NavigationProgress bar; user avatar initials in AppHeader; ConfirmDialog replaces all window.confirm() (4 pages); EmptyState shared component; ClientProviders wired | pending CC |
-| M-Stores | Store Issue Tracking — is_store_item/min_stock/reorder_qty on inventory_items; store_issues + store_returns tables (migration `y8z9a0b1c2d3`); keeper-managed workflow; 8 API endpoints; 4-tab frontend with analytics + reorder alerts | pending CC |
-| M-PettyCash | Petty Cash Fund Management — petty_cash_funds + petty_cash_transactions tables (migration `z9a0b1c2d3e4`); disburse/retire/replenish/adjust endpoints; balance_after snapshot per txn; fund cards + ledger frontend | pending CC |
-| M-Payment | Expense Payment Queue — expense_payment_configs + employee_bank_accounts + expense_payments (migration `a0b1c2d3e4f5`); MANUAL + PAYSTACK rails; PaystackService (Fernet-encrypted keys, HMAC webhook, brand-hidden errors); payment queue + config + bank account pages | pending CC |
-| M-Advance | Employee Advance & Retirement — employee_advances + advance_retirements + advance_retirement_lines (migration `b1c2d3e4f5g6`); request → approve → issue → retire workflow; GL posting all 3 modes; aging report; 6 frontend pages; PWA renamed to PRAD Expense | pending CC |
+| M-RT | Consultant Locking — SA can lock/unlock 14 setup sections per tenant; `consultant_locks` table (migration `u4v5w6x7y8z9`); ConsultantLocksContext + SectionLockWrapper; lock icons on all setup NavLinks | `f3df7f9` |
+| M-Reporting | Analytics & Saved Reports — KPI dashboard + 8 built-in report runners; `saved_reports` table (migration `v5w6x7y8z9a0`); /api/reporting/* endpoints; 2 frontend pages | `f3df7f9` |
+| M-VendorPortal | Vendor Self-Service Portal — portal_enabled + portal_token on vendors; `vendor_invoice_submissions` table; URL-token → JWT auth; admin page + public /portal/vendor/[token] (migration `w6x7y8z9a0b1`) | `f3df7f9` |
+| M-CustomerPortal | Customer Self-Service Portal — portal_enabled + portal_token on customers; `customer_portal_messages` table; admin page + public /portal/customer/[token] | `f3df7f9` |
+| M-AssetIssuance | Asset Issuance & Tracking — `asset_issuances` + `asset_maintenance_costs` tables (migration `x7y8z9a0b1c2`); full CRUD API; issuances list + new-issuance form + maintenance costs page; sidebar links | `f3df7f9` |
+| M-SA | SA Portal Gaps — audit log viewer (GET /api/platform/audit), SA team management + invite (GET/POST /api/platform/team), cross-tenant support inbox (GET /api/platform/support); 3 stub pages replaced | `f3df7f9` |
+| M-UX | Global UI Polish — ToastContext (success/error/info/warning, auto-dismiss); NavigationProgress bar; user avatar initials in AppHeader; ConfirmDialog replaces all window.confirm() (4 pages); EmptyState shared component; ClientProviders wired | `f3df7f9` |
+| M-Stores | Store Issue Tracking — is_store_item/min_stock/reorder_qty on inventory_items; store_issues + store_returns tables (migration `y8z9a0b1c2d3`); keeper-managed workflow; 8 API endpoints; 4-tab frontend with analytics + reorder alerts | `f3df7f9` |
+| M-PettyCash | Petty Cash Fund Management — petty_cash_funds + petty_cash_transactions tables (migration `z9a0b1c2d3e4`); disburse/retire/replenish/adjust endpoints; balance_after snapshot per txn; fund cards + ledger frontend | `f3df7f9` |
+| M-Payment | Expense Payment Queue — expense_payment_configs + employee_bank_accounts + expense_payments (migration `a0b1c2d3e4f5`); MANUAL + PAYSTACK rails; PaystackService (Fernet-encrypted keys, HMAC webhook, brand-hidden errors); payment queue + config + bank account pages. **Note: Paystack live wiring deliberately deferred.** | `f3df7f9` |
+| M-Advance | Employee Advance & Retirement — employee_advances + advance_retirements + advance_retirement_lines (migration `b1c2d3e4f5g6`); request → approve → issue → retire workflow; GL posting all 3 modes; aging report; 6 frontend pages; PWA renamed to PRAD Expense | `850ad25` |
+| — | Promotion engine Phase 3b — OrgStructureNode + ApprovalRole promoted (composite key for roles); `PromotionReviewDialog.tsx` wired; pytest suite (20 unit tests); demo seed extended (advances + petty cash) | `ccdb925` |
 
 ---
 
